@@ -61,3 +61,9 @@ test("заранее выбранное место используется бе
   const plan=await buildPlan({stops:[{query:"ужин",place:place("x","Мой ресторан",{coords:{lat:55.75,lon:37.62}})},{query:"бар"}],start_time:"19:00"},async()=>{calls++;return {results:[place("b","Бар",{coords:{lat:55.752,lon:37.623}})]}});
   assert.equal(calls,1);assert.equal(plan.stops[0].place.name,"Мой ресторан");assert.equal(plan.stops[1].travel_in.mode,"walk");
 });
+
+test("план не собирается из случайного «потом» без узнаваемых активностей", ()=>{
+  assert.deepEqual(parseStops("поесть и потом домой"),[]);
+  assert.deepEqual(parseStops("после работы хочу выпить"),[]);
+  assert.equal(parseStops("сначала кофе, потом выставка").length,2);
+});

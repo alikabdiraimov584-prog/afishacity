@@ -103,6 +103,8 @@ function parseStops(text){
   const parts=n.split(/\s*,?\s*(?:а\s+|и\s+)?(?:потом|затем|дальше|после)(?=\s|$)\s*/)
     .map(s=>s.replace(/^(?:этого|него|нее|этой|ужина|бара|концерта|выставки|кино|фильма)\s*/,"").replace(/^(?:в|на|к|и|а)\s+/,"").trim()).filter(Boolean);
   if(parts.length<2)return [];
+  // План только когда каждая часть — узнаваемая активность; «поесть и потом домой» — не план.
+  if(parts.some(p=>guessCategory(p)==="other"))return [];
   const stops=[];
   for(const p of parts){
     const cat=guessCategory(p);
