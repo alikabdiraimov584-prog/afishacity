@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#f6f6f4">
 <title>FREE — разговор, который приводит к плану</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23111316'/%3E%3Ctext x='32' y='44' font-family='Arial,Helvetica,sans-serif' font-size='36' font-weight='700' fill='%23fff' text-anchor='middle'%3EF%3C/text%3E%3C/svg%3E">
 <style>
 :root{
   --bg:#f6f6f4;--ink:#111214;--muted:#727780;--card:#fff;--line:rgba(20,24,28,.08);
@@ -150,28 +151,31 @@ function quick(opts){return '<div class="quick">'+opts.map((x,i)=>`<button class
 function bindQuick(){$$("[data-quick]").forEach(b=>{if(!b.dataset.bound){b.dataset.bound="1";b.onclick=()=>submitUser(b.dataset.quick)}})}
 function detectIntent(t){
   const n=norm(t);
-  if(/выпить|бар|паб|коктейл|пиво|вино|алкогол/.test(n))return "drink";
+  // Границы кириллических слов: \b в JS работает только для латиницы.
+  if(/выпить|(?<![а-я])(бар(?!бер|аба|бек)|паб(?!лик)|пив[ао]|вин[оа](?![а-я]))|винн|коктейл|алкогол/.test(n))return "drink";
   if(/кальян|покурить/.test(n))return "hookah";
   if(/поесть|ресторан|кафе|ужин|бранч/.test(n))return "food";
   if(/концерт|стендап|театр|выстав|мероприят|событ|билет/.test(n))return "event";
   if(/свидан|романт/.test(n))return "date";
-  if(/ребен|дет/.test(n))return "family";
+  if(/ребен|(?<![а-я])дет(и|ей|ям|ьми|ск|ишк)|(?<![а-я])семь[яиею]|семейн/.test(n))return "family";
   if(/поработать|ноутбук|коворкинг/.test(n))return "work";
-  if(/спа|саун|массаж|йога/.test(n))return "wellness";
+  if(/(?<![а-я])спа(?![а-я])|саун|массаж|йога|(?<![а-я])бан(я|и|ю|е|ей)(?![а-я])/.test(n))return "wellness";
   if(/караоке|клуб|тусов|вечерин/.test(n))return "nightlife";
   return "general";
 }
 function extractSlots(t){
   const n=norm(t),s={};
   if(/вдвоем|вдвоём|на двоих/.test(n))s.party_size=2;
-  let m=n.match(/(\d{1,2})\s*(?:человек|людей|чел)/);if(m)s.party_size=+m[1];
+  let m=n.match(/(\d{1,2})\s*\+?\s*(?:человек|людей|чел)/);if(m)s.party_size=+m[1];
+  const WORDNUM={один:1,одна:1,двое:2,вдвоем:2,трое:3,втроем:3,четверо:4,вчетвером:4,пятеро:5,впятером:5,пять:5,шестеро:6,шесть:6,семеро:7,семь:7,восемь:8,восьмером:8,девять:9,десять:10};
+  m=n.match(/(?:нас|будет|компани[яе]й?)\s+(\S+)|(\S+)\s+(?:человек|людей|чел)/);const wn=m&&(WORDNUM[m[1]]||WORDNUM[m[2]]);if(wn&&!s.party_size)s.party_size=wn;
   m=n.match(/(?:до|бюджет)\s*(\d{2,6})/);if(m)s.max_price_rub=+m[1];
   m=n.match(/после\s*(\d{1,2})(?::(\d{2}))?/);if(m)s.after_time=String(+m[1]).padStart(2,"0")+":"+String(+(m[2]||0)).padStart(2,"0");
   if(/вечер/.test(n)&&!s.after_time)s.after_time="18:00";
   if(/сегодня/.test(n))s.date_word="today";if(/завтра/.test(n))s.date_word="tomorrow";
   if(/коктейл/.test(n))s.style="cocktail";if(/пиво|паб/.test(n))s.style="pub";if(/вино/.test(n))s.style="wine";
   if(/спокой|тихо|разговар/.test(n))s.vibe="quiet";if(/шумно|весело|тусов/.test(n))s.vibe="social";if(/красив/.test(n))s.vibe="beautiful";
-  if(/рок/.test(n))s.genre="rock";if(/джаз/.test(n))s.genre="jazz";if(/стендап/.test(n))s.genre="standup";
+  if(/(?<![а-я])рок(?![а-я])/.test(n))s.genre="rock";if(/джаз/.test(n))s.genre="jazz";if(/стендап/.test(n))s.genre="standup";
   if(/рядом|недалеко|от меня/.test(n))s.near=true;
   return s;
 }
@@ -198,7 +202,7 @@ function requiredQuestion(){
   if(i==="family"){
     if(!s.date_word)return {q:"Когда планируете?",o:["Сегодня","Завтра","На выходных"]};
   }
-  if(i==="work"&&!s.near)return {q:"Насколько далеко готовы ехать?",o:["Рядом со мной","До 20 минут","Любой район"]};
+  if(i==="work"&&s.near===undefined)return {q:"Насколько далеко готовы ехать?",o:["Рядом со мной","До 20 минут","Любой район"]};
   return null;
 }
 function styleText(){
@@ -207,12 +211,14 @@ function styleText(){
   if(i==="hookah")parts.push("кальянная");
   if(i==="event")parts.push(s.genre||"событие");
   if(s.vibe==="quiet")parts.push("спокойно");if(s.vibe==="beautiful")parts.push("красиво");if(s.vibe==="social")parts.push("поживее");
-  if(s.party_size)parts.push(`${s.party_size} чел.`);if(s.max_price_rub)parts.push(`до ${s.max_price_rub.toLocaleString("ru-RU")} ₽`);
+  if(s.party_size)parts.push(`${s.party_size} чел.`);if(s.max_price_rub&&s.max_price_rub<999999)parts.push(`до ${s.max_price_rub.toLocaleString("ru-RU")} ₽`);
   return parts.join(" · ");
 }
 function dateStr(word){
   const base=new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Moscow",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
-  const d=new Date(base+"T12:00:00Z");if(word==="tomorrow")d.setUTCDate(d.getUTCDate()+1);return d.toISOString().slice(0,10);
+  const d=new Date(base+"T12:00:00Z");if(word==="tomorrow")d.setUTCDate(d.getUTCDate()+1);
+  if(word==="weekend"){const dow=d.getUTCDay();d.setUTCDate(d.getUTCDate()+(dow===0||dow===6?0:6-dow))}
+  return d.toISOString().slice(0,10);
 }
 async function geo(silent=false){
   if(geoCache&&Date.now()-geoCache.at<300000)return geoCache;
@@ -231,14 +237,14 @@ function queryFromState(){
   else if(i==="wellness")q="spa wellness";
   else if(i==="nightlife")q="караоке клуб";
   else q=chatState.history.filter(x=>x.role==="user").map(x=>x.html.replace(/<[^>]+>/g," ")).join(" ");
-  if(s.vibe==="quiet")q+=" спокойно тихо";if(s.vibe==="beautiful")q+=" красиво";if(s.vibe==="social")q+=" весело";
+  if(s.vibe==="quiet")q+=" спокойно тихо";if(s.vibe==="beautiful")q+=" красиво";if(s.vibe==="social")q+=" весело";if(s.vibe==="private")q+=" приватно";if(s.vibe==="unusual")q+=" необычно";
   if(s.date_word==="today")q+=" сегодня";if(s.date_word==="tomorrow")q+=" завтра";
   return q.trim();
 }
 async function liveArgs(){
   const s=chatState.slots,args={query:queryFromState(),taste_weights:{...taste}};
-  if(s.max_price_rub)args.max_price_rub=s.max_price_rub;if(s.party_size)args.party_size=s.party_size;if(s.after_time)args.after_time=s.after_time;
-  if(s.date_word)args.target_date=dateStr(s.date_word);
+  if(s.max_price_rub&&s.max_price_rub<999999)args.max_price_rub=s.max_price_rub;if(s.party_size)args.party_size=s.party_size;if(s.after_time)args.after_time=s.after_time;
+  if(["today","tomorrow","weekend"].includes(s.date_word))args.target_date=dateStr(s.date_word);
   if(s.near){const g=await geo(false);if(g)args.user_location={lat:g.lat,lon:g.lon}}
   return args;
 }
@@ -255,8 +261,8 @@ function fallbackCurrent(v,args){
 }
 
 function fallbackSearch(args){
-  const q=norm(args.query),words=q.split(" ").filter(x=>x.length>3),out=[];
-  for(const v of FALLBACK){if(!fallbackCurrent(v,args))continue;const text=norm([v.name,v.cat,v.desc,v.keywords,(v.tags||[]).join(" ")].join(" "));let s=0;for(const w of words)if(text.includes(w))s+=12;if(s<12)continue;const dna=localDna(v);for(const [k,w] of Object.entries(taste))s+=(w||0)*(dna[k]-50)/14;out.push({...v,dna,_s:s,match:90})}
+  const q=norm(args.query),words=q.split(" ").filter(x=>x.length>=3),out=[];
+  for(const v of FALLBACK){if(!fallbackCurrent(v,args))continue;const text=norm([v.name,v.cat,v.desc,v.keywords,(v.tags||[]).join(" ")].join(" "));let s=0;for(const w of words){const re=new RegExp("(?<![а-яa-z0-9])"+w.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"(?:[а-я]{0,2}|н[а-я]{1,3})(?![а-я])");if(re.test(text))s+=12}if(s<12)continue;const dna=localDna(v);for(const [k,w] of Object.entries(taste))s+=(w||0)*(dna[k]-50)/14;out.push({...v,dna,_s:s,match:90})}
   out.sort((a,b)=>b._s-a._s);return out.slice(0,3).map((v,i)=>({id:v.id,name:v.name,organizer:v.organizer,category:v.cat,date:v.date_start||"постоянно",time:v.times?.[0]||v.hours_label||"",price:v.price_label,availability:v.availability,area:v.area,metro:v.metro,source:v.source,point_source:v.point_source||v.source,official_source:v.official_source||null,coords:v.coords||null,provider:"Fallback",image_url:v.image_url||null,booking_url:v.booking_url||null,booking_kind:v.booking_kind||null,booking_provider:v.booking_provider||null,phone:v.phone||null,reasons:[],dna:v.dna,match:Math.max(76,94-i*5),kind:v.kind}))}
 async function recommend(){
   const args=await liveArgs();
@@ -363,13 +369,22 @@ async function submitScriptedUser(text,alreadyAdded=false){
   if(/спокой/.test(n))chatState.slots.vibe="quiet";
   if(/поживее|шумно|весело/.test(n))chatState.slots.vibe="social";
   if(/с друзьями/.test(n)&&!chatState.slots.party_size)chatState.slots.party_size=4;
-  if(/один/.test(n))chatState.slots.party_size=1;
-  if(/до 5 000/.test(text))chatState.slots.max_price_rub=5000;
-  if(/до 8 000/.test(text))chatState.slots.max_price_rub=8000;
-  if(/до 15 000/.test(text))chatState.slots.max_price_rub=15000;
+  if(/(?<![а-я])од(ин|на)(?![а-я])/.test(n))chatState.slots.party_size=1;
+  // Каждый вариант быстрого ответа обязан заполнить слот, иначе вопрос зациклится.
+  if(/просто хороший бар|без разницы/.test(n))chatState.slots.style=chatState.slots.style||"any";
+  if(/без разницы|вкусно и неформально|просто рядом/.test(n))chatState.slots.vibe=chatState.slots.vibe||"any";
+  if(/приватно/.test(n))chatState.slots.vibe="private";
+  if(/необычно/.test(n))chatState.slots.vibe="unusual";
+  if(/просто рядом|рядом со мной/.test(n))chatState.slots.near=true;
+  if(/до 20 минут|любой район/.test(n))chatState.slots.near=false;
+  if(/компания/.test(n)&&!chatState.slots.party_size)chatState.slots.party_size=5;
+  if(/5\+ человек|5 человек/.test(n))chatState.slots.party_size=5;
+  const budget=n.match(/до (\d{1,3}) ?(\d{3})/);if(budget)chatState.slots.max_price_rub=+(budget[1]+budget[2]);
   if(/бюджет не важен|не ограничивать/.test(n))chatState.slots.max_price_rub=999999;
   if(/сегодня/.test(n))chatState.slots.date_word="today";
   if(/завтра/.test(n))chatState.slots.date_word="tomorrow";
+  if(/на выходных|выходные/.test(n))chatState.slots.date_word="weekend";
+  if(/дата не важна|когда угодно/.test(n))chatState.slots.date_word="any";
   if(/концерт/.test(n))chatState.slots.genre="концерт";
   if(/стендап/.test(n))chatState.slots.genre="стендап";
   if(/выстав/.test(n))chatState.slots.genre="выставка";
