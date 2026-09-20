@@ -1,0 +1,17 @@
+{
+  "appId": "ru.afishacity.free",
+  "appName": "FREE",
+  "webDir": "www",
+  "backgroundColor": "#f6f6f4",
+  "ios": {
+    "contentInset": "automatic",
+    "scheme": "FREE",
+    "backgroundColor": "#f6f6f4",
+    "limitsNavigationsToAppBoundDomains": false
+  },
+  "plugins": {
+    "SplashScreen": { "launchAutoHide": true, "launchShowDuration": 800, "backgroundColor": "#f6f6f4", "showSpinner": false },
+    "StatusBar": { "style": "LIGHT", "backgroundColor": "#f6f6f4" },
+    "Keyboard": { "resize": "native", "resizeOnFullScreen": true }
+  }
+}

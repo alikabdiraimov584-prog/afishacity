@@ -23,3 +23,17 @@ test("профиль по HTTP: анонимный клиент, обновле�
     assert.equal(me.stats.book,1);assert.equal(me.profile.saved[0].name,"Бар");
   }finally{await new Promise(r=>server.close(r))}
 });
+
+test("CORS: приложение с capacitor://localhost получает заголовки, чужой origin — нет", async ()=>{
+  await new Promise(r=>server.listen(0,"127.0.0.1",r));
+  const base=`http://127.0.0.1:${server.address().port}`;
+  try{
+    const pre=await fetch(base+"/api/me",{method:"OPTIONS",headers:{Origin:"capacitor://localhost","Access-Control-Request-Method":"PUT"}});
+    assert.equal(pre.status,204);assert.equal(pre.headers.get("access-control-allow-origin"),"capacitor://localhost");
+    assert.match(pre.headers.get("access-control-allow-headers"),/X-Free-Client/);
+    const ok=await fetch(base+"/api/health",{headers:{Origin:"capacitor://localhost"}});
+    assert.equal(ok.headers.get("access-control-allow-origin"),"capacitor://localhost");
+    const bad=await fetch(base+"/api/health",{headers:{Origin:"https://evil.example"}});
+    assert.equal(bad.headers.get("access-control-allow-origin"),null);
+  }finally{await new Promise(r=>server.close(r))}
+});

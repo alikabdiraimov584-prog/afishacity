@@ -1,0 +1,26 @@
+{
+  "name": "free-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FREE — мобильное приложение (Capacitor)",
+  "scripts": {
+    "build": "node ../scripts/build-app.mjs",
+    "sync": "npm run build && npx cap sync",
+    "ios": "npm run sync && npx cap open ios",
+    "assets": "npx @capacitor/assets generate --ios --iconBackgroundColor '#111316' --splashBackgroundColor '#f6f6f4'"
+  },
+  "dependencies": {
+    "@capacitor-community/speech-recognition": "^7.0.1",
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/browser": "^8.0.4",
+    "@capacitor/cli": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/geolocation": "^8.2.2",
+    "@capacitor/haptics": "^8.0.2",
+    "@capacitor/ios": "^8.5.2",
+    "@capacitor/keyboard": "^8.0.5",
+    "@capacitor/share": "^8.0.2",
+    "@capacitor/splash-screen": "^8.0.2",
+    "@capacitor/status-bar": "^8.0.3"
+  }
+}

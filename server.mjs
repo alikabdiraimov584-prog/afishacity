@@ -45,8 +45,15 @@ const CACHE_MS=5*60*1000;
 
 const mime={".html":"text/html; charset=utf-8",".js":"text/javascript; charset=utf-8",".mjs":"text/javascript; charset=utf-8",".css":"text/css; charset=utf-8",".json":"application/json; charset=utf-8",".svg":"image/svg+xml",".png":"image/png"};
 
+// CORS для мобильного приложения: WebView Capacitor живёт на capacitor://localhost (iOS) и http://localhost (Android).
+const CORS_ORIGINS=new Set(String(process.env.CORS_ORIGINS||"capacitor://localhost,ionic://localhost,http://localhost,https://localhost").split(",").map(x=>x.trim()).filter(Boolean));
+function corsHeaders(req){
+  const origin=req.headers.origin;
+  if(!origin||!CORS_ORIGINS.has(origin))return {};
+  return {"Access-Control-Allow-Origin":origin,"Vary":"Origin","Access-Control-Allow-Headers":"Content-Type, X-Free-Client, X-Telegram-Init-Data","Access-Control-Allow-Methods":"GET, POST, PUT, DELETE, OPTIONS","Access-Control-Max-Age":"86400"};
+}
 function send(res,status,body,type="text/plain; charset=utf-8"){
-  res.writeHead(status,{"Content-Type":type,"Cache-Control":"no-store"});
+  res.writeHead(status,{"Content-Type":type,"Cache-Control":"no-store",...corsHeaders(res.req)});
   res.end(body);
 }
 function json(res,status,obj){send(res,status,JSON.stringify(obj),"application/json; charset=utf-8")}
@@ -113,7 +120,7 @@ async function proxyImage(res,raw){
     if(!r.ok||!/^image\//.test(type))return send(res,415,"not an image");
     const len=Number(r.headers.get("content-length")||0);if(len>IMG_MAX)return send(res,413,"too large");
     const buf=Buffer.from(await r.arrayBuffer());if(buf.length>IMG_MAX)return send(res,413,"too large");
-    res.writeHead(200,{"Content-Type":type,"Cache-Control":"public, max-age=86400","Content-Length":String(buf.length),"X-Content-Type-Options":"nosniff"});
+    res.writeHead(200,{"Content-Type":type,"Cache-Control":"public, max-age=86400","Content-Length":String(buf.length),"X-Content-Type-Options":"nosniff",...corsHeaders(res.req)});
     return res.end(buf);
   }catch(e){return send(res,502,"image unavailable")}finally{clearTimeout(timer)}
 }
@@ -429,6 +436,8 @@ function dialogueError(e){
 const server=http.createServer(async(req,res)=>{
   try{
     const url=new URL(req.url,`http://${req.headers.host||"localhost"}`);
+    res.req=req;
+    if(req.method==="OPTIONS"){res.writeHead(204,corsHeaders(req));return res.end()}
 
     if(req.method==="GET"&&url.pathname==="/api/health"){
       return json(res,200,{
@@ -528,7 +537,7 @@ const server=http.createServer(async(req,res)=>{
       try{body=JSON.parse(await readBody(req,240000))}catch{return json(res,400,{error:"invalid_json"})}
       const message=String(body.message||"").trim();
       if(!message)return json(res,400,{error:"message_required"});
-      res.writeHead(200,{"Content-Type":"text/event-stream; charset=utf-8","Cache-Control":"no-store","Connection":"keep-alive","X-Accel-Buffering":"no"});
+      res.writeHead(200,{"Content-Type":"text/event-stream; charset=utf-8","Cache-Control":"no-store","Connection":"keep-alive","X-Accel-Buffering":"no",...corsHeaders(req)});
       const emit=(type,data)=>{if(!res.writableEnded)res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`)};
       const ping=setInterval(()=>{if(!res.writableEnded)res.write(": ping\n\n")},15000);
       const me=identify(req,auth);

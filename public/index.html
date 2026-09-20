@@ -4,7 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#f6f6f4">
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <title>FREE — разговор, который приводит к плану</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23111316'/%3E%3Ctext x='32' y='44' font-family='Arial,Helvetica,sans-serif' font-size='36' font-weight='700' fill='%23fff' text-anchor='middle'%3EF%3C/text%3E%3C/svg%3E">
 <style>
@@ -15,7 +14,7 @@
 *{box-sizing:border-box}html{scroll-behavior:smooth}
 body{margin:0;background:radial-gradient(900px 520px at 50% -10%,#fff,transparent 72%),var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Arial,sans-serif;padding-bottom:92px}
 button,input{font:inherit}button{cursor:pointer}
-.top{position:sticky;top:0;z-index:50;padding:calc(10px + var(--tg-content-safe-area-inset-top,0px) + var(--tg-safe-area-inset-top,0px)) 12px 10px}
+.top{position:sticky;top:0;z-index:50;padding:calc(10px + env(safe-area-inset-top,0px)) 12px 10px}
 .topbar{max-width:860px;margin:auto;background:rgba(250,251,252,.72);border:1px solid rgba(255,255,255,.9);backdrop-filter:blur(24px);border-radius:999px;padding:7px 9px 7px 14px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 8px 26px rgba(35,39,48,.05)}
 .brand{font-weight:820;letter-spacing:-.04em}.sub{font-size:10px;color:#777d86;margin-top:1px}.avatar{width:34px;height:34px;border-radius:50%;border:0;background:#111;color:#fff;font-weight:800}
 .shell{max-width:860px;margin:auto;padding:0 14px}
@@ -50,7 +49,7 @@ button,input{font:inherit}button{cursor:pointer}
 .composer{display:flex;gap:7px;align-items:center;background:rgba(255,255,255,.78);border:1px solid rgba(255,255,255,.95);box-shadow:0 12px 35px rgba(31,36,46,.09);border-radius:20px;padding:7px;backdrop-filter:blur(20px)}
 .voice{width:44px;height:44px;border-radius:50%;border:1px solid var(--line);background:#fff}.voice.live{box-shadow:0 0 0 8px rgba(49,95,255,.08);background:#eef3ff}.composer input{flex:1;border:0;background:transparent;outline:0;padding:11px 9px}.send{height:44px;border:0;background:#111;color:#fff;border-radius:14px;padding:0 15px;font-weight:750}
 .hint{font-size:10px;color:#888d95;text-align:center;margin-top:7px}
-.bottom{position:fixed;left:50%;bottom:calc(12px + var(--tg-safe-area-inset-bottom,0px));transform:translateX(-50%);width:min(520px,calc(100% - 20px));z-index:60;background:rgba(246,247,248,.86);border:1px solid rgba(255,255,255,.92);box-shadow:0 10px 36px rgba(31,36,46,.12);backdrop-filter:blur(24px);border-radius:22px;padding:7px;display:grid;grid-template-columns:repeat(4,1fr)}
+.bottom{position:fixed;left:50%;bottom:calc(12px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);width:min(520px,calc(100% - 20px));z-index:60;background:rgba(246,247,248,.86);border:1px solid rgba(255,255,255,.92);box-shadow:0 10px 36px rgba(31,36,46,.12);backdrop-filter:blur(24px);border-radius:22px;padding:7px;display:grid;grid-template-columns:repeat(4,1fr)}
 .nav{border:0;background:transparent;border-radius:15px;padding:8px 4px;color:#777d86;font-size:10px}.nav b{display:block;font-size:17px}.nav.on{background:#111;color:#fff}
 .overlay{display:none;position:fixed;inset:0;z-index:120;background:rgba(228,232,237,.45);backdrop-filter:blur(16px);padding:18px;align-items:center;justify-content:center}.overlay.on{display:flex}
 .sheet{width:min(590px,100%);max-height:90vh;overflow:auto;background:rgba(250,251,252,.94);border:1px solid #fff;border-radius:28px;padding:23px;box-shadow:0 30px 90px rgba(31,36,46,.18)}.close{float:right;width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#fff}.sheet h2{font-size:30px;letter-spacing:-.04em;margin:8px 0}.sheet p{color:#737983;font-size:12px;line-height:1.5}.detailGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0}.detail{background:#fff;border:1px solid var(--line);border-radius:14px;padding:11px;font-size:11px}.sheetActions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.sheetActions button,.sheetActions a{border:1px solid var(--line);background:#fff;color:#222;border-radius:13px;padding:11px;text-align:center;text-decoration:none;font-size:11px;font-weight:700}.sheetActions .primary{background:#111;color:#fff}
@@ -60,7 +59,7 @@ button,input{font:inherit}button{cursor:pointer}
 @media(max-width:650px){
       .intro{padding-top:38px}.intro h1{font-size:50px}.msg{max-width:90%}
       .chat{padding-bottom:195px;scroll-padding-bottom:195px}
-      .composerWrap{bottom:calc(78px + var(--tg-safe-area-inset-bottom,0px));width:calc(100% - 14px);padding:16px 7px 8px}
+      .composerWrap{bottom:calc(78px + env(safe-area-inset-bottom,0px));width:calc(100% - 14px);padding:16px 7px 8px}
       .msg:last-child,.inlineCards:last-child{scroll-margin-bottom:195px}
       .tasteGrid{grid-template-columns:1fr}
     }
@@ -136,19 +135,24 @@ try{taste={...taste,...JSON.parse(localStorage.getItem("free_v14_taste")||"{}")}
 try{saved=JSON.parse(localStorage.getItem("free_v14_saved")||"[]")}catch(_){}
 try{plan=JSON.parse(localStorage.getItem("free_v14_plan")||"[]")}catch(_){}
 
-const TG=(window.Telegram&&window.Telegram.WebApp&&window.Telegram.WebApp.initData)?window.Telegram.WebApp:null;
-if(TG){try{TG.ready();TG.expand();TG.setHeaderColor("#f6f6f4");TG.setBackgroundColor("#f6f6f4");if(TG.disableVerticalSwipes)TG.disableVerticalSwipes()}catch(_){}}
-// Анонимный идентификатор клиента: профиль живёт на сервере даже без Telegram и переживает очистку вкладки.
+// ---- Нативный слой приложения (Capacitor). В браузере NATIVE=null и работают веб-API. ----
+const API_BASE=(window.FREE_CONFIG&&window.FREE_CONFIG.apiBase)||"";
+const CAP=(window.Capacitor&&typeof window.Capacitor.isNativePlatform==="function"&&window.Capacitor.isNativePlatform())?window.Capacitor:null;
+const NATIVE=CAP?(()=>{const P=n=>{try{return CAP.registerPlugin(n)}catch(_){return null}};return {platform:CAP.getPlatform(),Geolocation:P("Geolocation"),Browser:P("Browser"),Share:P("Share"),Haptics:P("Haptics"),StatusBar:P("StatusBar"),Speech:P("SpeechRecognition"),Keyboard:P("Keyboard"),App:P("App")}})():null;
+if(NATIVE){try{NATIVE.StatusBar&&NATIVE.StatusBar.setStyle({style:"LIGHT"})}catch(_){}try{NATIVE.Keyboard&&NATIVE.Keyboard.setAccessoryBarVisible&&NATIVE.Keyboard.setAccessoryBarVisible({isVisible:false})}catch(_){}}
+function haptic(kind="light"){if(!NATIVE||!NATIVE.Haptics)return;try{if(kind==="success")NATIVE.Haptics.notification({type:"SUCCESS"});else NATIVE.Haptics.impact({style:kind==="medium"?"MEDIUM":"LIGHT"})}catch(_){}}
+// Анонимный идентификатор клиента: профиль живёт на сервере и переживает переустановку веб-части.
 let CLIENT_ID=null;try{CLIENT_ID=localStorage.getItem("free_client_id");if(!CLIENT_ID){CLIENT_ID=(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2));localStorage.setItem("free_client_id",CLIENT_ID)}}catch(_){CLIENT_ID=null}
-function apiFetch(path,opts={}){const headers={...(opts.headers||{})};if(TG)headers["X-Telegram-Init-Data"]=TG.initData;if(CLIENT_ID)headers["X-Free-Client"]=CLIENT_ID;return fetch(path,{...opts,headers})}
+function apiFetch(path,opts={}){const headers={...(opts.headers||{})};if(CLIENT_ID)headers["X-Free-Client"]=CLIENT_ID;return fetch(API_BASE+path,{...opts,headers})}
 function openExternal(url){
   if(!url)return;
-  if(TG){try{if(/^https?:\/\/t\.me\//i.test(url))TG.openTelegramLink(url);else if(/^https?:/i.test(url))TG.openLink(url);else window.location.href=url;return}catch(_){}}
-  openExternal(url);
+  if(NATIVE){if(/^https?:/i.test(url)&&NATIVE.Browser){NATIVE.Browser.open({url,presentationStyle:"popover"}).catch(()=>{window.location.href=url});return}window.location.href=url;return}
+  const w=window.open(url,"_blank","noopener");
+  if(!w)window.location.href=url; // всплывающее окно заблокировано — открываем в этой вкладке
 }
 // Окно надо открыть синхронно в обработчике клика, иначе после await браузер сочтёт его всплывающим и заблокирует.
 function deferredOpen(){
-  if(TG)return {go:openExternal,cancel(){}};
+  if(NATIVE)return {go:openExternal,cancel(){}}; // нативный браузер открывается и после await
   let w=null;try{w=window.open("about:blank","_blank")}catch(_){}
   if(w){try{w.opener=null}catch(_){}}
   return {
@@ -305,6 +309,10 @@ function dateStr(word){
 }
 async function geo(silent=false){
   if(geoCache&&Date.now()-geoCache.at<300000)return geoCache;
+  if(NATIVE&&NATIVE.Geolocation){
+    try{const p=await NATIVE.Geolocation.getCurrentPosition({enableHighAccuracy:true,timeout:9000,maximumAge:60000});geoCache={lat:p.coords.latitude,lon:p.coords.longitude,at:Date.now()};return geoCache}
+    catch(e){if(!silent)toast("Разрешите доступ к геопозиции в настройках iPhone: Настройки → FREE → Геопозиция.");return null}
+  }
   if(!navigator.geolocation)return null;
   try{const p=await new Promise((ok,bad)=>navigator.geolocation.getCurrentPosition(ok,bad,{enableHighAccuracy:true,timeout:9000,maximumAge:60000}));geoCache={lat:p.coords.latitude,lon:p.coords.longitude,at:Date.now()};return geoCache}catch(e){if(!silent)toast("Разрешите геолокацию для маршрута и nearby-поиска.");return null}
 }
@@ -355,7 +363,7 @@ async function recommend(){
 }
 function reason(r){const a=[...(r.reasons||[])],d=r.dna||{};if(d.quiet>=68)a.push("можно разговаривать");if(d.romantic>=70)a.push("подходит вдвоём");if(d.late>=70)a.push("работает поздно");return [...new Set(a)].slice(0,3).join(" · ")||"лучшее совпадение с вашим контекстом"}
 // Картинки идут через серверный прокси (защита от хотлинков и смешанного контента); в демо без сервера — напрямую.
-function imgSrc(url){if(!url)return "";return chatState.serverOk?"/api/img?u="+encodeURIComponent(url):url}
+function imgSrc(url){if(!url)return "";return chatState.serverOk?API_BASE+"/api/img?u="+encodeURIComponent(url):url}
 function placeEmoji(r){const c=(window.FreePlanner?FreePlanner.guessCategory([r.category,r.name,(r.tags||[]).join(" ")].join(" ")):"other");
   const map={bar:"🍸",food:"🍽️",hookah:"💨",club:"🪩",karaoke:"🎤",coffee:"☕",culture:"🖼️",active:"🎳",spa:"🧖",walk:"🌳",other:r.kind==="event"?"🎟️":"📍"};
   return {cls:r.kind==="event"&&c==="other"?"c-event":"c-"+c,emoji:map[c]||"📍"}}
@@ -699,7 +707,7 @@ async function sharePlanLink(){
   rememberEvening(evening);
   try{const r=await apiFetch("/api/plan/share",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({plan:evening,title:"Вечер "+(evening.total?.start||""),date:chatState.slots?.date_word?dateStr(chatState.slots.date_word):null})});if(r.ok)url=(await r.json()).url}catch(_){}
   const text=url?"Наш план на вечер: "+url:planText(evening);
-  if(TG&&url){openExternal("https://t.me/share/url?url="+encodeURIComponent(url)+"&text="+encodeURIComponent("План вечера от FREE"));return}
+  if(NATIVE&&NATIVE.Share){try{await NATIVE.Share.share(url?{title:"План вечера",text:"Наш план на вечер",url}:{title:"План вечера",text});haptic("success");return}catch(_){}}
   if(navigator.share){try{await navigator.share(url?{title:"План вечера",url}:{title:"План вечера",text});return}catch(_){}}
   toast((await copyText(text))?(url?"Ссылка на план скопирована":"План скопирован текстом"):"Не удалось скопировать");
 }
@@ -718,7 +726,7 @@ async function buildEveningScripted(stops){
 function selectPlace(id){
   const r=currentResults.find(x=>x.id===id);if(!r)return;
   chatState.selected=r;chatState.phase="selected";chatState.awaitingContinuation=false;
-  if(!plan.some(x=>x.id===id))plan.push(r);save();learn("select",r);
+  if(!plan.some(x=>x.id===id))plan.push(r);save();learn("select",r);haptic();
   let body=`Добавил <b>${esc(r.name)}</b> в план. Что дальше?`;
   body+=`<div class="actionBox"><h4>Следующее действие</h4><p>${r.kind==="event"?"Можно перейти к билетам / регистрации, построить маршрут или продолжить вечер.":"Можно забронировать через реальный канал заведения, построить маршрут или добавить следующую точку."}</p><div class="actionBtns"><button data-book-one>${r.kind==="event"?"Билеты / регистрация":bookingLabel(r)}</button><button data-route-one>Маршрут</button><button class="ghost" data-after>Продолжить вечер</button></div></div>`;
   addMsg("ai",body);
@@ -738,7 +746,7 @@ async function routeItems(items){
   if(!g)toast("Маршрут без вашей геопозиции — задайте точку старта в картах.");
 }
 function routePlace(id){const r=currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id)||plan.find(x=>x.id===id);if(r)routeItems([r])}
-function toggleSave(id){const r=currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id);if(!r)return;const i=saved.findIndex(x=>x.id===id);if(i>=0)saved.splice(i,1);else{saved.unshift(r);learn("save",r)}save();toast(i>=0?"Удалено из Saved":"Сохранено")}
+function toggleSave(id){const r=currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id);if(!r)return;const i=saved.findIndex(x=>x.id===id);if(i>=0)saved.splice(i,1);else{saved.unshift(r);learn("save",r);haptic()}save();toast(i>=0?"Удалено из Saved":"Сохранено")}
 function openDetail(id){
   const r=currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id)||plan.find(x=>x.id===id);if(!r)return;
   $("#detail").innerHTML=`<div class="sheet"><button class="close">×</button>
@@ -780,7 +788,6 @@ async function detectCapabilities(){
     chatState.serverOk=Boolean(d&&d.ok);
     if(chatState.serverOk)loadProfile();
     chatState.aiReady=Boolean(d.text_ai_ready);
-    if(d.telegram_auth&&!TG){chatState.aiReady=false;$("#hint").textContent="Полный AI-режим доступен внутри Telegram-бота. Здесь работает демо-сценарий."}
     if(d.voice_ready)voice.mode="live";
     $("#aiStatus").textContent=chatState.aiReady?`Neural chat · ${d.text_ai_model||"Claude"}`:"AI fallback · Москва";
     $("#hint").textContent=chatState.aiReady
@@ -791,11 +798,30 @@ async function detectCapabilities(){
     $("#aiStatus").textContent="Preview fallback · Москва";
   }
 }
-const VOICE_ERRORS={"not-allowed":"Доступ к микрофону запрещён. Разрешите его в настройках браузера или Telegram.","service-not-allowed":"Распознавание речи отключено в этом браузере.","audio-capture":"Микрофон не найден.","network":"Распознавание речи недоступно в этой сети: Chrome отправляет звук на серверы Google. Напишите текстом.","no-speech":"Не услышал речь. Нажмите и говорите сразу.","aborted":""};
+const VOICE_ERRORS={"not-allowed":"Доступ к микрофону запрещён. Разрешите его в настройках браузера.","service-not-allowed":"Распознавание речи отключено в этом браузере.","audio-capture":"Микрофон не найден.","network":"Распознавание речи недоступно в этой сети: Chrome отправляет звук на серверы Google. Напишите текстом.","no-speech":"Не услышал речь. Нажмите и говорите сразу.","aborted":""};
+// Нативное распознавание (iOS: Apple Speech, работает без сторонних серверов). В браузере — Web Speech API.
+async function nativeVoice(){
+  const S=NATIVE.Speech;
+  if(voice.native){try{await S.stop()}catch(_){}return}
+  try{
+    const av=await S.available();if(!av||av.available===false){toast("Распознавание речи недоступно на этом устройстве.");return}
+    let perm=await S.checkPermissions();
+    if(perm.speechRecognition!=="granted"){perm=await S.requestPermissions()}
+    if(perm.speechRecognition!=="granted"){toast("Разрешите микрофон и распознавание речи: Настройки → FREE.");return}
+    voice.native=true;$("#voiceBtn").classList.add("live");$("#input").placeholder="Говорите… (нажмите ещё раз, чтобы остановить)";haptic("medium");
+    let last="";
+    const sub=await S.addListener("partialResults",e=>{const t=(e.matches||[])[0];if(t){last=t;$("#input").value=t}});
+    const end=async()=>{try{sub&&sub.remove()}catch(_){}voice.native=false;$("#voiceBtn").classList.remove("live");$("#input").placeholder="Например: хочу выпить";const t=($("#input").value||last).trim();if(t)submitUser(t)};
+    const st=await S.addListener("listeningState",e=>{if(e.status==="stopped"){st.remove();end()}});
+    const r=await S.start({language:"ru-RU",maxResults:1,partialResults:true,popup:false});
+    if(r&&r.matches&&r.matches[0]){$("#input").value=r.matches[0]}
+  }catch(e){voice.native=false;$("#voiceBtn").classList.remove("live");toast("Голос недоступен: "+(e.message||e))}
+}
 function browserVoice(){
+  if(NATIVE&&NATIVE.Speech)return nativeVoice();
   if(voice.rec){try{voice.rec.stop()}catch(_){}return}
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR){toast(TG?"В этой версии Telegram нет распознавания речи. Напишите текстом.":"Голосовой ввод есть только в Chrome и Safari. Напишите текстом.");return}
+  if(!SR){toast("Голосовой ввод есть только в Chrome и Safari. Напишите текстом.");return}
   if(!window.isSecureContext){toast("Голос работает только по HTTPS.");return}
   const rec=new SR();voice.rec=rec;rec.lang="ru-RU";rec.interimResults=true;rec.continuous=false;
   let gotResult=false;
