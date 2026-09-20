@@ -77,6 +77,14 @@ function send(res,status,body,type="text/plain; charset=utf-8"){
   res.end(body);
 }
 function json(res,status,obj){send(res,status,JSON.stringify(obj),"application/json; charset=utf-8")}
+// «null», «42» и «[1,2]» — валидный JSON, но не объект запроса. Раньше следующее
+// обращение к полю бросало TypeError и отдавало 500 вместо понятного 400.
+async function readJsonObject(req,max){
+  const raw=await readBody(req,max);
+  const v=raw.trim()?JSON.parse(raw):{};
+  if(v===null||typeof v!=="object"||Array.isArray(v))throw new SyntaxError("expected object");
+  return v;
+}
 class BodyTooLarge extends Error{constructor(max){super(`body too large (>${max})`);this.max=max}}
 async function readBody(req,max=160000){
   const chunks=[];let size=0;
@@ -628,7 +636,7 @@ const server=http.createServer(async(req,res)=>{
       const rl=dialogueLimiter.check(auth.user?.id?`tg:${auth.user.id}`:`ip:${clientKey(req)}`);
       if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return json(res,429,{error:"rate_limited",message:"Слишком много сообщений, подождите немного",retry_after:rl.retryAfterSec})}
       let body={};
-      try{body=JSON.parse(await readBody(req,240000))}catch(e){return bodyError(res,e)}
+      try{body=await readJsonObject(req,240000)}catch(e){return bodyError(res,e)}
       const message=String(body.message||"").trim();
       if(!message)return json(res,400,{error:"message_required"});
       const me=identify(req,auth);
@@ -654,17 +662,17 @@ const server=http.createServer(async(req,res)=>{
         return json(res,200,{user:{id:me.id,first_name:me.first_name,telegram:Boolean(me.tg_id)},profile:store.getProfile(me.id),evenings:store.evenings(me.id,10),stats:store.stats(me.id),conversation_id:store.lastConversationId(me.id)});
       }
       if(req.method==="PUT"&&url.pathname==="/api/me"){
-        let body={};try{body=JSON.parse(await readBody(req,400000))}catch(e){return bodyError(res,e)}
+        let body={};try{body=await readJsonObject(req,400000)}catch(e){return bodyError(res,e)}
         return json(res,200,{profile:store.updateProfile(me.id,{taste:body.taste,saved:body.saved,plan:body.plan})});
       }
       if(req.method==="POST"&&url.pathname==="/api/me/event"){
-        let body={};try{body=JSON.parse(await readBody(req))}catch(e){return bodyError(res,e)}
+        let body={};try{body=await readJsonObject(req)}catch(e){return bodyError(res,e)}
         const type=String(body.type||"").slice(0,20);if(!type)return json(res,400,{error:"type_required"});
         const taste=store.learn(me.id,type,body.dna&&typeof body.dna==="object"?body.dna:{},{place_id:body.place_id||null,name:String(body.name||"").slice(0,120)});
         return json(res,200,{taste});
       }
       if(req.method==="POST"&&url.pathname==="/api/me/evenings"){
-        let body={};try{body=JSON.parse(await readBody(req,240000))}catch(e){return bodyError(res,e)}
+        let body={};try{body=await readJsonObject(req,240000)}catch(e){return bodyError(res,e)}
         if(!body.plan||!Array.isArray(body.plan.stops)||!body.plan.stops.length)return json(res,400,{error:"plan_required"});
         const id=store.addEvening(me.id,body.plan,{title:String(body.title||"").slice(0,80)||null,date:String(body.date||"").slice(0,10)||null});
         return json(res,201,{id,evenings:store.evenings(me.id,10)});
@@ -676,7 +684,7 @@ const server=http.createServer(async(req,res)=>{
 
     if(req.method==="POST"&&url.pathname==="/api/plan"){
       let body={};
-      try{body=JSON.parse(await readBody(req))}catch(e){return bodyError(res,e)}
+      try{body=await readJsonObject(req)}catch(e){return bodyError(res,e)}
       if(!Array.isArray(body.stops)||!body.stops.length)return json(res,400,{error:"stops_required"});
       const auth=authorize(req);if(auth.error)return json(res,auth.error.status,auth.error);
       try{return json(res,200,await planEvening(body,body.context||{}))}
@@ -687,7 +695,7 @@ const server=http.createServer(async(req,res)=>{
       const rl=shareLimiter.check(`ip:${clientKey(req)}`);
       if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return json(res,429,{error:"rate_limited",message:"Слишком много планов подряд, подождите немного"})}
       let body={};
-      try{body=JSON.parse(await readBody(req,2500000))}catch(e){return bodyError(res,e)} // план + PNG-карточка до ~1 МБ
+      try{body=await readJsonObject(req,2500000)}catch(e){return bodyError(res,e)} // план + PNG-карточка до ~1 МБ
       if(!body.plan||!Array.isArray(body.plan.stops)||!body.plan.stops.length)return json(res,400,{error:"plan_required"});
       const {id,has_card}=sharePlan(body.plan,{title:String(body.title||"").slice(0,80),date:String(body.date||"").slice(0,10)||null,image:typeof body.image==="string"&&body.image.length<1400000?body.image:null});
       const origin=publicOrigin(req);
@@ -717,7 +725,7 @@ const server=http.createServer(async(req,res)=>{
       const rl=dialogueLimiter.check(auth.user?.id?`tg:${auth.user.id}`:`ip:${clientKey(req)}`);
       if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return json(res,429,{error:"rate_limited",message:"Слишком много сообщений, подождите немного",retry_after:rl.retryAfterSec})}
       let body={};
-      try{body=JSON.parse(await readBody(req,240000))}catch(e){return bodyError(res,e)}
+      try{body=await readJsonObject(req,240000)}catch(e){return bodyError(res,e)}
       const message=String(body.message||"").trim();
       if(!message)return json(res,400,{error:"message_required"});
       res.writeHead(200,{"Content-Type":"text/event-stream; charset=utf-8","Cache-Control":"no-store","Connection":"keep-alive","X-Accel-Buffering":"no",...corsHeaders(req)});
@@ -743,7 +751,7 @@ const server=http.createServer(async(req,res)=>{
 
     if(req.method==="POST"&&url.pathname==="/api/recommend"){
       let args={};
-      try{args=JSON.parse(await readBody(req))}catch(e){return bodyError(res,e)}
+      try{args=await readJsonObject(req)}catch(e){return bodyError(res,e)}
       if(!String(args.query||"").trim())return json(res,400,{error:"query_required"});
       const auth=authorize(req);if(auth.error)return json(res,auth.error.status,auth.error);
       try{return json(res,200,await recommend(args))}

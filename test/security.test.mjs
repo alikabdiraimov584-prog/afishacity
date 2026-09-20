@@ -55,3 +55,22 @@ test("ссылка из тегов OpenStreetMap проверяется по с�
     assert.equal(safeLink(bad),null,String(bad));
   assert.equal(safeLink("https://rovesnik.bar/"),"https://rovesnik.bar/");
 });
+
+test("тело запроса обязано быть объектом", async () => {
+  const {readFileSync}=await import("node:fs");
+  const src=readFileSync(new URL("../server.mjs",import.meta.url),"utf8");
+  // «null», «42» и «[1,2]» — валидный JSON, но не объект: обращение к полю
+  // бросало TypeError и отдавало 500. Разбор идёт через общую проверку формы.
+  assert.equal(/JSON\.parse\(await readBody\(/.test(src),false,"остался разбор без проверки формы");
+  assert.ok(src.includes("async function readJsonObject"),"общая проверка формы не найдена");
+  const m=src.match(/async function readJsonObject\(req,max\)\{[\s\S]*?\n\}/);
+  const readJsonObject=new Function("readBody","return "+m[0])(async()=>globalThis.__body);
+  for(const bad of ["null","42","[1,2]",'"строка"',"true"]){
+    globalThis.__body=bad;
+    await assert.rejects(()=>readJsonObject({},1000),SyntaxError,bad);
+  }
+  globalThis.__body='{"query":"бар"}';
+  assert.deepEqual(await readJsonObject({},1000),{query:"бар"});
+  globalThis.__body="";
+  assert.deepEqual(await readJsonObject({},1000),{},"пустое тело — пустой объект");
+});
