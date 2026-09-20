@@ -6,7 +6,7 @@ import {randomUUID} from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import {verifyInitData,createRateLimiter} from "./telegram.mjs";
 import {buildPlan,planSummary} from "./planner.mjs";
-import {mkdirSync,existsSync,readFileSync as readFileSyncFs,writeFileSync as writeFileSyncFs} from "node:fs";
+import {openStore} from "./store.mjs";
 import {searchLiveInventory} from "./providers.mjs";
 import {rankLive,resultPayload} from "./live_ranker.mjs";
 
@@ -29,6 +29,15 @@ function authorize(req){
   const v=verifyInitData(req.headers["x-telegram-init-data"],TG_BOT_TOKEN);
   if(!v.ok)return {error:{status:401,error:"telegram_auth_required",reason:v.reason,message:"Откройте FREE через Telegram-бота"}};
   return {user:v.user};
+}
+// Хранилище: SQLite в data/free.db (FREE_DB переопределяет путь; в тестах — память).
+const store=openStore(process.env.FREE_DB||(process.env.NODE_ENV==="test"?":memory:":join(__dirname,"data","free.db")));
+// Кто перед нами: пользователь Telegram (после проверки подписи) и/или анонимный клиент из заголовка.
+function identify(req,auth){
+  const anon=String(req.headers["x-free-client"]||"").trim();
+  const anon_id=/^[a-z0-9-]{8,64}$/i.test(anon)?anon:null;
+  const tg=auth?.user||null;
+  return store.user({tg_id:tg?.id||null,anon_id,first_name:tg?.first_name||null});
 }
 const CACHE=new Map();
 const CACHE_MS=5*60*1000;
@@ -172,18 +181,12 @@ const planTool={
     required:["stops"]
   }
 };
-const PLAN_DIR=join(__dirname,"data");
-const PLAN_FILE=join(PLAN_DIR,"plans.json");
-const PLANS=new Map();
-try{if(existsSync(PLAN_FILE))for(const [k,v] of Object.entries(JSON.parse(readFileSyncFs(PLAN_FILE,"utf8"))))PLANS.set(k,v)}catch(e){console.error("plans load:",e.message)}
-function plansFlush(){try{mkdirSync(PLAN_DIR,{recursive:true});writeFileSyncFs(PLAN_FILE,JSON.stringify(Object.fromEntries(PLANS)))}catch(e){console.error("plans save:",e.message)}}
 function planId(){return randomUUID().replace(/-/g,"").slice(0,10)}
 function sharePlan(plan,meta={}){
   const id=planId();
   const stops=(plan.stops||[]).map(s=>({...s,alternatives:[]}));
-  PLANS.set(id,{id,created_at:new Date().toISOString(),title:meta.title||"Вечер с FREE",date:meta.date||null,plan:{...plan,stops}});
-  if(PLANS.size>5000){const oldest=[...PLANS.keys()].slice(0,PLANS.size-5000);for(const k of oldest)PLANS.delete(k)}
-  plansFlush();return id;
+  store.setShared(id,{id,created_at:new Date().toISOString(),title:meta.title||"Вечер с FREE",date:meta.date||null,plan:{...plan,stops}});
+  return id;
 }
 async function planEvening(args,context={}){
   const req={...args};
@@ -225,15 +228,9 @@ export function setDialogueClient(client){anthropic=client}
 
 // История диалога хранится на сервере: Messages API не имеет состояния, а интерфейс
 // передаёт только идентификатор (поле previous_response_id / response_id).
-const CONVERSATIONS=new Map();
 const CONVERSATION_TTL_MS=2*60*60*1000;
 const CONVERSATION_MAX_MESSAGES=40;
-function conversationGet(id){
-  const c=id&&CONVERSATIONS.get(id);
-  if(c&&Date.now()-c.at<CONVERSATION_TTL_MS)return c;
-  if(c)CONVERSATIONS.delete(id);
-  return null;
-}
+function conversationGet(id){return store.getConversation(id,CONVERSATION_TTL_MS)}
 function conversationTrim(messages){
   // Режем историю только по границе обычной реплики пользователя, чтобы не разорвать пару tool_use / tool_result.
   while(messages.length>CONVERSATION_MAX_MESSAGES){
@@ -243,11 +240,7 @@ function conversationTrim(messages){
   }
   return messages;
 }
-function conversationSweep(){
-  const now=Date.now();
-  for(const [id,c] of CONVERSATIONS)if(now-c.at>=CONVERSATION_TTL_MS)CONVERSATIONS.delete(id);
-}
-setInterval(conversationSweep,10*60*1000).unref();
+setInterval(()=>store.sweepConversations(CONVERSATION_TTL_MS),10*60*1000).unref();
 
 function dialogueContextSummary(context={}){
   const selected=context.selected_place?{
@@ -411,7 +404,7 @@ async function runDialogue(message,conversationId,context={},emit=null){
       :"Расскажите чуть подробнее, что сейчас для вас важнее.";
   }
 
-  CONVERSATIONS.set(id,{messages:conversationTrim(messages),at:Date.now()});
+  store.setConversation(id,conversationTrim(messages),context.user_id||null);
 
   return {
     reply,
@@ -457,13 +450,43 @@ const server=http.createServer(async(req,res)=>{
       try{body=JSON.parse(await readBody(req,240000))}catch{return json(res,400,{error:"invalid_json"})}
       const message=String(body.message||"").trim();
       if(!message)return json(res,400,{error:"message_required"});
+      const me=identify(req,auth);
       try{
-        return json(res,200,await runDialogue(message,body.previous_response_id||null,body.context||{}));
+        return json(res,200,await runDialogue(message,body.previous_response_id||null,{...(body.context||{}),user_id:me?.id||null}));
       }catch(e){
         console.error("dialogue:",e);
         const err=dialogueError(e);
         return json(res,err.status,{error:err.error,message:err.message,fallback:true});
       }
+    }
+
+    // ---- Профиль и память ----
+    if(url.pathname==="/api/me"||url.pathname.startsWith("/api/me/")){
+      const auth=authorize(req);if(auth.error)return json(res,auth.error.status,auth.error);
+      const me=identify(req,auth);
+      if(!me)return json(res,400,{error:"client_required",message:"Нужен заголовок X-Free-Client или вход через Telegram"});
+      if(req.method==="GET"&&url.pathname==="/api/me"){
+        return json(res,200,{user:{id:me.id,first_name:me.first_name,telegram:Boolean(me.tg_id)},profile:store.getProfile(me.id),evenings:store.evenings(me.id,10),stats:store.stats(me.id),conversation_id:store.lastConversationId(me.id)});
+      }
+      if(req.method==="PUT"&&url.pathname==="/api/me"){
+        let body={};try{body=JSON.parse(await readBody(req,400000))}catch{return json(res,400,{error:"invalid_json"})}
+        return json(res,200,{profile:store.updateProfile(me.id,{taste:body.taste,saved:body.saved,plan:body.plan})});
+      }
+      if(req.method==="POST"&&url.pathname==="/api/me/event"){
+        let body={};try{body=JSON.parse(await readBody(req))}catch{return json(res,400,{error:"invalid_json"})}
+        const type=String(body.type||"").slice(0,20);if(!type)return json(res,400,{error:"type_required"});
+        const taste=store.learn(me.id,type,body.dna&&typeof body.dna==="object"?body.dna:{},{place_id:body.place_id||null,name:String(body.name||"").slice(0,120)});
+        return json(res,200,{taste});
+      }
+      if(req.method==="POST"&&url.pathname==="/api/me/evenings"){
+        let body={};try{body=JSON.parse(await readBody(req,240000))}catch{return json(res,400,{error:"invalid_json"})}
+        if(!body.plan||!Array.isArray(body.plan.stops)||!body.plan.stops.length)return json(res,400,{error:"plan_required"});
+        const id=store.addEvening(me.id,body.plan,{title:String(body.title||"").slice(0,80)||null,date:String(body.date||"").slice(0,10)||null});
+        return json(res,201,{id,evenings:store.evenings(me.id,10)});
+      }
+      const del=url.pathname.match(/^\/api\/me\/evenings\/([a-f0-9]{6,16})$/);
+      if(req.method==="DELETE"&&del){return json(res,200,{ok:store.removeEvening(me.id,del[1]),evenings:store.evenings(me.id,10)})}
+      return json(res,404,{error:"not_found"});
     }
 
     if(req.method==="POST"&&url.pathname==="/api/plan"){
@@ -485,12 +508,12 @@ const server=http.createServer(async(req,res)=>{
     }
 
     if(req.method==="GET"&&/^\/api\/plan\/[a-z0-9]{6,20}$/.test(url.pathname)){
-      const rec=PLANS.get(url.pathname.split("/").pop());
+      const rec=store.getShared(url.pathname.split("/").pop());
       return rec?json(res,200,rec):json(res,404,{error:"not_found"});
     }
 
     if(req.method==="GET"&&/^\/p\/[a-z0-9]{6,20}$/.test(url.pathname)){
-      const rec=PLANS.get(url.pathname.split("/").pop());
+      const rec=store.getShared(url.pathname.split("/").pop());
       if(!rec)return send(res,404,"План не найден или удалён");
       return send(res,200,sharedPlanPage(rec),"text/html; charset=utf-8");
     }
@@ -507,8 +530,9 @@ const server=http.createServer(async(req,res)=>{
       res.writeHead(200,{"Content-Type":"text/event-stream; charset=utf-8","Cache-Control":"no-store","Connection":"keep-alive","X-Accel-Buffering":"no"});
       const emit=(type,data)=>{if(!res.writableEnded)res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`)};
       const ping=setInterval(()=>{if(!res.writableEnded)res.write(": ping\n\n")},15000);
+      const me=identify(req,auth);
       try{
-        const result=await runDialogue(message,body.previous_response_id||null,body.context||{},emit);
+        const result=await runDialogue(message,body.previous_response_id||null,{...(body.context||{}),user_id:me?.id||null},emit);
         emit("done",result);
       }catch(e){
         console.error("dialogue/stream:",e);
@@ -570,7 +594,7 @@ const server=http.createServer(async(req,res)=>{
   }
 });
 
-export {runDialogue,conversationTrim,recommendTool,planTool,dialogueSystem,sharePlan,sharedPlanPage,planEvening,server};
+export {runDialogue,conversationTrim,recommendTool,planTool,dialogueSystem,sharePlan,sharedPlanPage,planEvening,server,store,identify};
 
 if(process.env.NODE_ENV!=="test"){
   server.listen(PORT,HOST,()=>{

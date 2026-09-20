@@ -110,7 +110,7 @@ button,input{font:inherit}button{cursor:pointer}
 
 <section id="view-saved" class="panel"><div class="panelHeader"><div class="eyebrow">SAVED</div><h2>Сохранённое</h2></div><div id="savedList" class="list"></div></section>
 <section id="view-plan" class="panel"><div class="panelHeader"><div class="eyebrow">YOUR PLAN</div><h2>План</h2></div><div id="planList" class="list"></div></section>
-<section id="view-profile" class="panel"><div class="panelHeader"><div class="eyebrow">TASTE GRAPH</div><h2>Ваш вкус</h2></div><div id="tasteGrid" class="tasteGrid"></div></section>
+<section id="view-profile" class="panel"><div class="panelHeader"><div class="eyebrow">TASTE GRAPH</div><h2 id="profileName">Ваш вкус</h2><p id="profileMeta" class="small" style="margin:6px 0 0;color:var(--muted)">Профиль хранится в этом браузере</p></div><div id="tasteGrid" class="tasteGrid"></div></section>
 </main>
 
 <nav class="bottom">
@@ -138,7 +138,9 @@ try{plan=JSON.parse(localStorage.getItem("free_v14_plan")||"[]")}catch(_){}
 
 const TG=(window.Telegram&&window.Telegram.WebApp&&window.Telegram.WebApp.initData)?window.Telegram.WebApp:null;
 if(TG){try{TG.ready();TG.expand();TG.setHeaderColor("#f6f6f4");TG.setBackgroundColor("#f6f6f4");if(TG.disableVerticalSwipes)TG.disableVerticalSwipes()}catch(_){}}
-function apiFetch(path,opts={}){const headers={...(opts.headers||{})};if(TG)headers["X-Telegram-Init-Data"]=TG.initData;return fetch(path,{...opts,headers})}
+// Анонимный идентификатор клиента: профиль живёт на сервере даже без Telegram и переживает очистку вкладки.
+let CLIENT_ID=null;try{CLIENT_ID=localStorage.getItem("free_client_id");if(!CLIENT_ID){CLIENT_ID=(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2));localStorage.setItem("free_client_id",CLIENT_ID)}}catch(_){CLIENT_ID=null}
+function apiFetch(path,opts={}){const headers={...(opts.headers||{})};if(TG)headers["X-Telegram-Init-Data"]=TG.initData;if(CLIENT_ID)headers["X-Free-Client"]=CLIENT_ID;return fetch(path,{...opts,headers})}
 function openExternal(url){
   if(!url)return;
   if(TG){try{if(/^https?:\/\/t\.me\//i.test(url))TG.openTelegramLink(url);else if(/^https?:/i.test(url))TG.openLink(url);else window.location.href=url;return}catch(_){}}
@@ -157,7 +159,52 @@ function deferredOpen(){
 function linkFallback(url,label="Открыть ссылку вручную"){return url?`<div class="small" style="margin-top:8px"><a href="${esc(url)}" target="_blank" rel="noopener" style="color:#315fff;font-weight:600">${esc(label)} ↗</a></div>`:""}
 function esc(s=""){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 function norm(s=""){return String(s).toLowerCase().replace(/ё/g,"е").replace(/<[^>]*>/g," ").replace(/[^a-zа-я0-9+\-\s]/gi," ").replace(/\s+/g," ").trim()}
-function save(){localStorage.setItem("free_v14_taste",JSON.stringify(taste));localStorage.setItem("free_v14_saved",JSON.stringify(saved));localStorage.setItem("free_v14_plan",JSON.stringify(plan));renderSaved();renderPlan();renderTaste()}
+function save(){localStorage.setItem("free_v14_taste",JSON.stringify(taste));localStorage.setItem("free_v14_saved",JSON.stringify(saved));localStorage.setItem("free_v14_plan",JSON.stringify(plan));renderSaved();renderPlan();renderTaste();pushProfile()}
+// ---- Профиль на сервере ----
+let profileState={ready:false,evenings:[],stats:{},user:null},pushTimer=null;
+function pushProfile(){
+  if(!chatState.serverOk||!profileState.ready)return;
+  clearTimeout(pushTimer);
+  pushTimer=setTimeout(()=>{apiFetch("/api/me",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({taste,saved,plan})}).catch(()=>{})},600);
+}
+async function loadProfile(){
+  try{
+    const r=await apiFetch("/api/me");if(!r.ok)return;
+    const d=await r.json();profileState.user=d.user;profileState.evenings=d.evenings||[];profileState.stats=d.stats||{};
+    const p=d.profile||{};
+    const serverHas=(p.saved||[]).length||(p.plan||[]).length||Object.values(p.taste||{}).some(v=>v);
+    const localHas=saved.length||plan.length||Object.values(taste).some(v=>v);
+    if(serverHas){ // сервер — источник правды между устройствами
+      taste={...taste,...(p.taste||{})};saved=p.saved||[];plan=p.plan||[];
+      localStorage.setItem("free_v14_taste",JSON.stringify(taste));localStorage.setItem("free_v14_saved",JSON.stringify(saved));localStorage.setItem("free_v14_plan",JSON.stringify(plan));
+      renderSaved();renderPlan();renderTaste();
+    }
+    profileState.ready=true;
+    if(!serverHas&&localHas)pushProfile();
+    if(d.conversation_id&&!chatState.aiResponseId)chatState.aiResponseId=d.conversation_id;
+    if(d.user?.first_name)$("#profileName").textContent=d.user.first_name;
+    renderProfileMeta();
+  }catch(_){}
+}
+// Обучение вкуса: действие с местом сдвигает Taste Graph на сервере, ответ обновляет локальный профиль.
+function learn(type,r){
+  if(!r)return;
+  if(!chatState.serverOk||!profileState.ready)return;
+  apiFetch("/api/me/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type,dna:r.dna||null,place_id:r.id,name:r.name})})
+    .then(x=>x.ok?x.json():null).then(d=>{if(d&&d.taste){taste={...taste,...d.taste};localStorage.setItem("free_v14_taste",JSON.stringify(taste));profileState.stats[type]=(profileState.stats[type]||0)+1;renderProfileMeta();if($("#view-profile").classList.contains("on"))renderTaste()}}).catch(()=>{});
+}
+async function rememberEvening(p,title){
+  if(!p||!chatState.serverOk||!profileState.ready)return;
+  try{const r=await apiFetch("/api/me/evenings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({plan:p,title:title||("Вечер "+(p.total?.start||"")),date:chatState.slots?.date_word?dateStr(chatState.slots.date_word):null})});if(r.ok){profileState.evenings=(await r.json()).evenings||profileState.evenings;renderProfileMeta()}}catch(_){}
+}
+async function forgetEvening(id){
+  try{const r=await apiFetch("/api/me/evenings/"+id,{method:"DELETE"});if(r.ok){profileState.evenings=(await r.json()).evenings||[];renderPlan()}}catch(_){}
+}
+function renderProfileMeta(){
+  const el=$("#profileMeta");if(!el)return;
+  const st=profileState.stats||{};const n=(st.book||0)+(st.save||0)+(st.select||0)+(st.plan_add||0);
+  el.textContent=profileState.ready?(n?`Профиль синхронизирован · вкус обучен на ${n} действиях · вечеров: ${profileState.evenings.length}`:"Профиль синхронизирован · вкус пока не обучен: выбирайте, сохраняйте, бронируйте"):"Профиль хранится в этом браузере";
+}
 function toast(t){const e=$("#routeStatus");e.textContent=t;e.classList.add("on");clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.remove("on"),3500)}
 function scrollChatToLatest(target=null){
   const el=target||$("#chat").lastElementChild;
@@ -559,7 +606,7 @@ function waWithText(url,text){try{const u=new URL(url);u.searchParams.set("text"
 async function openBooking(id){
   const r=currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id)||plan.find(x=>x.id===id);if(!r)return;
   const url=r.booking_url||(r.kind==="event"?(r.point_source||r.source):null);
-  const text=bookingRequestText(r);chatState.phase="action";
+  const text=bookingRequestText(r);chatState.phase="action";learn("book",r);
   if(!url){const page=r.point_source||r.source;addMsg("ai",`У <b>${esc(r.name)}</b> я пока не вижу отдельного канала бронирования. Открываю страницу места.${linkFallback(page)}`);openExternal(page);return}
   if(r.booking_kind==="phone"||String(url).startsWith("tel:")){addMsg("ai",`Для <b>${esc(r.name)}</b> подтверждённый канал бронирования — телефон.<div class="bookingSummary">${esc(text)}</div>${linkFallback(url,"Позвонить")}`);window.location.href=url;return}
   if(r.kind==="event"||r.booking_kind==="tickets"){addMsg("ai",`Открываю страницу билетов / регистрации для <b>${esc(r.name)}</b>. После оформления можно вернуться сюда — я построю маршрут или продолжу вечер.${linkFallback(url,"Билеты / регистрация")}`);openExternal(url);return}
@@ -590,7 +637,9 @@ function planCard(p,{compact=false}={}){
 }
 function bindPlanCard(root){
   root=root||document;
-  root.querySelectorAll("[data-plan-add]").forEach(b=>b.onclick=()=>{if(!evening)return;for(const s of evening.stops)if(s.place&&!plan.some(x=>x.id===s.place.id))plan.push({...s.place,time:s.slot_start+"–"+s.slot_end});save();toast("Точки добавлены в план");});
+  root.querySelectorAll("[data-plan-add]").forEach(b=>b.onclick=()=>{if(!evening)return;for(const s of evening.stops)if(s.place&&!plan.some(x=>x.id===s.place.id)){plan.push({...s.place,time:s.slot_start+"–"+s.slot_end});learn("plan_add",s.place)}save();rememberEvening(evening);toast("Точки добавлены в план");});
+  root.querySelectorAll("[data-evening-open]").forEach(b=>b.onclick=()=>{const e=profileState.evenings.find(x=>x.id===b.dataset.eveningOpen);if(e&&e.plan){switchView("chat");showPlan(e.plan,"Возвращаю ваш вечер «"+(e.title||"")+"». Можно заменить точки или собрать новый.")}});
+  root.querySelectorAll("[data-evening-del]").forEach(b=>b.onclick=()=>forgetEvening(b.dataset.eveningDel));
   root.querySelectorAll("[data-plan-route]").forEach(b=>b.onclick=()=>{if(!evening)return;routeItems(evening.stops.filter(s=>s.place).map(s=>s.place))});
   root.querySelectorAll("[data-plan-share]").forEach(b=>b.onclick=sharePlanLink);
   root.querySelectorAll("[data-swap]").forEach(b=>b.onclick=()=>swapStop(+b.dataset.swap,b.dataset.alt));
@@ -645,6 +694,7 @@ function planText(p){return "План вечера от FREE\n"+FreePlanner.plan
 async function sharePlanLink(){
   if(!evening)return;
   let url=null;
+  rememberEvening(evening);
   try{const r=await apiFetch("/api/plan/share",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({plan:evening,title:"Вечер "+(evening.total?.start||""),date:chatState.slots?.date_word?dateStr(chatState.slots.date_word):null})});if(r.ok)url=(await r.json()).url}catch(_){}
   const text=url?"Наш план на вечер: "+url:planText(evening);
   if(TG&&url){openExternal("https://t.me/share/url?url="+encodeURIComponent(url)+"&text="+encodeURIComponent("План вечера от FREE"));return}
@@ -666,7 +716,7 @@ async function buildEveningScripted(stops){
 function selectPlace(id){
   const r=currentResults.find(x=>x.id===id);if(!r)return;
   chatState.selected=r;chatState.phase="selected";chatState.awaitingContinuation=false;
-  if(!plan.some(x=>x.id===id))plan.push(r);save();
+  if(!plan.some(x=>x.id===id))plan.push(r);save();learn("select",r);
   let body=`Добавил <b>${esc(r.name)}</b> в план. Что дальше?`;
   body+=`<div class="actionBox"><h4>Следующее действие</h4><p>${r.kind==="event"?"Можно перейти к билетам / регистрации, построить маршрут или продолжить вечер.":"Можно забронировать через реальный канал заведения, построить маршрут или добавить следующую точку."}</p><div class="actionBtns"><button data-book-one>${r.kind==="event"?"Билеты / регистрация":bookingLabel(r)}</button><button data-route-one>Маршрут</button><button class="ghost" data-after>Продолжить вечер</button></div></div>`;
   addMsg("ai",body);
@@ -686,7 +736,7 @@ async function routeItems(items){
   if(!g)toast("Маршрут без вашей геопозиции — задайте точку старта в картах.");
 }
 function routePlace(id){const r=currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id)||plan.find(x=>x.id===id);if(r)routeItems([r])}
-function toggleSave(id){const r=currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id);if(!r)return;const i=saved.findIndex(x=>x.id===id);if(i>=0)saved.splice(i,1);else saved.unshift(r);save();toast(i>=0?"Удалено из Saved":"Сохранено")}
+function toggleSave(id){const r=currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id);if(!r)return;const i=saved.findIndex(x=>x.id===id);if(i>=0)saved.splice(i,1);else{saved.unshift(r);learn("save",r)}save();toast(i>=0?"Удалено из Saved":"Сохранено")}
 function openDetail(id){
   const r=currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id)||plan.find(x=>x.id===id);if(!r)return;
   $("#detail").innerHTML=`<div class="sheet"><button class="close">×</button>
@@ -707,7 +757,9 @@ function renderPlan(){
   const list=plan.length
     ?plan.map((r,i)=>`<div class="row"><div><h3>${i+1}. ${esc(r.name)}</h3><p>${esc(r.time||"по расписанию")} · ${esc(r.area||"")}</p></div><button data-p="${esc(r.id)}">Открыть</button></div>`).join("")+`<div class="row"><div><h3>Маршрут всего плана</h3><p>От текущей геопозиции через все выбранные точки.</p></div><button id="planRoute">Маршрут</button></div>`
     :'<div class="row"><div><h3>Отдельных точек пока нет</h3><p>Выберите место в чате или нажмите «В мой план» на карточке вечера.</p></div></div>';
-  box.innerHTML=top+list;
+  const past=profileState.evenings.filter(e=>e.plan&&!(evening&&JSON.stringify(e.plan.stops.map(s=>s.place?.id))===JSON.stringify(evening.stops.map(s=>s.place?.id)))).slice(0,6);
+  const history=past.length?'<div class="panelHeader" style="margin-top:18px"><div class="eyebrow">ПРОШЛЫЕ ВЕЧЕРА</div></div>'+past.map(e=>`<div class="row"><div><h3>${esc(e.title||"Вечер")}</h3><p>${esc((e.plan.stops||[]).map(s=>s.place?.name||s.query).join(" → "))}${e.date?" · "+esc(e.date):""}</p></div><div style="display:flex;gap:6px"><button data-evening-open="${esc(e.id)}">Открыть</button><button data-evening-del="${esc(e.id)}" title="Удалить">✕</button></div></div>`).join(""):"";
+  box.innerHTML=top+list+history;
   bindPlanCard(box);
   $$("[data-p]").forEach(b=>b.onclick=()=>openDetail(b.dataset.p));
   const pr=$("#planRoute");if(pr)pr.onclick=()=>routeItems(plan);
@@ -724,6 +776,7 @@ async function detectCapabilities(){
     const r=await apiFetch("/api/health",{cache:"no-store"});
     const d=await r.json();
     chatState.serverOk=Boolean(d&&d.ok);
+    if(chatState.serverOk)loadProfile();
     chatState.aiReady=Boolean(d.text_ai_ready);
     if(d.telegram_auth&&!TG){chatState.aiReady=false;$("#hint").textContent="Полный AI-режим доступен внутри Telegram-бота. Здесь работает демо-сценарий."}
     if(d.voice_ready)voice.mode="live";

@@ -8,7 +8,7 @@ Type=simple
 User=free
 WorkingDirectory=/opt/afishacity
 EnvironmentFile=/opt/afishacity/.env
-ExecStart=/usr/bin/node server.mjs
+ExecStart=/usr/bin/node --no-warnings=ExperimentalWarning server.mjs
 Restart=always
 RestartSec=3
 NoNewPrivileges=true
