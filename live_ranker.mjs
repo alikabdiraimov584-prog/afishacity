@@ -1,18 +1,28 @@
 function norm(s=""){return String(s).toLowerCase().replace(/ё/g,"е").replace(/<[^>]*>/g," ").replace(/[^a-zа-я0-9\s]/gi," ").replace(/\s+/g," ").trim()}
 function words(s){const stop=new Set(["куда","сходить","пойти","хочу","хочется","сегодня","завтра","вечером","после","москва","москве","очень","сильно","много","какой","какое","что","для","чтобы","можно","найди","место"]);return norm(s).split(" ").filter(w=>w.length>3&&!stop.has(w))}
+// Короткие корни (бар, рок, спа, арт, еда, семь) задаём регэкспами с границами слов:
+// \b в JS не работает для кириллицы, а includes() ловит «барбершоп», «Крокус», «спать», «восемь».
+const BAR_RE=/(?<![а-я])(бар(?!бер|аба|бек|он|ин|сук|рикад)|паб(?!лик)|пив[ао]|вин[оа](?![а-я])|винн|винотек)|(?<![a-z])pub(?!li)|выпить|коктейл/;
+const ROCK_RE=/(?<![а-я])рок(?![а-я])|(?<![a-z])rock/;
 const SYN={
-  hookah:["кальян","кальянная","лаунж","hookah","shisha"],bar:["бар","паб","pub","коктейль","выпить","пиво","вино"],food:["ресторан","кафе","еда","ужин","поесть","бранч"],
-  coffee:["кофе","кофейня"],work:["поработать","ноутбук","коворкинг","работы","встреча"],family:["ребенок","ребёнок","дети","семья","семейный"],
+  hookah:["кальян","кальянная","лаунж","hookah","shisha"],bar:[BAR_RE],food:["ресторан","кафе",/(?<![а-я])ед[аыеу](?![а-я])/,"ужин","поесть","бранч"],
+  coffee:["кофе","кофейня"],work:["поработать","ноутбук","коворкинг","работы","встреча"],family:[/ребен|(?<![а-я])дет(и|ей|ям|ьми|ск|ишк)|(?<![а-я])семь[яиею]|семейн/],
   date:["свидание","романтика","вдвоем","вдвоём"],birthday:["день рождения","праздник","компания"],
-  comedy:["стендап","комедия","юмор"],jazz:["джаз","jazz"],rock:["рок","rock"],music:["концерт","музыка","группа","джаз","рок"],
-  art:["выставка","искусство","галерея","арт"],science:["наука","космос","планетарий"],theatre:["театр","спектакль","опера","балет"],
-  club:["клуб","вечеринка","танцы","тусовка"],karaoke:["караоке"],active:["боулинг","бильярд","квест","активно","vr"],spa:["баня","сауна","спа","массаж","йога"],
+  comedy:["стендап","комедия","юмор"],jazz:["джаз","jazz"],rock:[ROCK_RE],music:["концерт","музыка","группа","джаз",ROCK_RE],
+  art:["выставка","искусство","галерея",/(?<![а-я])арт(?![а-я])/],science:["наука","космос","планетарий"],theatre:["театр","спектакль","опера","балет"],
+  club:["клуб","вечеринка","танцы","тусовка"],karaoke:["караоке"],active:["боулинг","бильярд","квест","активно","vr"],spa:[/(?<![а-я])бан(я|и|ю|е|ей)(?![а-я])/,"сауна",/(?<![а-я])спа(?![а-я])/,"массаж","йога"],
   beauty:["салон","маникюр","парикмахер","косметолог"],experience:["дегустация","мастер класс","экскурсия","яхта","необычное"]
 };
-function requestedTags(query,plan){const n=norm(query),out=[...(plan.tags||[])];for(const [tag,terms] of Object.entries(SYN))if(terms.some(t=>n.includes(norm(t))))out.push(tag);return [...new Set(out)]}
+function hasTerm(n,t){return t instanceof RegExp?t.test(n):n.includes(norm(t))}
+function requestedTags(query,plan){const n=norm(query),out=[...(plan.tags||[])];for(const [tag,terms] of Object.entries(SYN))if(terms.some(t=>hasTerm(n,t)))out.push(tag);return [...new Set(out)]}
+function moscowDate(){return new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Moscow",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date())}
 function itemText(x){return norm([x.name,x.organizer,x.cat,x.area,x.metro,x.desc,x.keywords,(x.tags||[]).join(" ")].filter(Boolean).join(" "))}
 function toMin(t){const m=String(t||"").match(/^(\d{1,2}):(\d{2})/);return m?+m[1]*60 + +m[2]:null}
-function dateOkay(x,args){if(!args.target_date)return true;if(x.kind==="venue")return true;if(!x.date_start)return false;return args.target_date>=x.date_start&&args.target_date<=(x.date_end||x.date_start)}
+function dateOkay(x,args){
+  if(x.kind==="venue")return true;
+  if(!args.target_date){const last=x.date_end||x.date_start;return !last||last>=moscowDate()}
+  if(!x.date_start)return false;return args.target_date>=x.date_start&&args.target_date<=(x.date_end||x.date_start)
+}
 function timeOkay(x,args){if(!args.after_time||!x.times?.length)return true;const a=toMin(args.after_time);return x.times.some(t=>toMin(t)!==null&&toMin(t)>=a)}
 function priceOkay(x,args){if(args.max_price_rub===undefined||args.max_price_rub===null)return true;if(x.price_min===null||x.price_min===undefined)return true;return x.price_min<=+args.max_price_rub}
 function clamp(v,a=0,b=100){return Math.max(a,Math.min(b,v))}
@@ -20,11 +30,13 @@ function has(text,re){return re.test(text)}
 
 export function placeDna(x){
   const text=itemText(x), tags=new Set(x.tags||[]);
-  const score=(base,...conds)=>clamp(base+conds.reduce((s,c)=>s+(c?18:0),0));
-  const late = has(text,/ноч|до 0[1-6]|24\/7|круглосуточ|бар|клуб|караоке|кальян/)||tags.has("nightlife");
+  // Одно сработавшее условие выводит признак в зону «выражен» (~60), каждое следующее добавляет ещё.
+  // Так пороги >=55/60/70 в ранкере и UI реально достижимы; без условий остаётся базовое значение.
+  const score=(base,...conds)=>{const h=conds.filter(Boolean).length;return h?clamp(58+(h-1)*14+Math.round(base/8)):clamp(base)};
+  const late = has(text,/ноч|до 0[1-6]|24\/7|круглосуточ|(?<![а-я])(бар(?!бер|аба|бек|он|ин|сук|рикад)|паб(?!лик))|клуб|караоке|кальян/)||tags.has("nightlife");
   const quiet = has(text,/тих|спокой|камерн|уют|библиот|коворкинг/)&&!has(text,/клуб|вечерин|караоке|стендап|концерт/);
-  const romantic = has(text,/панорам|вино|винн|коктейл|свидан|романт|джаз|ресторан/)&&!has(text,/детск|семейн/);
-  const trendy = has(text,/дизайн|арт|модн|новый|новая|коктейл|винзавод|лофт|концепт|иммерсив/);
+  const romantic = has(text,/панорам|(?<![а-я])вин[оа](?![а-я])|винн|коктейл|свидан|романт|джаз|ресторан/)&&!has(text,/детск|семейн/);
+  const trendy = has(text,/дизайн|(?<![а-я])арт(?![а-я])|модн|новый|новая|коктейл|винзавод|лофт|концепт|иммерсив/);
   const luxury = has(text,/fine|преми|lux|панорам|отель|авторск|гастроном/);
   const hidden = has(text,/переул|скрыт|секрет|камерн|необыч|иммерсив/)&&!has(text,/вднх|планетар|третьяков|пушкинск/);
   const kids = tags.has("family")||has(text,/детск|ребен|семейн|зоопарк|экспериментаниум/);
@@ -47,7 +59,7 @@ export function placeDna(x){
     culture:score(20,culture),
     music:score(20,music),
     nightlife:score(18,nightlife),
-    outdoors:score(15,outdoors)
+    outdoors:score(15,outdoors,tags.has("outdoors"))
   };
 }
 function coordsPair(c){
@@ -91,7 +103,7 @@ export function rankLive(items,args={},plan={}){
     if(!dateOkay(x,args)||!timeOkay(x,args)||!priceOkay(x,args))continue;
     if(x.availability&&/закрыт/.test(norm(x.availability)))continue;
     const text=itemText(x),xtags=new Set(x.tags||[]),dna=placeDna(x);let s=0,reasons=[],strongHit=0;
-    for(const t of tags){if(xtags.has(t)||SYN[t]?.some(k=>text.includes(norm(k)))){s+=strong.has(t)?58:22;strongHit++;reasons.push(t)}}
+    for(const t of tags){if(xtags.has(t)||SYN[t]?.some(k=>hasTerm(text,k))){s+=strong.has(t)?58:22;strongHit++;reasons.push(t)}}
     let lex=0;for(const w of qwords){if(text.includes(w)){lex+=9;reasons.push(w)}}s+=Math.min(54,lex);
     if(strong.size&&strongHit===0&&lex<18)continue;
     if(!strong.size&&qwords.length===0)s+=18;

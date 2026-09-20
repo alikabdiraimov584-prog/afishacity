@@ -13,6 +13,17 @@ function addDays(dateStr,n){const d=new Date(dateStr+"T12:00:00Z");d.setUTCDate(
 function dateBounds(targetDate){const start=targetDate||moscowDate();const end=targetDate||addDays(start,30);return {start,end}}
 function toEpoch(date,time="00:00:00"){return Math.floor(Date.parse(`${date}T${time}+03:00`)/1000)}
 
+// В JS \b работает только для латиницы, поэтому границы кириллических слов
+// задаём через lookbehind/lookahead. Все регэкспы применяются к norm()-тексту:
+// нижний регистр, ё→е, пунктуация заменена пробелами.
+const BAR_RE=/(?<![а-я])(бар(?!бер|аба|бек|он|ин|сук|рикад)|паб(?!лик)|пив[ао]|вин[оа](?![а-я])|винн|винотек)|(?<![a-z])pub(?!li)|выпить|коктейл|алкогол|дринк/;
+const FOOD_RE=/ресторан|поесть|ужин|(?<![а-я])ед[аыеу](?![а-я])|кухн|кафе|завтрак|бранч/;
+const FAMILY_RE=/ребен|(?<![а-я])дет(и|ей|ям|ьми|ск|ишк)|(?<![а-я])семь[яиею]|семейн/;
+const SPA_RE=/(?<![а-я])бан(я|и|ю|е|ей)(?![а-я])|саун|(?<![а-я])спа(?![а-я])/;
+const ROCK_RE=/(?<![а-я])рок(?![а-я])|(?<![a-z])rock/;
+const ART_RE=/выстав|искусств|галере|(?<![а-я])арт(?![а-я])/;
+const STOP=new Set(["куда","сходить","пойти","хочу","хочется","сегодня","завтра","вечером","после","москва","москве","москву","очень","сильно","много","какой","какое","какие","что","чтобы","можно","найди","найти","место","места","нибудь","что-нибудь","есть","нужно","надо","давай","давайте","посоветуй","подскажи","рядом","около","недалеко","меня","нас","мне","мы","нам","компанией","человек"]);
+
 async function fetchJson(url,opts={}){
   const ctrl=new AbortController();const t=setTimeout(()=>ctrl.abort(),TIMEOUT_MS);
   try{
@@ -24,30 +35,29 @@ async function fetchJson(url,opts={}){
 
 const PLACE_RULES = [
   {re:/кальян|покурить|hookah|shisha/, queries:["кальянная","кальян-бар","лаунж бар"], tags:["hookah","lounge","nightlife"]},
-  {re:/бар|паб|выпить|коктейл|пиво|вино|алкогол|дринк/, queries:["бар","паб","коктейльный бар"], tags:["bar","nightlife"]},
-  {re:/ресторан|поесть|ужин|еда|кухн|кафе|завтрак/, queries:["ресторан","кафе"], tags:["food"]},
+  {re:BAR_RE, queries:["бар","паб","коктейльный бар"], tags:["bar","nightlife"]},
+  {re:FOOD_RE, queries:["ресторан","кафе"], tags:["food"]},
   {re:/караоке/, queries:["караоке"], tags:["karaoke","nightlife"]},
   {re:/клуб|танц|вечеринк|тусовк/, queries:["ночной клуб","бар с танцами"], tags:["club","nightlife","music"]},
   {re:/боулинг/, queries:["боулинг"], tags:["bowling","active"]},
   {re:/бильярд/, queries:["бильярд"], tags:["billiards","active"]},
-  {re:/баня|саун|спа/, queries:["баня","сауна","спа"], tags:["spa"]},
+  {re:SPA_RE, queries:["баня","сауна","спа"], tags:["spa"]},
   {re:/кофе|кофейн|ноутбук|поработать|работать/, queries:["кофейня","коворкинг"], tags:["coffee","work"]},
   {re:/коворкинг|деловая встреча|business lunch|бизнес ланч/, queries:["коворкинг","кафе для работы","бизнес-ланч"], tags:["work"]},
-  {re:/ребен|ребён|дети|семь/, queries:["детский центр","семейный ресторан","интерактивный музей"], tags:["family"]},
+  {re:FAMILY_RE, queries:["детский центр","семейный ресторан","интерактивный музей"], tags:["family"]},
   {re:/свидан|романт|вдвоем|вдвоём/, queries:["ресторан","винный бар","коктейльный бар"], tags:["date"]},
   {re:/день рождения|праздн|8 человек|компан/, queries:["лофт","караоке","квест","ресторан"], tags:["birthday","friends"]},
   {re:/brunch|бранч/, queries:["бранч","кафе","ресторан"], tags:["food"]},
   {re:/массаж|йога|wellness|фитнес/, queries:["массаж","йога","фитнес-клуб","спа"], tags:["spa"]},
-  {re:/салон|маникюр|парикмах|косметолог|beauty/, queries:["салон красоты","маникюр","парикмахерская"], tags:["beauty"]},
-  {re:/кофе|кофейн/, queries:["кофейня"], tags:["coffee"]}
+  {re:/салон|маникюр|парикмах|косметолог|beauty/, queries:["салон красоты","маникюр","парикмахерская"], tags:["beauty"]}
 ];
 const EVENT_RULES = [
   {re:/стендап|stand\s?up|комед|юмор/, queries:["стендап"], tags:["comedy"]},
   {re:/джаз|jazz/, queries:["джаз"], tags:["jazz","music"]},
-  {re:/рок|rock/, queries:["рок"], tags:["rock","music"]},
+  {re:ROCK_RE, queries:["рок"], tags:["rock","music"]},
   {re:/концерт|музык|группа|исполнител|песн/, queries:["концерт"], tags:["music"]},
   {re:/театр|спектак|опера|балет/, queries:["спектакль"], tags:["theatre"]},
-  {re:/выстав|искусств|галере|арт/, queries:["выставка"], tags:["art","culture"]},
+  {re:ART_RE, queries:["выставка"], tags:["art","culture"]},
   {re:/лекц|паблик|форум|конференц/, queries:["лекция"], tags:["lecture"]},
   {re:/мастер.?класс|воркшоп/, queries:["мастер-класс"], tags:["workshop"]},
   {re:/фестивал|маркет|ярмарк/, queries:["фестиваль"], tags:["festival"]},
@@ -58,15 +68,14 @@ export function buildSearchPlan(args={}){
   const q=norm(args.query||"");const placeQueries=[],eventQueries=[],tags=[];
   for(const r of PLACE_RULES)if(r.re.test(q)){placeQueries.push(...r.queries);tags.push(...r.tags)}
   for(const r of EVENT_RULES)if(r.re.test(q)){eventQueries.push(...r.queries);tags.push(...r.tags)}
-  const safeQuery=q.replace(/\b(сильно|очень|много|побольше|до упаду|в хлам)\b/g," ").replace(/\s+/g," ").trim();
-  if(!placeQueries.length&&!eventQueries.length){
-    const core=safeQuery.split(" ").filter(w=>w.length>3&&!/[0-9]/.test(w)).slice(0,5).join(" ");
-    if(core){eventQueries.push(core);placeQueries.push(core)}
-  }
+  const safeQuery=q.replace(/(^|\s)(сильно|очень|много|побольше|до упаду|в хлам)(?=\s|$)/g," ").replace(/\s+/g," ").trim();
+  // Ядро запроса без стоп-слов: то, что реально стоит искать в провайдерах.
+  const coreQuery=safeQuery.split(" ").filter(w=>w.length>3&&!/[0-9]/.test(w)&&!STOP.has(w)&&!/^бесплат/.test(w)).slice(0,5).join(" ");
+  if(!placeQueries.length&&!eventQueries.length&&coreQuery){eventQueries.push(coreQuery);placeQueries.push(coreQuery)}
   const placeIntent=placeQueries.length>0;
   const eventIntent=eventQueries.length>0;
   return {
-    raw:args.query||"",safeQuery,
+    raw:args.query||"",safeQuery,coreQuery,
     placeQueries:uniq(placeQueries).slice(0,4),eventQueries:uniq(eventQueries).slice(0,4),tags:uniq(tags),
     placeIntent,eventIntent,
     targetDate:args.target_date||null,maxPrice:args.max_price_rub??null,freeOnly:args.max_price_rub===0||/бесплат/.test(q),
@@ -78,10 +87,10 @@ export function buildSearchPlan(args={}){
 function inferTags(text){
   const n=norm(text),t=[];
   const map=[
-    ["hookah",/кальян|hookah|shisha/],["bar",/бар|паб|pub|коктейл/],["food",/ресторан|кафе|кухн|еда|ужин/],
-    ["karaoke",/караоке/],["club",/клуб|вечерин|dance/],["nightlife",/бар|паб|клуб|караоке|ночн/],
-    ["comedy",/стендап|standup|комед|юмор/],["jazz",/джаз|jazz/],["rock",/рок|rock/],["music",/музык|концерт|джаз|рок|группа/],
-    ["art",/искусств|выстав|галере|арт/],["culture",/музей|искусств|театр|выстав/],["theatre",/театр|спектак|балет|опера/],
+    ["hookah",/кальян|hookah|shisha/],["bar",BAR_RE],["food",FOOD_RE],["family",FAMILY_RE],
+    ["karaoke",/караоке/],["club",/клуб|вечерин|dance/],["nightlife",/(?<![а-я])(бар(?!бер|аба|бек|он|ин|сук|рикад)|паб(?!лик))|клуб|караоке|ночн/],
+    ["comedy",/стендап|standup|комед|юмор/],["jazz",/джаз|jazz/],["rock",ROCK_RE],["music",/музык|концерт|джаз|группа|(?<![а-я])рок(?![а-я])/],
+    ["art",ART_RE],["culture",/музей|искусств|театр|выстав/],["theatre",/театр|спектак|балет|опера/],
     ["science",/наук|планетар|космос|лекц/],["space",/космос|планетар|астроном/],["lecture",/лекц|форум|паблик/],
     ["workshop",/мастер.?класс|воркшоп/],["festival",/фестивал|маркет|ярмарк/],["active",/боулинг|бильярд|квест|спорт/]
   ];
@@ -108,14 +117,16 @@ function normalizeKudagoEvent(e,plan){
   const dates=Array.isArray(e.dates)?e.dates:[];
   const b=dateBounds(plan.targetDate);const minEpoch=toEpoch(b.start);const maxEpoch=toEpoch(b.end,"23:59:59");
   const relevant=dates.filter(d=>!d.start||(+d.start>=minEpoch-86400&&+d.start<=maxEpoch+86400));
-  const d=relevant[0]||dates[0]||{};
+  // Если в окне поиска дат нет — берём ближайшую будущую, а не первую (возможно, давно прошедшую).
+  const d=relevant[0]||dates.find(x=>+x.start>=minEpoch-86400)||dates[dates.length-1]||{};
+  const epochDate=v=>v?isoDate(+v*1000):null;
   const place=e.place||{};
   const pi=priceInfo(e.price,e.is_free===true);
   const text=[e.title,e.description,(e.categories||[]).map(x=>x.name).join(" "),(e.tags||[]).join(" ")].join(" ");
   return {
     id:`kudago:event:${e.id}`,provider:"KudaGo",live:true,kind:"event",name:e.title||e.short_title||"Событие",
     organizer:place.title||"KudaGo",cat:(e.categories||[])[0]?.name||"Событие",tags:uniq([...inferTags(text),...plan.tags]),
-    area:place.address||"Москва",metro:place.subway||"",date_start:d.start_date||isoDate((+d.start||0)*1000),date_end:d.end_date||d.start_date||isoDate((+d.end||+d.start||0)*1000),
+    area:place.address||"Москва",metro:place.subway||"",date_start:d.start_date||epochDate(d.start),date_end:d.end_date||d.start_date||epochDate(d.end||d.start),
     times:uniq(relevant.map(x=>x.start_time?x.start_time.slice(0,5):null).filter(Boolean)).slice(0,8),hours_label:"",
     ...pi,availability:"актуальность из KudaGo",source:e.site_url||place.site_url||"https://kudago.com/msk/",
     point_source:e.site_url||place.site_url||"https://kudago.com/msk/",official_source:null,
@@ -184,12 +195,14 @@ function normalizeTimepadEvent(e,plan){
 
 export async function searchTimepad(plan){
   const out=[],errors=[];const b=timepadBounds(plan);
-  const qs=plan.eventQueries.length?plan.eventQueries.slice(0,3):[plan.safeQuery];
+  // Без распознанного намерения ищем по ядру запроса; пустое ядро = все ближайшие события Москвы.
+  const qs=plan.eventQueries.length?plan.eventQueries.slice(0,3):[plan.coreQuery||""];
   for(const q of qs){
     try{
       const u=new URL("https://api.timepad.ru/v1/events.json");u.searchParams.set("limit","50");u.searchParams.set("skip","0");u.searchParams.set("cities","Москва");u.searchParams.set("sort","+starts_at");u.searchParams.set("starts_at_min",b.start);u.searchParams.set("starts_at_max",b.end);u.searchParams.set("fields","location,organization,categories,registration_data,description_short,ticket_types,poster_image");
       const kw=norm(q).split(" ").filter(w=>w.length>3).slice(0,2);if(kw.length)u.searchParams.set("keywords",kw.join(","));
-      if(plan.maxPrice!==null&&plan.maxPrice!==undefined)u.searchParams.set("price_max",String(plan.maxPrice));
+      if(plan.freeOnly)u.searchParams.set("price_max","0");
+      else if(plan.maxPrice!==null&&plan.maxPrice!==undefined)u.searchParams.set("price_max",String(plan.maxPrice));
       const d=await fetchJson(u);
       for(const e of (d.values||[]))out.push(normalizeTimepadEvent(e,plan));
     }catch(e){errors.push(`Timepad: ${e.message}`)}
@@ -255,7 +268,7 @@ const OSM_RULES = [
     'nwr["amenity"="hookah_lounge"]({{bbox}});',
     'nwr["name"~"кальян|hookah|shisha",i]({{bbox}});'
   ], tag:"hookah"},
-  {re:/бар|паб|выпить|коктейл|пиво|вино|алкогол|дринк/, filters:[
+  {re:BAR_RE, filters:[
     'nwr["amenity"~"bar|pub|biergarten"]({{bbox}});'
   ], tag:"bar"},
   {re:/караоке/, filters:[
@@ -265,7 +278,7 @@ const OSM_RULES = [
   {re:/клуб|танц|вечеринк|тусовк/, filters:[
     'nwr["amenity"="nightclub"]({{bbox}});'
   ], tag:"club"},
-  {re:/ресторан|поесть|ужин|еда|кухн|кафе|завтрак/, filters:[
+  {re:FOOD_RE, filters:[
     'nwr["amenity"~"restaurant|cafe"]({{bbox}});'
   ], tag:"food"},
   {re:/боулинг/, filters:[
@@ -274,7 +287,7 @@ const OSM_RULES = [
   {re:/бильярд/, filters:[
     'nwr["sport"="billiards"]({{bbox}});'
   ], tag:"active"},
-  {re:/баня|саун|спа/, filters:[
+  {re:SPA_RE, filters:[
     'nwr["leisure"="spa"]({{bbox}});',
     'nwr["amenity"="sauna"]({{bbox}});'
   ], tag:"spa"},
@@ -285,7 +298,7 @@ const OSM_RULES = [
   {re:/коворкинг|деловая встреча/, filters:[
     'nwr["office"="coworking"]({{bbox}});'
   ], tag:"work"},
-  {re:/ребен|ребён|дети|семь/, filters:[
+  {re:FAMILY_RE, filters:[
     'nwr["leisure"="playground"]({{bbox}});',
     'nwr["amenity"~"cinema|theatre"]({{bbox}});'
   ], tag:"family"},

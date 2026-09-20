@@ -1,0 +1,16 @@
+{
+  "name": "afishacity",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FREE — разговорный AI-консьерж по местам и событиям Москвы",
+  "type": "module",
+  "main": "server.mjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "check": "node --check server.mjs && node --check providers.mjs && node --check live_ranker.mjs && node --test",
+    "test": "node --test"
+  }
+}
