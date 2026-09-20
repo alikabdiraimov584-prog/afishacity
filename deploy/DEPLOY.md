@@ -13,7 +13,18 @@ Telegram открывает Mini App только по HTTPS, поэтому н�
 2. Позже, когда сайт заработает по HTTPS: `/newapp` → выберите бота → название, описание, картинка 640×360 → **Web App URL: `https://YOUR_DOMAIN`** → короткое имя. Ссылка на приложение: `https://t.me/BOT_NAME/APP_NAME`.
 3. Кнопка меню в чате с ботом: `/mybots` → бот → Bot Settings → Menu Button → URL `https://YOUR_DOMAIN`.
 
-## 3. Сервер
+## 3. Быстрый путь: одна команда
+
+На сервере от root (шаги 3 и 4 ниже выполняются автоматически):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/alikabdiraimov584-prog/afishacity/claude/blissful-lamport-3rprjv/deploy/install.sh | bash -s -- ваш.домен ТОКЕН_БОТА
+```
+
+Токен бота можно не указывать и вписать позже в `/opt/afishacity/.env`.
+Повторный запуск той же команды обновляет код и перезапускает сервис.
+
+## 3а. Сервер вручную
 
 ```bash
 # Node.js 22
