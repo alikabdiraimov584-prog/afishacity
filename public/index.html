@@ -722,7 +722,16 @@ function bookingRequestText(r){
   parts.push("Запрос сформирован через FREE.");
   return parts.join(" ");
 }
-async function copyText(text){try{await navigator.clipboard.writeText(text);return true}catch{return false}}
+async function copyText(text){
+  try{await navigator.clipboard.writeText(text);return true}catch(_){}
+  // Во фрейме и без HTTPS Clipboard API закрыт — пробуем устаревший способ.
+  try{
+    const ta=document.createElement("textarea");ta.value=text;ta.setAttribute("readonly","");
+    ta.style.cssText="position:fixed;left:-9999px;top:0;opacity:0";document.body.appendChild(ta);
+    ta.select();ta.setSelectionRange(0,text.length);
+    const ok=document.execCommand&&document.execCommand("copy");ta.remove();return Boolean(ok);
+  }catch(_){return false}
+}
 function waWithText(url,text){try{const u=new URL(url);u.searchParams.set("text",text);return u.href}catch{return url}}
 async function openBooking(id){
   const r=currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id)||plan.find(x=>x.id===id);if(!r)return;
@@ -811,7 +820,6 @@ async function refindStop(i){
   if(last){const wrap=document.createElement("div");wrap.innerHTML=planCard(rebuilt);last.replaceWith(wrap.firstElementChild);bindPlanCard($("#chat"))}
   if($("#view-plan").classList.contains("on"))renderPlan();
 }
-function planText(p){return shareText(p,null)}
 // Короткий текст для мессенджера: без длинных ссылок, ссылка на страницу плана отдельной строкой.
 function shareText(p,url){
   const names=(p.stops||[]).filter(s=>s.place).map(s=>`${s.slot_start} ${s.place.name}`);
@@ -819,19 +827,33 @@ function shareText(p,url){
   return [head,...names,url||""].filter(Boolean).join("\n");
 }
 function planTitle(p){const d=chatState.slots?.date_word;const when=d==="today"?"сегодня":d==="tomorrow"?"завтра":d==="weekend"?"в выходные":"";return ("Вечер "+(when||(p.total?.start||""))).trim()}
-async function blobToDataUrl(b){return new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result);fr.readAsDataURL(b)})}
+// Когда системный шаринг недоступен — показываем карточку и текст в чате: можно выделить и сохранить.
+function shareFallbackMessage(text,url,blob,copied){
+  const img=blob?URL.createObjectURL(blob):null;
+  const html=`<div>${copied?"Скопировал текст плана.":"Вот план — выделите текст, чтобы скопировать."}</div>`
+    +(img?`<div style="margin:12px 0 8px"><img src="${img}" alt="Карточка плана" style="width:100%;height:auto;display:block;border-radius:16px"></div><div class="small" style="margin-bottom:8px">Нажмите на картинку и удерживайте, чтобы сохранить её.</div>`:"")
+    +`<div class="bookingSummary" style="white-space:pre-wrap;user-select:text;-webkit-user-select:text">${esc(text)}</div>`
+    +(url?`<div class="small" style="margin-top:8px"><a href="${esc(url)}" target="_blank" rel="noopener" style="color:#315fff;font-weight:600">Открыть страницу плана ↗</a></div>`:"");
+  const m=addMsg("ai",html);
+  if(img)setTimeout(()=>URL.revokeObjectURL(img),180000);
+  return m;
+}
+async function blobToDataUrl(b){return new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.onerror=fr.onabort=()=>rej(new Error("read failed"));fr.readAsDataURL(b)})}
 // Шаринг как у Strava: карточка-картинка с итогами и схемой + короткая ссылка с превью.
 async function sharePlanLink(){
   if(!evening)return;
   const btns=[...document.querySelectorAll("[data-plan-share]")];btns.forEach(b=>{b.disabled=true;b.textContent="Готовлю…"});
   const title=planTitle(evening);
-  const dateStrLabel=chatState.slots?.date_word?new Date(dateStr(chatState.slots.date_word)+"T12:00:00").toLocaleDateString("ru-RU",{day:"numeric",month:"long"}):"";
+  const dw=chatState.slots?.date_word;
+  const hasDate=["today","tomorrow","weekend"].includes(dw);
+  const dateStrLabel=hasDate?new Date(dateStr(dw)+"T12:00:00").toLocaleDateString("ru-RU",{day:"numeric",month:"long"}):"";
   let blob=null;try{blob=await FreeShareCard.render(evening,{title,date:dateStrLabel,host:API_BASE?new URL(API_BASE).host:(location.host||"")})}catch(e){console.warn("card:",e)}
   rememberEvening(evening,title);
-  let url=null;
+  let url=null,cardData=null;
   try{
-    const image=blob&&blob.size<900000?await blobToDataUrl(blob):null;
-    const r=await apiFetch("/api/plan/share",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({plan:evening,title,date:chatState.slots?.date_word?dateStr(chatState.slots.date_word):null,image})});
+    if(blob&&blob.size<900000){try{cardData=await blobToDataUrl(blob)}catch(_){}}
+    const image=cardData;
+    const r=await apiFetch("/api/plan/share",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({plan:evening,title,date:hasDate?dateStr(dw):null,image})});
     if(r.ok)url=(await r.json()).url;
   }catch(_){}
   const text=shareText(evening,url);
@@ -841,7 +863,7 @@ async function sharePlanLink(){
       const payload={title,text,dialogTitle:"Поделиться планом"};
       if(url)payload.url=url;
       if(blob&&NATIVE.Filesystem){
-        try{const data=(await blobToDataUrl(blob)).split(",")[1];const f=await NATIVE.Filesystem.writeFile({path:"free-plan.png",data,directory:"CACHE"});payload.files=[f.uri]}catch(e){console.warn("file:",e)}
+        try{const data=(cardData||await blobToDataUrl(blob)).split(",")[1];const f=await NATIVE.Filesystem.writeFile({path:"free-plan.png",data,directory:"CACHE"});payload.files=[f.uri]}catch(e){console.warn("file:",e)}
       }
       await NATIVE.Share.share(payload);haptic("success");return;
     }
@@ -850,11 +872,15 @@ async function sharePlanLink(){
       const withFile=file&&navigator.canShare&&navigator.canShare({files:[file]});
       await navigator.share(withFile?{title,text,files:[file]}:(url?{title,text,url}:{title,text}));return;
     }
-  }catch(e){if(e&&e.name==="AbortError")return}
-  // Браузер без системного шаринга: копируем текст со ссылкой и отдаём картинку файлом.
+  }catch(e){
+    // Пользователь закрыл окно — выходим молча; настоящую ошибку показываем запасным путём.
+    const msg=String((e&&(e.message||e.errorMessage))||"");
+    if((e&&e.name==="AbortError")||/cancel|отмен|dismiss/i.test(msg))return;
+    console.warn("share:",e);
+  }
   const copied=await copyText(text);
-  if(blob){const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="free-plan.png";document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},2000)}
-  toast(copied?(url?"Ссылка и текст скопированы, картинка сохранена":"Текст плана скопирован, картинка сохранена"):"Не удалось скопировать");
+  shareFallbackMessage(text,url,blob,copied);
+  toast(copied?"Текст плана скопирован":"Показал план в чате — выделите и скопируйте");
 }
 // Резервный сценарий: «поужинать, потом в бар» → план без нейросети.
 async function buildEveningScripted(stops){

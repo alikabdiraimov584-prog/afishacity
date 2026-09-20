@@ -7,7 +7,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import {verifyInitData,createRateLimiter} from "./telegram.mjs";
 import {buildPlan,planSummary} from "./planner.mjs";
 import {openStore} from "./store.mjs";
-import {mkdirSync,writeFileSync as writeFileSyncFs,existsSync} from "node:fs";
+import {mkdirSync,writeFileSync as writeFileSyncFs,existsSync,readdirSync,unlinkSync,statSync} from "node:fs";
 import {searchLiveInventory} from "./providers.mjs";
 import {rankLive,resultPayload} from "./live_ranker.mjs";
 import {startWarmup} from "./warmup.mjs";
@@ -20,7 +20,8 @@ const HOST=process.env.HOST||"127.0.0.1";
 const TG_BOT_TOKEN=process.env.TELEGRAM_BOT_TOKEN||"";
 const TG_REQUIRED=Boolean(TG_BOT_TOKEN);
 const dialogueLimiter=createRateLimiter({limit:Number(process.env.DIALOGUE_RATE_LIMIT||40),windowMs:10*60*1000});
-setInterval(()=>dialogueLimiter.sweep(),5*60*1000).unref();
+const shareLimiter=createRateLimiter({limit:Number(process.env.SHARE_RATE_LIMIT||20),windowMs:10*60*1000});
+setInterval(()=>{dialogueLimiter.sweep();shareLimiter.sweep()},5*60*1000).unref();
 function clientKey(req){
   const fwd=String(req.headers["x-forwarded-for"]||"").split(",")[0].trim();
   return fwd||req.socket?.remoteAddress||"unknown";
@@ -204,8 +205,27 @@ function sharePlan(plan,meta={}){
   const stops=(plan.stops||[]).map(s=>({...s,alternatives:[]}));
   const has_card=meta.image?saveCard(id,meta.image):false;
   store.setShared(id,{id,created_at:new Date().toISOString(),title:meta.title||"Вечер с FREE",date:meta.date||null,has_card,plan:{...plan,stops}});
-  return id;
+  return {id,has_card};
 }
+function cardPath(id){return join(CARD_DIR,id+".png")}
+// Уборка: план мог быть вытеснен из базы, а файл карточки остаться. Чистим раз в сутки.
+function sweepCards(){
+  try{
+    if(!existsSync(CARD_DIR))return 0;
+    let removed=0;const dayAgo=Date.now()-24*60*60*1000;
+    for(const f of readdirSync(CARD_DIR)){
+      const m=/^([a-z0-9]{6,20})\.png$/.exec(f);if(!m)continue;
+      const p=join(CARD_DIR,f);
+      try{
+        if(statSync(p).mtimeMs>dayAgo)continue;
+        if(!store.getShared(m[1])){unlinkSync(p);removed++}
+      }catch(_){}
+    }
+    return removed;
+  }catch(e){console.error("cards sweep:",e.message);return 0}
+}
+// Карточка могла не пережить пересборку контейнера: проверяем файл, прежде чем обещать превью.
+function cardExists(rec){return Boolean(rec&&rec.has_card&&/^[a-z0-9]+$/.test(rec.id)&&existsSync(cardPath(rec.id)))}
 function publicOrigin(req){return (req.headers["x-forwarded-proto"]||"http")+"://"+(req.headers["x-forwarded-host"]||req.headers.host||`localhost:${PORT}`)}
 async function planEvening(args,context={}){
   const req={...args};
@@ -228,7 +248,7 @@ function sharedPlanPage(rec,origin=""){
   const p=rec.plan,e=escapeHtml;
   const names=(p.stops||[]).filter(s=>s.place).map(s=>s.place.name);
   const desc=`${p.total?.start||""}–${p.total?.end||""}: ${names.join(" → ")}`;
-  const cardUrl=rec.has_card?`${origin}/p/${rec.id}/card.png`:null;
+  const cardUrl=cardExists(rec)?`${origin}/p/${rec.id}/card.png`:null;
   const og=[
     `<meta property="og:type" content="website">`,
     `<meta property="og:site_name" content="FREE">`,
@@ -273,6 +293,7 @@ function conversationTrim(messages){
   return messages;
 }
 setInterval(()=>store.sweepConversations(CONVERSATION_TTL_MS),10*60*1000).unref();
+setInterval(sweepCards,24*60*60*1000).unref();
 
 function dialogueContextSummary(context={}){
   const selected=context.selected_place?{
@@ -534,12 +555,14 @@ const server=http.createServer(async(req,res)=>{
     }
 
     if(req.method==="POST"&&url.pathname==="/api/plan/share"){
+      const rl=shareLimiter.check(`ip:${clientKey(req)}`);
+      if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return json(res,429,{error:"rate_limited",message:"Слишком много планов подряд, подождите немного"})}
       let body={};
       try{body=JSON.parse(await readBody(req,2500000))}catch{return json(res,400,{error:"invalid_json"})} // план + PNG-карточка до ~1 МБ
       if(!body.plan||!Array.isArray(body.plan.stops)||!body.plan.stops.length)return json(res,400,{error:"plan_required"});
-      const id=sharePlan(body.plan,{title:String(body.title||"").slice(0,80),date:String(body.date||"").slice(0,10)||null,image:typeof body.image==="string"&&body.image.length<1400000?body.image:null});
-      const rec=store.getShared(id);
-      return json(res,201,{id,url:`${publicOrigin(req)}/p/${id}`,card_url:rec?.has_card?`${publicOrigin(req)}/p/${id}/card.png`:null});
+      const {id,has_card}=sharePlan(body.plan,{title:String(body.title||"").slice(0,80),date:String(body.date||"").slice(0,10)||null,image:typeof body.image==="string"&&body.image.length<1400000?body.image:null});
+      const origin=publicOrigin(req);
+      return json(res,201,{id,url:`${origin}/p/${id}`,card_url:has_card?`${origin}/p/${id}/card.png`:null});
     }
 
     if(req.method==="GET"&&/^\/api\/plan\/[a-z0-9]{6,20}$/.test(url.pathname)){

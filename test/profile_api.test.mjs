@@ -37,3 +37,31 @@ test("CORS: приложение с capacitor://localhost получает за�
     assert.equal(bad.headers.get("access-control-allow-origin"),null);
   }finally{await new Promise(r=>server.close(r))}
 });
+
+test("шаринг плана: карточка сохраняется, отдаётся и попадает в Open Graph", async ()=>{
+  const {sharePlan,sharedPlanPage}=await import("../server.mjs");
+  await new Promise(r=>server.listen(0,"127.0.0.1",r));
+  const base=`http://127.0.0.1:${server.address().port}`;
+  try{
+    // 1×1 PNG
+    const png="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    const plan={status:"ok",total:{start:"19:00",end:"23:00"},stops:[{index:1,query:"бар",slot_start:"19:00",slot_end:"20:30",place:{id:"a",name:"Бар А",category:"Бар",area:"Москва"}}]};
+    const r=await (await fetch(base+"/api/plan/share",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({plan,title:"Тест",image:png})})).json();
+    assert.match(r.url,/\/p\/[a-f0-9]+$/);
+    assert.ok(r.card_url,"карточка сохранена");
+    const img=await fetch(r.card_url);
+    assert.equal(img.status,200);assert.equal(img.headers.get("content-type"),"image/png");
+    const page=await (await fetch(r.url)).text();
+    assert.ok(page.includes(`property="og:image" content="${r.card_url}"`),"og:image указывает на карточку");
+    assert.match(page,/twitter:card" content="summary_large_image"/);
+    // Без картинки превью не обещаем
+    const r2=await (await fetch(base+"/api/plan/share",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({plan,title:"Без картинки"})})).json();
+    assert.equal(r2.card_url,null);
+    const page2=await (await fetch(r2.url)).text();
+    assert.ok(!page2.includes("og:image"),"без карточки нет og:image");
+    // Мусор вместо PNG не сохраняется
+    const {has_card}=sharePlan(plan,{title:"Мусор",image:"data:image/png;base64,bm90YXBuZw=="});
+    assert.equal(has_card,false);
+    assert.ok(sharedPlanPage({id:"x",title:"<b>",plan,has_card:true},"http://x").includes("&lt;b&gt;"),"заголовок экранируется");
+  }finally{await new Promise(r=>server.close(r))}
+});

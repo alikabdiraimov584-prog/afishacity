@@ -96,7 +96,7 @@ test("plan_evening: план возвращается в ответе, моде�
   assert.equal(r.plan.stops[0].slot_start,"19:00");
   // Поделиться: страница рендерится и экранирует HTML
   const fake={status:"ok",stops:[{index:1,query:"бар",slot_start:"19:00",slot_end:"20:30",place:{name:"<b>Бар</b>",category:"Бар",area:"Москва",source:"https://x"},travel_to_next:{mode:"walk",minutes:7,km:0.5}},{index:2,query:"кальян",slot_start:"20:40",slot_end:"22:40",place:null}],total:{start:"19:00",end:"22:40",travel_km:0.5},route_url:"https://yandex.ru/maps/?x"};
-  const id=sharePlan(fake,{title:"Тест"});
+  const {id}=sharePlan(fake,{title:"Тест"});
   assert.match(id,/^[a-f0-9]{10}$/);
   const html=sharedPlanPage({id,title:"Тест",plan:fake});
   assert.ok(html.includes("&lt;b&gt;Бар&lt;/b&gt;"));

@@ -45,9 +45,12 @@ async function render(plan,opts={}){
   const t=plan.total||{};
   ctx.fillText(ellipsis(ctx,opts.title||`${t.start||""}–${t.end||""}`,W-144),72,250);
   // схема маршрута
-  drawRoute(ctx,stops,72,300,W-144,300);
-  // таймлайн
-  let y=680;const rowH=stops.length>3?140:160;
+  const routeH=stops.length>3?230:300;
+  drawRoute(ctx,stops,72,300,W-144,routeH);
+  // таймлайн: высота строки подбирается так, чтобы всё поместилось над панелью итогов
+  const statsTop=H-250;
+  let y=300+routeH+80;
+  const rowH=Math.min(160,Math.max(96,(statsTop-40-y)/Math.max(1,stops.length)));
   stops.forEach((s,i)=>{
     const p=s.place;
     ctx.fillStyle="#111214";ctx.font="700 34px -apple-system,Inter,Arial,sans-serif";ctx.fillText(s.slot_start||"",72,y);
@@ -59,7 +62,7 @@ async function render(plan,opts={}){
     ctx.fillStyle="#727780";ctx.font="500 26px -apple-system,Inter,Arial,sans-serif";ctx.fillText(ellipsis(ctx,p?[p.category,p.metro?"м. "+p.metro:p.area].filter(Boolean).join(" · "):"",W-72-340),340,y+38);
     if(s.travel_to_next){const tr=s.travel_to_next;const lab=(tr.mode==="walk"?"пешком":tr.mode==="taxi"?"такси":"переход")+" ~"+tr.minutes+" мин"+(tr.km?" · "+tr.km+" км":"");
       ctx.strokeStyle="rgba(20,24,28,.18)";ctx.lineWidth=3;ctx.setLineDash([2,10]);ctx.beginPath();ctx.moveTo(284,y+36);ctx.lineTo(284,y+rowH-52);ctx.stroke();ctx.setLineDash([]);
-      ctx.fillStyle="#9a9ea6";ctx.font="500 24px -apple-system,Inter,Arial,sans-serif";ctx.fillText("↓ "+lab,340,y+rowH-56)}
+      ctx.fillStyle="#9a9ea6";ctx.font="500 24px -apple-system,Inter,Arial,sans-serif";ctx.fillText("↓ "+lab,340,y+Math.max(78,rowH-56))}
     y+=rowH;
   });
   // итог
