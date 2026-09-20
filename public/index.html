@@ -105,7 +105,7 @@ html{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-we
   <div id="chatBottomSpacer" aria-hidden="true" style="height:1px"></div>
   <div class="composerWrap">
     <div class="composer"><button id="voiceBtn" class="voice">⌁</button><input id="input" placeholder="Например: хочу выпить"><button id="sendBtn" class="send">Отправить</button></div>
-    <div id="hint" class="hint">Говорите естественно. FREE сам спросит только то, что действительно нужно.</div>
+    <div id="hint" class="hint">Любой запрос по городу: куда пойти, где поесть, к кому записаться, что нужно рядом.</div>
   </div>
 </section>
 
@@ -125,6 +125,7 @@ html{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-we
 <div id="routeStatus" class="routeStatus"></div>
 <audio id="remoteAudio" autoplay></audio>
 
+<script src="categories.js"></script>
 <script src="planner.js"></script>
 <script src="sharecard.js"></script>
 <script>
@@ -241,20 +242,23 @@ function addMsg(role,html){
 function typing(){const d=addMsg("ai",'<span class="typing"><i></i><i></i><i></i></span>');return d}
 function quick(opts){return '<div class="quick">'+opts.map((x,i)=>`<button class="${i===0?"primary":""}" data-quick="${esc(x)}">${esc(x)}</button>`).join("")+'</div>'}
 function bindQuick(){$$("[data-quick]").forEach(b=>{if(!b.dataset.bound){b.dataset.bound="1";b.onclick=()=>submitUser(b.dataset.quick)}})}
+// Сценарии со своим диалогом; всё остальное — прямой поиск по категории из общего справочника.
+const INTENT_BY_TAG={bar:"drink",hookah:"hookah",food:"food",bakery:"food",pastry:"food",club:"nightlife",karaoke:"nightlife",
+  date:"date",family:"family",work:"work",coffee:"work",library:"work",spa:"wellness",massage:"wellness",yoga:"wellness",gym:"wellness",pool:"wellness"};
 function detectIntent(t){
   const n=norm(t);
-  // Границы кириллических слов: \b в JS работает только для латиницы.
-  if(/выпить|(?<![а-я])(бар(?!бер|аба|бек)|паб(?!лик)|пив[ао]|вин[оа](?![а-я]))|винн|коктейл|алкогол/.test(n))return "drink";
-  if(/кальян|покурить/.test(n))return "hookah";
-  if(/поесть|ресторан|кафе|ужин|бранч/.test(n))return "food";
-  if(/концерт|стендап|театр|выстав|мероприят|событ|билет/.test(n))return "event";
-  if(/свидан|романт/.test(n))return "date";
-  if(/ребен|(?<![а-я])дет(и|ей|ям|ьми|ск|ишк)|(?<![а-я])семь[яиею]|семейн/.test(n))return "family";
-  if(/поработать|ноутбук|коворкинг/.test(n))return "work";
-  if(/(?<![а-я])спа(?![а-я])|саун|массаж|йога|(?<![а-я])бан(я|и|ю|е|ей)(?![а-я])/.test(n))return "wellness";
-  if(/караоке|клуб|тусов|вечерин/.test(n))return "nightlife";
+  if(/концерт|стендап|театр|выстав|мероприят|событ|билет|спектак/.test(n))return "event";
+  const tags=(window.FreeCategories?FreeCategories.categoryTags(n):[]);
+  for(const tg of tags)if(INTENT_BY_TAG[tg])return INTENT_BY_TAG[tg];
+  if(tags.length)return "service:"+tags[0];
   return "general";
 }
+function serviceQueries(intent){
+  const tag=String(intent||"").split(":")[1];
+  const c=window.FreeCategories&&FreeCategories.CATEGORIES.find(x=>x.tag===tag);
+  return c?c.queries:[];
+}
+
 function extractSlots(t){
   const n=norm(t),s={};
   if(/вдвоем|вдвоём|на двоих/.test(n))s.party_size=2;
@@ -332,6 +336,7 @@ function queryFromState(){
   else if(i==="work")q="кафе для работы с ноутбуком";
   else if(i==="wellness")q="spa wellness";
   else if(i==="nightlife")q="караоке клуб";
+  else if(String(i||"").startsWith("service:"))q=serviceQueries(i)[0]||norm(chatState.history.filter(x=>x.role==="user").map(x=>x.html.replace(/<[^>]+>/g," ")).join(" "));
   else q=chatState.history.filter(x=>x.role==="user").map(x=>x.html.replace(/<[^>]+>/g," ")).join(" ");
   if(s.vibe==="quiet")q+=" спокойно тихо";if(s.vibe==="beautiful")q+=" красиво";if(s.vibe==="social")q+=" весело";if(s.vibe==="private")q+=" приватно";if(s.vibe==="unusual")q+=" необычно";
   if(s.date_word==="today")q+=" сегодня";if(s.date_word==="tomorrow")q+=" завтра";
@@ -413,11 +418,11 @@ async function showMatches(){
   const t=typing();let rs=await recommend();t.remove();
   let relaxedNote="";
   if(!rs.length){
-    const INTENT_CHIPS=["Хочу выпить","Хочу поесть","Хочу на событие","Хочу покурить кальян","План на вечер"];
+    const INTENT_CHIPS=["Хочу выпить","Хочу поесть","Куда сходить","Хочу постричься","Нужна аптека"];
     // Непонятный запрос: не притворяемся, что искали, а спрашиваем, чего хочется.
     if(!chatState.intent||chatState.intent==="general"){
       chatState.intent=null;chatState.slots={};chatState.phase="idle";
-      addMsg("ai","Не совсем понял, что хочется. Выберите направление или опишите вечер словами — например «поужинать, а потом в бар».<br>"+quick(INTENT_CHIPS));bindQuick();return;
+      addMsg("ai","Не совсем понял запрос. Скажите своими словами — я ищу и места для отдыха, и услуги: барбершоп, маникюр, аптеку, автосервис, коворкинг, врача.<br>"+quick(INTENT_CHIPS));bindQuick();return;
     }
     // Один раз ослабляем условия: без стиля, атмосферы, бюджета и привязки к району.
     if(!chatState.relaxed){
@@ -426,8 +431,12 @@ async function showMatches(){
       if(rs.length)relaxedNote="Точных совпадений нет — показываю ближайшие по смыслу.";
     }
     if(!rs.length){
-      chatState.intent=null;chatState.slots={};chatState.relaxed=false;chatState.phase="idle";
-      addMsg("ai","В этом формате сейчас ничего не нашёл. Попробуем другой?"+quick(INTENT_CHIPS));bindQuick();return;
+      const service=String(chatState.intent||"").startsWith("service:");
+      chatState.intent=null;chatState.slots={};chatState.relaxed=false;chatState.asked=0;chatState.phase="idle";
+      addMsg("ai",service
+        ?"Здесь работает демо-набор — около 30 мест для отдыха, услуг в нём нет. На живых источниках FREE находит и барбершоп, и аптеку, и автосервис."
+        :"Сейчас ничего не нашёл по этому запросу. Попробуем иначе?"+quick(INTENT_CHIPS));
+      bindQuick();return;
     }
   }
   chatState.relaxed=false;
@@ -522,7 +531,7 @@ async function submitScriptedUser(text,alreadyAdded=false){
   if(/театр/.test(n))chatState.slots.genre="театр";
 
   // Одно уточнение максимум: дальше показываем варианты и сужаем уже по ним.
-  const q=(chatState.asked||0)>=1?null:requiredQuestion();
+  const q=String(chatState.intent||"").startsWith("service:")||(chatState.asked||0)>=1?null:requiredQuestion();
   if(q){chatState.asked=(chatState.asked||0)+1;chatState.phase="collecting";const t=typing();setTimeout(()=>{t.remove();addMsg("ai",q.q+quick(q.o));bindQuick()},220);return}
   await showMatches();
 }
@@ -630,7 +639,8 @@ async function submitNeuralUser(text){
 // Работает без бэкенда: диалог ведёт модель, инструменты поиска и плана исполняются на странице по встроенным данным.
 let demoSample=null,demoTurns=[],demoCtl=null,demoAskedWithoutSearch=0;
 const DEMO_RULES=[
-  "Ты FREE — разговорный AI-консьерж по местам и событиям Москвы. Это демо: инструменты ищут по небольшому встроенному набору (около 30 реальных мест), а не по всей Москве.",
+  "Ты FREE — разговорный AI-консьерж по Москве. Ты закрываешь ЛЮБОЙ городской запрос: не только бары, рестораны и события, но и услуги — барбершоп, маникюр, спа, врач, аптека, ветеринар, автосервис, коворкинг, химчистка, ремонт, курсы, отель, парк, каток.",
+  "Это демо: встроенный набор — около 30 мест для отдыха. Если запрос про услугу и инструмент ничего не вернул, честно скажи, что в демо-наборе таких мест нет, а на живых данных FREE их находит. Не придумывай места.",
   "ГЛАВНОЕ ПРАВИЛО: сначала показывай варианты, потом уточняй. Как только понятно направление (выпить, поесть, кальян, событие, потанцевать) — сразу вызывай recommend_free. Не жди подробностей.",
   "НИКОГДА не задавай два вопроса подряд в одном ответе и никогда не задавай вопрос, если в прошлый раз уже спрашивал. Лучше показать варианты и предложить сузить.",
   "Не спрашивай бюджет, район, время и размер компании, если человек сам о них не сказал. Это фильтры, а не условия для начала поиска.",
@@ -963,7 +973,7 @@ function renderTaste(){const box=$("#tasteGrid");box.innerHTML=DIMS.map(k=>{cons
 function switchView(v){$$(".panel").forEach(x=>x.classList.remove("on"));$$(".nav").forEach(x=>x.classList.toggle("on",x.dataset.view===v));$("#view-"+v).classList.add("on");if(v==="saved")renderSaved();if(v==="plan")renderPlan();if(v==="profile")renderTaste()}
 function startConversation(){
   chatState.phase="idle";
-  addMsg("ai",'Расскажите как есть — одной фразой или подробно. Я сам пойму, нужно ли что-то уточнить или уже можно искать.'+quick(["Хочу выпить","Хочу поесть","Хочу на событие","Хочу покурить кальян","План на вечер"]));bindQuick()
+  addMsg("ai",'Расскажите как есть — куда пойти, где поесть, куда записаться или что нужно рядом. Одной фразой, я пойму.'+quick(["Хочу выпить","Хочу поесть","Куда сходить","Хочу постричься","Нужна аптека"]));bindQuick()
 }
 async function detectCapabilities(){
   voice.mode=(window.SpeechRecognition||window.webkitSpeechRecognition)?"browser":"none";

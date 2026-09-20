@@ -2,6 +2,8 @@ import {join} from "node:path";
 import {fileURLToPath} from "node:url";
 import {createCache,withBreaker,breakerStatus} from "./cache.mjs";
 
+import {CATEGORIES,categoryTags} from "./categories.mjs";
+
 const MOSCOW_POINT = "37.6173,55.7558";
 const TIMEOUT_MS = 6500;
 
@@ -37,24 +39,8 @@ async function fetchJson(url,opts={}){
   }finally{clearTimeout(t)}
 }
 
-const PLACE_RULES = [
-  {re:/кальян|покурить|hookah|shisha/, queries:["кальянная","кальян-бар","лаунж бар"], tags:["hookah","lounge","nightlife"]},
-  {re:BAR_RE, queries:["бар","паб","коктейльный бар"], tags:["bar","nightlife"]},
-  {re:FOOD_RE, queries:["ресторан","кафе"], tags:["food"]},
-  {re:/караоке/, queries:["караоке"], tags:["karaoke","nightlife"]},
-  {re:/клуб|танц|вечеринк|тусовк/, queries:["ночной клуб","бар с танцами"], tags:["club","nightlife","music"]},
-  {re:/боулинг/, queries:["боулинг"], tags:["bowling","active"]},
-  {re:/бильярд/, queries:["бильярд"], tags:["billiards","active"]},
-  {re:SPA_RE, queries:["баня","сауна","спа"], tags:["spa"]},
-  {re:/кофе|кофейн|ноутбук|поработать|работать/, queries:["кофейня","коворкинг"], tags:["coffee","work"]},
-  {re:/коворкинг|деловая встреча|business lunch|бизнес ланч/, queries:["коворкинг","кафе для работы","бизнес-ланч"], tags:["work"]},
-  {re:FAMILY_RE, queries:["детский центр","семейный ресторан","интерактивный музей"], tags:["family"]},
-  {re:/свидан|романт|вдвоем|вдвоём/, queries:["ресторан","винный бар","коктейльный бар"], tags:["date"]},
-  {re:/день рождения|праздн|8 человек|компан/, queries:["лофт","караоке","квест","ресторан"], tags:["birthday","friends"]},
-  {re:/brunch|бранч/, queries:["бранч","кафе","ресторан"], tags:["food"]},
-  {re:/массаж|йога|wellness|фитнес/, queries:["массаж","йога","фитнес-клуб","спа"], tags:["spa"]},
-  {re:/салон|маникюр|парикмах|косметолог|beauty/, queries:["салон красоты","маникюр","парикмахерская"], tags:["beauty"]}
-];
+// Правила подбора запросов к провайдерам собираются из общего справочника категорий.
+const PLACE_RULES = CATEGORIES.map(c=>({re:c.re,queries:c.queries,tags:[c.tag,...(c.extraTags||[])]}));
 const EVENT_RULES = [
   {re:/стендап|stand\s?up|комед|юмор/, queries:["стендап"], tags:["comedy"]},
   {re:/джаз|jazz/, queries:["джаз"], tags:["jazz","music"]},
@@ -89,18 +75,20 @@ export function buildSearchPlan(args={}){
 }
 
 function inferTags(text){
-  const n=norm(text),t=[];
-  const map=[
-    ["hookah",/кальян|hookah|shisha/],["bar",BAR_RE],["food",FOOD_RE],["family",FAMILY_RE],
-    ["karaoke",/караоке/],["club",/клуб|вечерин|dance/],["nightlife",/(?<![а-я])(бар(?!бер|аба|бек|он|ин|сук|рикад)|паб(?!лик))|клуб|караоке|ночн/],
-    ["comedy",/стендап|standup|комед|юмор/],["jazz",/джаз|jazz/],["rock",ROCK_RE],["music",/музык|концерт|джаз|группа|(?<![а-я])рок(?![а-я])/],
-    ["art",ART_RE],["culture",/музей|искусств|театр|выстав/],["theatre",/театр|спектак|балет|опера/],
-    ["science",/наук|планетар|космос|лекц/],["space",/космос|планетар|астроном/],["lecture",/лекц|форум|паблик/],
-    ["workshop",/мастер.?класс|воркшоп/],["festival",/фестивал|маркет|ярмарк/],["active",/боулинг|бильярд|квест|спорт/]
+  const n=norm(text);
+  const t=categoryTags(n);
+  // Признаки, специфичные для событий, а не для заведений.
+  const events=[
+    ["comedy",/стендап|standup|комед|юмор/],["jazz",/джаз|jazz/],["rock",/(?<![а-я])рок(?![а-я])|(?<![a-z])rock/],
+    ["music",/музык|концерт|джаз|группа|(?<![а-я])рок(?![а-я])/],["art",/выстав|искусств|галере|(?<![а-я])арт(?![а-я])/],
+    ["culture",/музей|искусств|театр|выстав/],["theatre",/театр|спектак|балет|опера/],["science",/наук|планетар|космос|лекц/],
+    ["space",/космос|планетар|астроном/],["lecture",/лекц|форум|паблик/],["workshop",/мастер.?класс|воркшоп/],
+    ["festival",/фестивал|маркет|ярмарк/],["nightlife",/(?<![а-я])(бар(?!бер|аба|бек|он|ин|сук|рикад)|паб(?!лик))|клуб|караоке|ночн/]
   ];
-  for(const [tag,re] of map)if(re.test(n))t.push(tag);
+  for(const [tag,re] of events)if(re.test(n))t.push(tag);
   return uniq(t);
 }
+
 
 function priceInfo(label,isFree=false){
   if(isFree)return {price_label:"Бесплатно",price_min:0,free:true};
@@ -267,52 +255,8 @@ export async function search2GIS(plan,key){
 const MOSCOW_BBOX = "55.49,37.30,55.96,37.99";
 const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
 
-const OSM_RULES = [
-  {re:/кальян|покурить|hookah|shisha/, filters:[
-    'nwr["amenity"="hookah_lounge"]({{bbox}});',
-    'nwr["name"~"кальян|hookah|shisha",i]({{bbox}});'
-  ], tag:"hookah"},
-  {re:BAR_RE, filters:[
-    'nwr["amenity"~"bar|pub|biergarten"]({{bbox}});'
-  ], tag:"bar"},
-  {re:/караоке/, filters:[
-    'nwr["karaoke"="yes"]({{bbox}});',
-    'nwr["name"~"караоке|karaoke",i]({{bbox}});'
-  ], tag:"karaoke"},
-  {re:/клуб|танц|вечеринк|тусовк/, filters:[
-    'nwr["amenity"="nightclub"]({{bbox}});'
-  ], tag:"club"},
-  {re:FOOD_RE, filters:[
-    'nwr["amenity"~"restaurant|cafe"]({{bbox}});'
-  ], tag:"food"},
-  {re:/боулинг/, filters:[
-    'nwr["leisure"="bowling_alley"]({{bbox}});'
-  ], tag:"active"},
-  {re:/бильярд/, filters:[
-    'nwr["sport"="billiards"]({{bbox}});'
-  ], tag:"active"},
-  {re:SPA_RE, filters:[
-    'nwr["leisure"="spa"]({{bbox}});',
-    'nwr["amenity"="sauna"]({{bbox}});'
-  ], tag:"spa"},
-  {re:/кофе|кофейн|ноутбук|поработать/, filters:[
-    'nwr["amenity"="cafe"]({{bbox}});',
-    'nwr["office"="coworking"]({{bbox}});'
-  ], tag:"coffee"},
-  {re:/коворкинг|деловая встреча/, filters:[
-    'nwr["office"="coworking"]({{bbox}});'
-  ], tag:"work"},
-  {re:FAMILY_RE, filters:[
-    'nwr["leisure"="playground"]({{bbox}});',
-    'nwr["amenity"~"cinema|theatre"]({{bbox}});'
-  ], tag:"family"},
-  {re:/фитнес|йога/, filters:[
-    'nwr["leisure"="fitness_centre"]({{bbox}});'
-  ], tag:"active"},
-  {re:/салон|маникюр|парикмах|beauty/, filters:[
-    'nwr["shop"~"beauty|hairdresser"]({{bbox}});'
-  ], tag:"beauty"}
-];
+// Фильтры OpenStreetMap — из того же справочника.
+const OSM_RULES = CATEGORIES.filter(c=>c.osm&&c.osm.length).map(c=>({re:c.re,filters:c.osm,tag:c.tag}));
 
 function osmAddress(t={}){
   const parts=[
@@ -363,6 +307,11 @@ export function osmFilters(plan){
   const q=norm(plan.raw||plan.safeQuery||"");
   const filters=[];
   for(const r of OSM_RULES) if(r.re.test(q)) filters.push(...r.filters);
+  // Категория не распознана, но место всё равно ищут: пробуем найти по названию (бренд, конкретное заведение).
+  if(!filters.length&&plan.coreQuery&&plan.coreQuery.length>=4){
+    const safe=plan.coreQuery.replace(/[^а-яa-z0-9 ]/gi,"").trim().split(" ").filter(w=>w.length>=4).slice(0,2).join("|");
+    if(safe.length>=4)filters.push(`nwr["name"~"${safe}",i]["amenity"]({{bbox}});`,`nwr["name"~"${safe}",i]["shop"]({{bbox}});`);
+  }
   return plan.placeIntent?uniq(filters):[];
 }
 export async function searchOSM(plan){

@@ -1,5 +1,7 @@
 import {parseHours,moscowNow} from "./hours.mjs";
 
+import {CATEGORIES} from "./categories.mjs";
+
 function norm(s=""){return String(s).toLowerCase().replace(/ё/g,"е").replace(/<[^>]*>/g," ").replace(/[^a-zа-я0-9\s]/gi," ").replace(/\s+/g," ").trim()}
 function words(s){const stop=new Set(["куда","сходить","пойти","хочу","хочется","сегодня","завтра","вечером","после","москва","москве","очень","сильно","много","какой","какое","что","для","чтобы","можно","найди","место"]);return norm(s).split(" ").filter(w=>w.length>3&&!stop.has(w))}
 // Короткие корни (бар, рок, спа, арт, еда, семь) задаём регэкспами с границами слов:
@@ -15,6 +17,11 @@ const SYN={
   club:["клуб","вечеринка","танцы","тусовка"],karaoke:["караоке"],active:["боулинг","бильярд","квест","активно","vr"],spa:[/(?<![а-я])бан(я|и|ю|е|ей)(?![а-я])/,"сауна",/(?<![а-я])спа(?![а-я])/,"массаж","йога"],
   beauty:["салон","маникюр","парикмахер","косметолог"],experience:["дегустация","мастер класс","экскурсия","яхта","необычное"]
 };
+// Категории из общего справочника участвуют в подборе наравне с исходными синонимами.
+for(const c of CATEGORIES){
+  const cur=SYN[c.tag]||[];
+  if(!cur.some(x=>x instanceof RegExp&&String(x)===String(c.re)))SYN[c.tag]=[...cur,c.re];
+}
 function hasTerm(n,t){return t instanceof RegExp?t.test(n):n.includes(norm(t))}
 function requestedTags(query,plan){const n=norm(query),out=[...(plan.tags||[])];for(const [tag,terms] of Object.entries(SYN))if(terms.some(t=>hasTerm(n,t)))out.push(tag);return [...new Set(out)]}
 function moscowDate(){return new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Moscow",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date())}

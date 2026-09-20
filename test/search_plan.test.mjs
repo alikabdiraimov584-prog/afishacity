@@ -48,3 +48,33 @@ test("флаг heavyDrinkingPhrase и безопасный запрос", ()=>{
   assert.ok(p.tags.includes("bar"));
   assert.ok(!/очень|много/.test(p.safeQuery));
 });
+
+test("консьерж понимает не только досуг, но и услуги", ()=>{
+  const cases=[
+    ["хочу постричься","barber"],["нужен барбершоп","barber"],["маникюр на завтра","nails"],
+    ["запиши к стоматологу","dentist"],["где аптека","pharmacy"],["нужен врач","clinic"],
+    ["ветеринар для кота","vet"],["помыть машину","carwash"],["шиномонтаж срочно","carrepair"],
+    ["ремонт телефона","phonerepair"],["распечатать документы","print"],["химчистка рядом","laundry"],
+    ["нотариус","legal"],["где банкомат","bank"],["пункт выдачи","post"],
+    ["купить цветы","flowers"],["книжный магазин","books"],["где переночевать","hotel"],
+    ["каток","icerink"],["бассейн","pool"],["скалодром","climbing"],["тренажерный зал","gym"],
+    ["йога студия","yoga"],["тату салон","tattoo"],["курсы английского","courses"],
+    ["погулять в парке","park"],["сходить в музей","museum"],["в кино","cinema"],
+    ["зоомагазин","petshop"],["фотостудия","photo"],["заправка","fuel"],["парковка","parking"]
+  ];
+  for(const [q,tag] of cases){
+    const p=buildSearchPlan({query:q});
+    assert.ok(p.tags.includes(tag),`${q} → ожидался тег ${tag}, получено: ${p.tags.join(",")||"ничего"}`);
+    assert.ok(p.placeQueries.length,`${q} → нет запросов к провайдерам`);
+  }
+});
+
+test("незнакомое название ищется по имени в OpenStreetMap", async ()=>{
+  const {osmFilters}=await import("../providers.mjs");
+  const p=buildSearchPlan({query:"додо пицца рядом"});
+  const f=osmFilters(p);
+  assert.ok(f.length,"фильтры построены");
+  const named=buildSearchPlan({query:"вкусвилл"});
+  const f2=osmFilters(named);
+  assert.ok(f2.some(x=>x.includes('"name"~')),"поиск по названию: "+f2.join(" "));
+});
