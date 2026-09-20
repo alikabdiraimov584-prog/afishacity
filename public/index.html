@@ -28,6 +28,34 @@ html{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-we
 .msg .small{font-size:11px;color:#838892;margin-top:6px}.msg.user .small{color:#b8bdc5}
 @keyframes fade{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
 .typing{display:flex;gap:4px;align-items:center}.typing i{width:5px;height:5px;background:#8a9098;border-radius:50%;animation:bounce .9s infinite}.typing i:nth-child(2){animation-delay:.12s}.typing i:nth-child(3){animation-delay:.24s}@keyframes bounce{50%{transform:translateY(-4px)}}
+/* Первичный опрос: карточки вместо анкеты. Каждый выбор двигает Taste Graph,
+   поэтому уже первая подборка идёт по вкусу, а не по усреднённому городу. */
+.onboard{position:fixed;inset:0;z-index:200;background:var(--bg);display:none;flex-direction:column;
+  padding:calc(14px + max(env(safe-area-inset-top,0px),var(--sat,0px))) 16px calc(16px + max(env(safe-area-inset-bottom,0px),var(--sab,0px)))}
+.onboard.on{display:flex}
+.obTop{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.obDots{display:flex;gap:6px}
+.obDots i{width:24px;height:4px;border-radius:2px;background:rgba(20,24,28,.13)}
+.obDots i.on{background:var(--dark)}
+.obSkip{border:0;background:none;color:var(--muted);font-size:13px;padding:6px 2px}
+.obHead{margin:18px 0 0}
+.obHead h2{margin:0;font-size:27px;line-height:1.12;letter-spacing:-.6px}
+.obHead p{margin:8px 0 0;color:var(--muted);font-size:13px}
+.obGrid{flex:1;display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:minmax(116px,180px);gap:10px;align-content:start;margin-top:16px;overflow:auto;padding-bottom:4px}
+/* Нечётное число вариантов: последняя карточка занимает всю ширину, а не половину. */
+.obGrid .obCard:last-child:nth-child(odd){grid-column:span 2;min-height:96px}
+.obCard{position:relative;overflow:hidden;border:1px solid var(--line);background:var(--card);border-radius:20px;padding:13px;
+  text-align:left;display:flex;flex-direction:column;justify-content:flex-end;min-height:116px;box-shadow:var(--shadow);color:var(--ink)}
+.obCard .art{position:absolute;inset:0}
+.obCard .em{position:relative;font-size:23px;line-height:1}
+.obCard b{position:relative;display:block;margin-top:9px;font-size:14px;letter-spacing:-.2px}
+.obCard small{position:relative;color:var(--muted);font-size:11px;margin-top:2px;line-height:1.25}
+.obCard.on{border-color:var(--dark);box-shadow:0 0 0 2px var(--dark)}
+.obCard .tick{position:absolute;top:10px;right:10px;width:20px;height:20px;border-radius:999px;background:var(--dark);color:#fff;
+  font-size:12px;line-height:20px;text-align:center;display:none}
+.obCard.on .tick{display:block}
+.obNext{margin-top:12px;border:0;border-radius:18px;background:var(--dark);color:#fff;padding:15px;font-size:15px;font-weight:600}
+.obNext[disabled]{opacity:.35}
 .quick{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.quick button{border:1px solid var(--line);background:#fff;color:#4e555f;border-radius:999px;padding:8px 11px;font-size:11px}.quick button.primary{background:#111;color:#fff}
 .inlineCards{display:flex;gap:10px;overflow-x:auto;padding:8px 0 3px;scroll-snap-type:x mandatory}
 .placeCard{min-width:min(330px,85vw);max-width:330px;scroll-snap-align:start;border-radius:23px;background:#fff;border:1px solid rgba(255,255,255,.95);padding:16px;box-shadow:var(--shadow)}
@@ -92,6 +120,12 @@ html{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-we
 </style>
 </head>
 <body>
+<div id="onboard" class="onboard" aria-hidden="true">
+  <div class="obTop"><div class="obDots" id="obDots"></div><button class="obSkip" id="obSkip">Пропустить</button></div>
+  <div class="obHead"><h2 id="obTitle"></h2><p id="obSub"></p></div>
+  <div class="obGrid" id="obGrid"></div>
+  <button class="obNext" id="obNext">Дальше</button>
+</div>
 <header class="top"><div class="topbar"><div><div class="brand">FREE</div><div id="aiStatus" class="sub">Подключаю нейросеть · Москва</div></div><button class="avatar" data-view="profile">F</button></div></header>
 
 <main class="shell">
@@ -158,10 +192,24 @@ async function initTelegram(){
   if(!w||!w.initData)return;
   TG=w;
   try{TG.ready();TG.expand();TG.setHeaderColor("#f6f6f4");TG.setBackgroundColor("#f6f6f4");if(TG.disableVerticalSwipes)TG.disableVerticalSwipes()}catch(_){}
-  // Безопасные зоны из Telegram, чтобы шапка не пряталась под чёлкой.
-  const top=(TG.contentSafeAreaInset&&TG.contentSafeAreaInset.top)||(TG.safeAreaInset&&TG.safeAreaInset.top)||0;
-  const bottom=(TG.safeAreaInset&&TG.safeAreaInset.bottom)||0;
-  if(top)document.documentElement.style.setProperty("--sat",(top+6)+"px");
+  applyTgInsets();
+  // Клиент сообщает зоны не сразу и меняет их при разворачивании окна.
+  for(const e of ["safeAreaChanged","contentSafeAreaChanged","viewportChanged"]){
+    try{TG.onEvent(e,applyTgInsets)}catch(_){}
+  }
+  setTimeout(applyTgInsets,400);
+}
+// Кнопки «Закрыть» и «···» Telegram лежат поверх страницы, а не над ней.
+// safeAreaInset — вырез устройства, contentSafeAreaInset — полоса самого Telegram;
+// отступ равен их сумме. CSS берёт max(env(), --sat), поэтому здесь нужен итог.
+function applyTgInsets(){
+  if(!TG)return;
+  const sa=TG.safeAreaInset||{},ca=TG.contentSafeAreaInset||{};
+  const notch=Number(sa.top)||0;
+  // До Bot API 8.0 высота полосы не приходит вовсе — тогда резервируем типовую.
+  const header=typeof ca.top==="number"?ca.top:(notch?48:56);
+  document.documentElement.style.setProperty("--sat",(notch+header+6)+"px");
+  const bottom=Number(sa.bottom)||0;
   if(bottom)document.documentElement.style.setProperty("--sab",bottom+"px");
 }
 function haptic(kind="light"){if(!NATIVE||!NATIVE.Haptics)return;try{if(kind==="success")NATIVE.Haptics.notification({type:"SUCCESS"});else NATIVE.Haptics.impact({style:kind==="medium"?"MEDIUM":"LIGHT"})}catch(_){}}
@@ -995,13 +1043,95 @@ function startConversation(){
   chatState.phase="idle";
   addMsg("ai",'Расскажите как есть — куда пойти, где поесть, куда записаться или что нужно рядом. Одной фразой, я пойму.'+quick(["Хочу выпить","Хочу поесть","Куда сходить","Хочу постричься","Нужна аптека"]));bindQuick()
 }
+
+// ---- Первичный опрос ----
+// Четыре экрана вместо длинной анкеты: значения складываются в Taste Graph
+// (шкала -5..5, как у обучения на действиях), поэтому старт уже не нейтральный.
+const ONBOARD=[
+  {q:"Что вы ищете чаще всего?",sub:"Выберите всё, что подходит",multi:true,o:[
+    {em:"🍽️",t:"Поесть",s:"ужин, завтрак, кафе",g:"linear-gradient(150deg,#fff6ea,#ffe9d2)",d:{romantic:.4}},
+    {em:"🍸",t:"Выпить",s:"бар, вино, коктейли",g:"linear-gradient(150deg,#f0efff,#dedcff)",d:{nightlife:.9,late:.5}},
+    {em:"🎭",t:"Культура",s:"выставки, театр, музеи",g:"linear-gradient(150deg,#eef7ff,#d8ebff)",d:{culture:1.1}},
+    {em:"🎧",t:"Музыка",s:"концерты, джаз, клубы",g:"linear-gradient(150deg,#ffeef6,#ffd9ea)",d:{music:1.1}},
+    {em:"🎳",t:"Активности",s:"спорт, квесты, боулинг",g:"linear-gradient(150deg,#eafaf0,#cff2de)",d:{active:1.1}},
+    {em:"☕",t:"Кофе и работа",s:"ноутбук, встречи",g:"linear-gradient(150deg,#f7f4ef,#eae3d8)",d:{work:1,quiet:.5}}
+  ]},
+  {q:"Какая атмосфера ближе?",sub:"Выберите всё, что подходит",multi:true,o:[
+    {em:"🕯️",t:"Тихо и камерно",s:"можно разговаривать",g:"linear-gradient(150deg,#f6f3ee,#e7e0d5)",d:{quiet:1.2,hidden:.4}},
+    {em:"✨",t:"Модно и заметно",s:"новые места, дизайн",g:"linear-gradient(150deg,#f3f0ff,#e0daff)",d:{trendy:1.2}},
+    {em:"🥂",t:"Дорого и с видом",s:"панорама, высокий чек",g:"linear-gradient(150deg,#fdf6e6,#f5e6c2)",d:{luxury:1.2}},
+    {em:"🔎",t:"Не туристическое",s:"свои места, находки",g:"linear-gradient(150deg,#eef6f3,#d7ebe4)",d:{hidden:1.2}}
+  ]},
+  {q:"С кем обычно выбираетесь?",sub:"Выберите один вариант",multi:false,o:[
+    {em:"💞",t:"Вдвоём",s:"свидания, спокойно",g:"linear-gradient(150deg,#fff0f3,#ffd9e2)",d:{romantic:1.2}},
+    {em:"👥",t:"С друзьями",s:"компанией, весело",g:"linear-gradient(150deg,#eef4ff,#d5e4ff)",d:{nightlife:.8,active:.5}},
+    {em:"🧸",t:"С детьми",s:"семейные места",g:"linear-gradient(150deg,#f1faea,#dcf0c9)",d:{family:1.3}},
+    {em:"🙂",t:"Один",s:"по делам или для себя",g:"linear-gradient(150deg,#f5f5f6,#e4e5e8)",d:{work:.7,quiet:.7}}
+  ]},
+  {q:"Во сколько обычно выходите?",sub:"Выберите один вариант",multi:false,o:[
+    {em:"☀️",t:"Днём",s:"до 18:00",g:"linear-gradient(150deg,#fffaea,#ffeeba)",d:{late:-.8}},
+    {em:"🌆",t:"Вечером",s:"18:00 — 22:00",g:"linear-gradient(150deg,#fdeee6,#f8d7c6)",d:{}},
+    {em:"🌙",t:"Поздно",s:"после 22:00",g:"linear-gradient(150deg,#ecedff,#d3d5f7)",d:{late:1.2,nightlife:.7}}
+  ]}
+];
+let obStep=0,obPicks=ONBOARD.map(()=>new Set()),obStarted=false;
+function obSeen(){try{return localStorage.getItem("free_v14_onboarded")==="1"}catch(_){return false}}
+function obMarkSeen(){try{localStorage.setItem("free_v14_onboarded","1")}catch(_){}}
+function renderOnboard(){
+  const st=ONBOARD[obStep],picked=obPicks[obStep];
+  $("#obDots").innerHTML=ONBOARD.map((_,i)=>`<i class="${i<=obStep?"on":""}"></i>`).join("");
+  $("#obTitle").textContent=st.q;$("#obSub").textContent=st.sub;
+  $("#obGrid").innerHTML=st.o.map((o,i)=>
+    `<button class="obCard ${picked.has(i)?"on":""}" data-ob="${i}">
+       <span class="art" style="background:${o.g}"></span><span class="tick">✓</span>
+       <span class="em">${o.em}</span><b>${esc(o.t)}</b><small>${esc(o.s)}</small>
+     </button>`).join("");
+  $$("[data-ob]").forEach(b=>b.onclick=()=>{
+    const i=+b.dataset.ob;
+    if(st.multi){picked.has(i)?picked.delete(i):picked.add(i)}
+    else{picked.clear();picked.add(i)}
+    haptic("light");renderOnboard();
+  });
+  const last=obStep===ONBOARD.length-1;
+  const next=$("#obNext");next.textContent=last?"Готово":"Дальше";next.disabled=picked.size===0;
+  $("#obGrid").scrollTop=0;
+}
+function finishOnboard(){
+  // Складываем выбранное и сохраняем — дальше профиль живёт обычным обучением.
+  const add={};
+  ONBOARD.forEach((st,i)=>obPicks[i].forEach(j=>{
+    for(const [k,v] of Object.entries(st.o[j].d||{}))add[k]=(add[k]||0)+v;
+  }));
+  for(const [k,v] of Object.entries(add))if(DIMS.includes(k))taste[k]=Math.max(-5,Math.min(5,(taste[k]||0)+v));
+  obMarkSeen();closeOnboard();
+  if(Object.keys(add).length){save();toast("Учёл ваши предпочтения — подборки будут точнее")}
+}
+function closeOnboard(){$("#onboard").classList.remove("on");$("#onboard").setAttribute("aria-hidden","true")}
+function startOnboard(){
+  obStep=0;obPicks=ONBOARD.map(()=>new Set());
+  $("#onboard").classList.add("on");$("#onboard").setAttribute("aria-hidden","false");
+  renderOnboard();
+}
+function maybeOnboard(){
+  if(obStarted)return;obStarted=true;
+  if(obSeen())return;
+  // Вкус уже накоплен (например, профиль пришёл с сервера) — опрос не нужен.
+  if(Object.values(taste).some(v=>v)){obMarkSeen();return}
+  startOnboard();
+}
+$("#obNext").onclick=()=>{
+  if(obStep<ONBOARD.length-1){obStep++;renderOnboard();haptic("light")}
+  else finishOnboard();
+};
+$("#obSkip").onclick=()=>{obMarkSeen();closeOnboard()};
+
 async function detectCapabilities(){
   voice.mode=(window.SpeechRecognition||window.webkitSpeechRecognition)?"browser":"none";
   try{
     const r=await apiFetch("/api/health",{cache:"no-store"});
     const d=await r.json();
     chatState.serverOk=Boolean(d&&d.ok);
-    if(chatState.serverOk)loadProfile();
+    if(chatState.serverOk)await loadProfile();
     chatState.aiReady=Boolean(d.text_ai_ready);
     if(d.voice_ready)voice.mode="live";
     $("#aiStatus").textContent=chatState.aiReady?`Neural chat · ${d.text_ai_model||"Claude"}`:(demoSample?"Claude · демо":"AI fallback · Москва");
@@ -1013,6 +1143,7 @@ async function detectCapabilities(){
     chatState.aiReady=false;
     $("#aiStatus").textContent="Preview fallback · Москва";
   }
+  maybeOnboard();
 }
 const VOICE_ERRORS={"not-allowed":"Доступ к микрофону запрещён. Разрешите его в настройках браузера.","service-not-allowed":"Распознавание речи отключено в этом браузере.","audio-capture":"Микрофон не найден.","network":"Распознавание речи недоступно в этой сети: Chrome отправляет звук на серверы Google. Напишите текстом.","no-speech":"Не услышал речь. Нажмите и говорите сразу.","aborted":""};
 // Нативное распознавание (iOS: Apple Speech, работает без сторонних серверов). В браузере — Web Speech API.
