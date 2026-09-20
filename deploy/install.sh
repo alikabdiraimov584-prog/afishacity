@@ -49,6 +49,13 @@ say "Настройки .env"
 if [ ! -f "$DIR/.env" ]; then
   cp "$DIR/.env.example" "$DIR/.env"
 fi
+# Правка .env с телефона легко оставляет строки без "=": вставленную команду,
+# голый токен. systemd выбрасывает их молча, поэтому чистим сами и сообщаем.
+STRAY=$(grep -cvE '^[[:space:]]*($|#)|^[A-Za-z_][A-Za-z0-9_]*=' "$DIR/.env" || true)
+if [ "${STRAY:-0}" -gt 0 ]; then
+  sed -i -E '/^[[:space:]]*($|#)/!{/^[A-Za-z_][A-Za-z0-9_]*=/!d}' "$DIR/.env"
+  echo "   убрано строк не в формате КЛЮЧ=значение: $STRAY"
+fi
 if [ -n "$BOT_TOKEN" ]; then
   sed -i "s|^TELEGRAM_BOT_TOKEN=.*|TELEGRAM_BOT_TOKEN=$BOT_TOKEN|" "$DIR/.env"
 fi
