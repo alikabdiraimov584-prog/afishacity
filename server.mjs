@@ -11,9 +11,14 @@ import {mkdirSync,writeFileSync as writeFileSyncFs,existsSync,readdirSync,unlink
 import {searchLiveInventory} from "./providers.mjs";
 import {rankLive,resultPayload} from "./live_ranker.mjs";
 import {startWarmup} from "./warmup.mjs";
+import {loadDotenv} from "./env.mjs";
 
 const __dirname=fileURLToPath(new URL(".",import.meta.url));
 const PUBLIC=join(__dirname,"public");
+// .env читаем до первого обращения к process.env. В тестах файл игнорируем,
+// иначе настройки боевого сервера протекли бы в прогон.
+const ENV_SKIPPED=process.env.NODE_ENV==="test"?[]:loadDotenv(join(__dirname,".env")).bad;
+if(ENV_SKIPPED.length)console.warn(`.env: строки ${ENV_SKIPPED.join(", ")} пропущены — нужен формат КЛЮЧ=значение`);
 const PORT=Number(process.env.PORT||3000);
 const HOST=process.env.HOST||"127.0.0.1";
 // Токен бота включает проверку подписи Telegram Mini App для платных эндпоинтов.
@@ -495,6 +500,7 @@ const server=http.createServer(async(req,res)=>{
         text_ai_ready:AI_READY,
         text_ai_model:TEXT_MODEL,
         telegram_auth:TG_REQUIRED,
+        env_skipped_lines:ENV_SKIPPED,
         voice_ready:false,
         voice_model:null,
         providers:{kudago:true,timepad:true,osm:true,dgis:Boolean(process.env.DGIS_API_KEY||process.env.TWOGIS_API_KEY)}
