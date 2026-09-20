@@ -101,11 +101,19 @@ html{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-we
 .voiceScreen.hasContent .vRing.two{inset:-17px}
 .voiceScreen.hasContent .vStage{justify-content:flex-start;gap:12px}
 
-.vHint{font-size:13px;color:var(--muted);min-height:18px;text-align:center}
-/* Реплики — те же пузыри, что в переписке. */
-.vLog{width:100%;max-width:560px;max-height:26vh;overflow:auto;display:flex;flex-direction:column;gap:8px;flex:none;
-  -webkit-mask-image:linear-gradient(transparent,#000 16px,#000 calc(100% - 2px),transparent);
-  mask-image:linear-gradient(transparent,#000 16px,#000 calc(100% - 2px),transparent)}
+.vHint{font-size:12px;color:#9aa0a8;min-height:15px;text-align:center;letter-spacing:.01em}
+/* Разговор вслух — не переписка, и журнала реплик здесь быть не должно.
+   Пузыри делили экран надвое: сверху сказанное человеком, снизу те же слова
+   агента текстом, которые он в эту секунду произносил. Слушать и читать одно
+   и то же одновременно невозможно. Поэтому на экране только текущий обмен:
+   строкой — что расслышали (чтобы ошибка распознавания была видна сразу),
+   подписью — что говорит Савва. Всё остальное сказано голосом и показано
+   карточками. */
+.vHeard{width:100%;max-width:520px;text-align:center;font-size:13px;color:#9aa0a8;line-height:1.3;
+  flex:none;overflow:hidden;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical}
+.vSaid{width:100%;max-width:520px;text-align:center;font-size:17px;line-height:1.38;color:var(--ink);
+  letter-spacing:-.022em;flex:none;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
+.vHeard:empty,.vSaid:empty{display:none}
 .vCards{width:100%;max-width:560px;flex:1 1 auto;min-height:0;overflow:auto}
 .vCards:empty{flex:0}
 
@@ -120,7 +128,7 @@ html{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-we
 .inlineCards{display:flex;gap:10px;overflow-x:auto;padding:8px 0 3px;scroll-snap-type:x mandatory}
 .placeCard{min-width:min(330px,85vw);max-width:330px;scroll-snap-align:start;border-radius:23px;background:#fff;border:1px solid rgba(255,255,255,.95);padding:16px;box-shadow:var(--shadow)}
 .placeCard.best{border-color:rgba(17,19,22,.18)}
-.placeCard .tag{font-size:9px;text-transform:uppercase;letter-spacing:.11em;color:#858b93}.placeCard h3{font-size:20px;letter-spacing:-.035em;margin:6px 0 5px}.reason{font-size:12px;color:#626a74;line-height:1.4}.meta{font-size:11px;color:#8a9098;margin-top:7px}.score{float:right;font-size:20px;font-weight:780;letter-spacing:-.05em}.score small{font-size:8px;text-transform:uppercase;color:#91969d;letter-spacing:.08em}
+.placeCard .tag{font-size:9px;text-transform:uppercase;letter-spacing:.11em;color:#858b93}.placeCard h3{font-size:20px;letter-spacing:-.035em;margin:6px 0 5px}.reason{font-size:12px;color:#626a74;line-height:1.4}.meta{font-size:11px;color:#8a9098;margin-top:7px}.score{float:right;font-size:20px;font-weight:780;letter-spacing:-.05em}.score small{font-size:8px;text-transform:uppercase;color:#91969d;letter-spacing:.08em;margin-left:3px}
 .cardBtns{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:13px}.cardBtn{border:1px solid var(--line);background:#fff;color:#313740;border-radius:12px;padding:9px;font-size:11px;font-weight:700}.cardBtn.primary{background:#111;color:#fff}.cardBtn.saved{background:#eaf7f0;color:#13724e}
 .actionBox{margin-top:12px;padding:14px;border-radius:18px;background:#111;color:#fff}.actionBox h4{margin:0 0 5px;font-size:15px}.actionBox p{margin:0;color:#adb3bb;font-size:11px;line-height:1.45}.actionBtns{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.actionBtns button,.actionBtns a{border:0;background:#fff;color:#111;border-radius:11px;padding:9px 11px;font-size:11px;font-weight:720;text-decoration:none}.actionBtns .ghost{background:#22262c;color:#fff}
 .composerWrap{
@@ -192,7 +200,8 @@ html{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-we
       <div class="vOrb" id="voiceOrb"></div>
     </div>
     <div class="vHint" id="voiceHint">Нажмите и говорите</div>
-    <div class="vLog" id="voiceLog"></div>
+    <div class="vHeard" id="voiceHeard"></div>
+    <div class="vSaid" id="voiceSaid"></div>
     <div class="vCards" id="voiceCards"></div>
   </div>
   <div class="vBottom">
@@ -1330,7 +1339,12 @@ $("#sendBtn").onclick=()=>submitUser($("#input").value);$("#input").addEventList
 // микрофона работает как раньше — через распознавание в браузере.
 let VOICE_SCREEN=false;
 function startVoice(){
-  if(VOICE_SCREEN&&window.FreeVoice)return FreeVoice.open();
+  if(VOICE_SCREEN&&window.FreeVoice){
+    // Греем позицию заранее и молча: пока человек договорит первую фразу,
+    // координаты уже будут в кеше и попадут в запрос.
+    geo(true).catch(()=>{});
+    return FreeVoice.open();
+  }
   return browserVoice();
 }
 function initVoiceScreen(){
@@ -1367,9 +1381,14 @@ function initVoiceScreen(){
 let lastVoiceItems=[];
 // Снимок контекста для агента: то же, что уходит в обычный диалог.
 function neuralContextSnapshot(){
-  return {taste_weights:{...taste},
+  const c={taste_weights:{...taste},
     selected_place:selectedForAI(),plan:planForAI(),
     saved_count:saved.length,now:new Date().toISOString()};
+  // Без этого «найди ближайшее» нечем мерить: сервер знает, что человек просил
+  // рядом, но не знает, где он. Берём уже полученную позицию и не спрашиваем
+  // заново посреди разговора — окно с разрешением поверх экрана прервало бы его.
+  if(geoCache&&Date.now()-geoCache.at<600000)c.user_location={lat:geoCache.lat,lon:geoCache.lon};
+  return c;
 }
 
 initTelegram();renderSaved();renderPlan();renderTaste();detectCapabilities();startConversation();initDemoSample();initVoiceScreen();

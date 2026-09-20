@@ -130,26 +130,30 @@ function setPhase(p,hint){
   root.dataset.phase=p;
   const labels={idle:"Нажмите и говорите",listening:"Слушаю…",thinking:"Думаю…",speaking:"",error:""};
   const el=$("#voiceHint");
-  if(el)el.textContent=hint!==undefined?hint:(labels[p]||"");
+  // «Нажмите и говорите» — подсказка для первого раза. Над состоявшимся
+  // разговором она уже ничего не объясняет и только добавляет третью строку
+  // текста к двум осмысленным.
+  const idleWithContent=p==="idle"&&root.classList.contains("hasContent");
+  if(el)el.textContent=hint!==undefined?hint:(idleWithContent?"":(labels[p]||""));
 }
 function markContent(){
   const root=$("#voiceScreen");
   if(root)root.classList.add("hasContent");
 }
-function addLine(who,text){
-  const box=$("#voiceLog");if(!box||!text)return null;
-  markContent();
-  const el=document.createElement("div");
-  // Те же классы, что в переписке: одно место не должно выглядеть по-разному
-  // в зависимости от того, спросили о нём голосом или написали.
-  el.className="msg "+(who==="user"?"user":"ai");
-  el.textContent=text;
-  box.appendChild(el);
-  box.scrollTop=box.scrollHeight;
-  return el;
+// На экране живёт только текущий обмен. Накопленный журнал здесь не нужен:
+// всё сказанное человек уже слышал, а прочитать историю можно в переписке.
+function showHeard(text){
+  const el=$("#voiceHeard");if(!el)return;
+  el.textContent=text?"«"+text+"»":"";
+  if(text)markContent();
+}
+function showSaid(text){
+  const el=$("#voiceSaid");if(!el)return;
+  el.textContent=text||"";
+  if(text)markContent();
 }
 function clearLog(){
-  const b=$("#voiceLog");if(b)b.innerHTML="";
+  showHeard("");showSaid("");
   const root=$("#voiceScreen");if(root)root.classList.remove("hasContent");
 }
 
@@ -189,70 +193,183 @@ async function stopAndSend(){
     if(!r.ok)throw new Error(d.message||"Не удалось распознать");
     const text=String(d.text||"").trim();
     if(!text){setPhase("idle","Не расслышал. Скажите ещё раз");return}
-    addLine("user",text);
+    showHeard(text);showSaid("");
     await ask(text);
   }catch(e){
     setPhase("error",String(e.message||e));
-    addLine("agent","Не получилось: "+(e.message||e));
+    showSaid("Не получилось: "+(e.message||e));
     setTimeout(()=>{if(state.phase==="error")setPhase("idle")},2600);
   }
 }
 
+/**
+ * Один ход разговора.
+ *
+ * Идём потоковым каналом, а не обычным запросом. Разница не в красоте: за
+ * один ход агент успевает сходить к модели, поискать места и сходить к модели
+ * ещё раз. Ожидание всего ответа целиком — это несколько секунд полной тишины,
+ * а в разговоре вслух тишина читается как «сломалось». Здесь же первая фраза
+ * произносится, пока поиск ещё идёт.
+ */
 async function ask(text){
   setPhase("thinking");
-  let said="";
-  const line=addLine("agent","…");
+  resetSpeech();
   try{
-    const r=await state.api.apiFetch("/api/dialogue",{
+    const r=await state.api.apiFetch("/api/dialogue/stream",{
       method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({message:text,voice:true,
         previous_response_id:state.conversation,context:state.api.context?state.api.context():{}})});
-    const d=await r.json().catch(()=>({}));
-    if(!r.ok)throw new Error(d.message||"Консьерж недоступен");
-    state.conversation=d.response_id||state.conversation;
-    said=String(d.reply||"").trim();
-    if(line)line.textContent=said||"…";
-    if(d.results&&d.results.length&&state.api.renderCards)state.api.renderCards(d.results,$("#voiceCards"));
-    if(d.plan&&state.api.renderPlan)state.api.renderPlan(d.plan,$("#voiceCards"));
-    await speak(said);
+    if(!r.ok){
+      const d=await r.json().catch(()=>({}));
+      throw new Error(d.message||"Консьерж недоступен");
+    }
+    if(!r.body||!r.body.getReader)return askPlain(text);   // старый браузер без потоков
+    let failed=null;
+    await readEvents(r.body,(type,data)=>{
+      if(type==="delta"&&data.text){
+        // Реплика пришла — произносим сразу и показываем её же подписью.
+        showSaid(data.text);
+        enqueueSpeech(data.text);
+      }else if(type==="status"&&data&&data.text){
+        if(state.phase==="thinking")setPhase("thinking",data.text+"…");
+      }else if(type==="done"){
+        state.conversation=data.response_id||state.conversation;
+        renderOut(data);
+      }else if(type==="error"){
+        failed=new Error(data.message||"Консьерж недоступен");
+      }
+    });
+    if(failed)throw failed;
+    await speechIdle();
   }catch(e){
-    if(line)line.textContent="Не получилось: "+(e.message||e);
+    resetSpeech();
+    showSaid("Не получилось: "+(e.message||e));
     setPhase("error");
     setTimeout(()=>{if(state.phase==="error")setPhase("idle")},2600);
   }
 }
 
-async function speak(text){
-  if(!text){setPhase("idle");return}
+// Запасной путь: обычный запрос, если потоки недоступны.
+async function askPlain(text){
+  const r=await state.api.apiFetch("/api/dialogue",{
+    method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({message:text,voice:true,
+      previous_response_id:state.conversation,context:state.api.context?state.api.context():{}})});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(d.message||"Консьерж недоступен");
+  state.conversation=d.response_id||state.conversation;
+  const said=String(d.reply||"").trim();
+  showSaid(said);
+  renderOut(d);
+  enqueueSpeech(said);
+  await speechIdle();
+}
+
+function renderOut(d){
+  if(!d)return;
+  if(d.results&&d.results.length&&state.api.renderCards)state.api.renderCards(d.results,$("#voiceCards"));
+  if(d.plan&&state.api.renderPlan)state.api.renderPlan(d.plan,$("#voiceCards"));
+}
+
+/** Разбор потока server-sent events. Строки-комментарии (пинги) пропускаем. */
+async function readEvents(body,onEvent){
+  const reader=body.getReader(),dec=new TextDecoder();
+  let buf="";
+  for(;;){
+    const {value,done}=await reader.read();
+    if(done)break;
+    buf+=dec.decode(value,{stream:true});
+    let i;
+    while((i=buf.indexOf("\n\n"))>=0){
+      const raw=buf.slice(0,i);buf=buf.slice(i+2);
+      let type="message",data="";
+      for(const line of raw.split("\n")){
+        if(line.startsWith("event:"))type=line.slice(6).trim();
+        else if(line.startsWith("data:"))data+=line.slice(5).trim();
+      }
+      if(!data)continue;
+      let parsed=null;
+      try{parsed=JSON.parse(data)}catch(_){continue}
+      onEvent(type,parsed);
+    }
+  }
+}
+
+/* Очередь речи.
+ *
+ * Реплики приходят по одной, и синтез каждой — отдельный поход в сеть. Если
+ * ждать его в момент, когда предыдущая фраза договорена, между фразами
+ * появляется дыра. Поэтому синтез запускается сразу при постановке в очередь
+ * и идёт, пока звучит предыдущая; проигрывание при этом строго по порядку. */
+const speech={queue:[],draining:false,token:0};
+
+function resetSpeech(){
+  speech.token++;                      // всё, что было заказано, больше не наше
+  speech.queue.length=0;
+  stopSpeaking();
+}
+
+function enqueueSpeech(text){
+  const t=String(text||"").trim();
+  if(!t)return;
+  const mine=speech.token;
+  speech.queue.push({mine,audio:ttsBlob(t)});
+  if(!speech.draining)drainSpeech();
+}
+
+async function ttsBlob(text){
+  const r=await state.api.apiFetch("/api/voice/tts",{
+    method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text})});
+  if(!r.ok)throw new Error("нет синтеза");
+  return r.blob();
+}
+
+async function drainSpeech(){
+  speech.draining=true;
   try{
-    const r=await state.api.apiFetch("/api/voice/tts",{
-      method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text})});
-    if(!r.ok)throw new Error("нет синтеза");
-    const blob=await r.blob();
-    const url=URL.createObjectURL(blob);
-    const audio=new Audio(url);
-    audio.playsInline=true;
-    state.audio=audio;
-    // Анализатор на воспроизведении: тот же шар должен дышать под голос агента.
-    try{
-      const Ctx=window.AudioContext||window.webkitAudioContext;
-      const ctx=new Ctx();
-      const src=ctx.createMediaElementSource(audio);
-      const an=ctx.createAnalyser();an.fftSize=1024;
-      src.connect(an);an.connect(ctx.destination);
-      state.playAnalyser=an;
-      audio.addEventListener("ended",()=>{try{ctx.close()}catch(_){}},{once:true});
-    }catch(_){state.playAnalyser=null}
-    setPhase("speaking","");
-    await new Promise((resolve)=>{
-      audio.addEventListener("ended",resolve,{once:true});
-      audio.addEventListener("error",resolve,{once:true});
-      audio.play().catch(resolve);
-    });
-    URL.revokeObjectURL(url);
-  }catch(_){/* без голоса остаётся текст — это не повод обрывать разговор */}
-  state.audio=null;state.playAnalyser=null;
-  setPhase("idle");
+    while(speech.queue.length){
+      const item=speech.queue.shift();
+      if(item.mine!==speech.token)continue;         // разговор уже ушёл дальше
+      let blob=null;
+      // Молчание вместо реплики — это не повод обрывать разговор: текст на
+      // экране остаётся, и следующая фраза всё равно прозвучит.
+      try{blob=await item.audio}catch(_){continue}
+      if(item.mine!==speech.token)continue;
+      await playBlob(blob);
+    }
+  }finally{
+    speech.draining=false;
+    if(state.phase==="speaking")setPhase("idle");
+  }
+}
+
+/** Ждём, пока очередь опустеет: ход закончен, когда всё произнесено. */
+async function speechIdle(){
+  while(speech.draining||speech.queue.length)await new Promise(r=>setTimeout(r,60));
+}
+
+function playBlob(blob){
+  const url=URL.createObjectURL(blob);
+  const audio=new Audio(url);
+  audio.playsInline=true;
+  state.audio=audio;
+  // Анализатор на воспроизведении: тот же шар должен дышать под голос агента.
+  try{
+    const Ctx=window.AudioContext||window.webkitAudioContext;
+    const ctx=new Ctx();
+    const src=ctx.createMediaElementSource(audio);
+    const an=ctx.createAnalyser();an.fftSize=1024;
+    src.connect(an);an.connect(ctx.destination);
+    state.playAnalyser=an;
+    audio.addEventListener("ended",()=>{try{ctx.close()}catch(_){}},{once:true});
+  }catch(_){state.playAnalyser=null}
+  setPhase("speaking","");
+  return new Promise((resolve)=>{
+    const end=()=>{URL.revokeObjectURL(url);state.audio=null;state.playAnalyser=null;resolve()};
+    audio.addEventListener("ended",end,{once:true});
+    audio.addEventListener("error",end,{once:true});
+    audio.play().catch(end);
+  });
 }
 
 function stopSpeaking(){
@@ -266,7 +383,7 @@ async function listen(){
   if(state.busy)return;
   state.busy=true;
   try{
-    stopSpeaking();                       // перебить агента — нормальное поведение
+    resetSpeech();                        // перебить агента — нормальное поведение
     setPhase("listening");
     await startCapture();
   }catch(e){
@@ -279,7 +396,7 @@ async function listen(){
 
 function toggle(){
   if(state.phase==="listening")stopAndSend();
-  else if(state.phase==="speaking"){stopSpeaking();setPhase("idle")}
+  else if(state.phase==="speaking"){resetSpeech();setPhase("idle")}
   else if(state.phase==="idle"||state.phase==="error")listen();
 }
 
@@ -297,7 +414,7 @@ function open(){
 
 function close(){
   state.open=false;
-  stopSpeaking();
+  resetSpeech();
   if(state.phase==="listening")stopCapture();
   cancelAnimationFrame(state.raf);state.raf=0;
   const root=$("#voiceScreen");

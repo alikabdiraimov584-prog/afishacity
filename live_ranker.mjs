@@ -146,10 +146,17 @@ function sanitizeTaste(raw){
   }
   return out;
 }
+const NEAR_RE=/ближайш|поблизости|рядом|недалеко|неподалёку|неподалеку|от меня|пешком|близко|в шаговой/;
+
 export function rankLive(items,args={},plan={}){
   const q=args.query||"",qwords=words(q),tags=requestedTags(q,plan),
     strong=new Set(tags.filter(t=>Object.keys(SYN).includes(t))),
-    taste=sanitizeTaste(args.taste_weights), user=coordsPair(args.user_location), near=/рядом|недалеко|от меня|пешком/.test(norm(q)),
+    taste=sanitizeTaste(args.taste_weights), user=coordsPair(args.user_location),
+    // «Ближайший» и «поблизости» сюда не попадали, и просьба «найди ближайшее»
+    // молча превращалась в обычный поиск по городу. Плюс агент теперь может
+    // сказать про близость прямо, не надеясь на то, что нужное слово уцелеет
+    // в переписанном им запросе.
+    near=args.near===true||NEAR_RE.test(norm(q)),
     rain=args.weather_context?.rain===true,moment=hoursMoment(args),
     serviceAsked=tags.some(t=>SERVICE_TAGS.has(t)),
     centerAsked=/центр/.test(norm(args.area||""));

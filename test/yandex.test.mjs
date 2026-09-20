@@ -90,13 +90,13 @@ test("синтез речи отдаёт mp3 и обрезает слишком 
 });
 
 test("состояние настроек видно до первого разговора", () => {
-  assert.deepEqual(yandexStatus({}),{ready:false,has_key:false,has_folder:false,model:null,voice:"alena"});
-  const s=yandexStatus({YANDEX_API_KEY:"k",YANDEX_FOLDER_ID:"f",YANDEX_VOICE:"filipp"});
+  assert.deepEqual(yandexStatus({}),{ready:false,has_key:false,has_folder:false,model:null,voice:"filipp"});
+  const s=yandexStatus({YANDEX_API_KEY:"k",YANDEX_FOLDER_ID:"f",YANDEX_VOICE:"zahar"});
   assert.equal(s.ready,true);
   assert.equal(s.model,"gpt://f/yandexgpt/latest");
-  assert.equal(s.voice,"filipp");
+  assert.equal(s.voice,"zahar","настройка голоса перебивает умолчание");
   assert.deepEqual(yandexStatus({YANDEX_API_KEY:"k"}),
-    {ready:false,has_key:true,has_folder:false,model:null,voice:"alena"},"видно, чего именно не хватает");
+    {ready:false,has_key:true,has_folder:false,model:null,voice:"filipp"},"видно, чего именно не хватает");
 });
 
 test("обрыв по таймауту сообщается как повторяемая ошибка", async () => {
@@ -114,4 +114,37 @@ test("настройки читаются из окружения", () => {
   assert.equal(cfg.temperature,0.7);
   assert.equal(cfg.maxTokens,900);
   assert.equal(modelUri(cfg),"gpt://f/yandexgpt-lite/latest");
+});
+
+// ---- Скорость разговора ----
+// Живой разговор: «думал три секунды». За ход агент ходит к модели дважды,
+// и на старшей модели каждая ходка стоит секунду с лишним.
+
+test("вслух берётся быстрая модель и короткий потолок ответа", async () => {
+  let seen=null;
+  const fetchImpl=async(u,init)=>{seen=JSON.parse(init.body);return ok(reply("да"))};
+  const cfg=yandexConfig({YANDEX_API_KEY:"k",YANDEX_FOLDER_ID:"f"});
+  await yandexComplete([{role:"user",text:"бар"}],{cfg,fetchImpl,voice:true});
+  assert.equal(seen.modelUri,"gpt://f/yandexgpt-lite/latest","вслух — быстрая модель");
+  assert.equal(seen.completionOptions.maxTokens,"220","вслух реплика короткая по определению");
+
+  await yandexComplete([{role:"user",text:"бар"}],{cfg,fetchImpl,voice:false});
+  assert.equal(seen.modelUri,"gpt://f/yandexgpt/latest","в переписке остаётся старшая модель");
+  assert.equal(seen.completionOptions.maxTokens,"1500");
+});
+
+test("обе модели настраиваются отдельно", () => {
+  const cfg=yandexConfig({YANDEX_API_KEY:"k",YANDEX_FOLDER_ID:"f",
+    YANDEX_MODEL:"yandexgpt-32k/latest",YANDEX_VOICE_MODEL:"yandexgpt-lite/rc"});
+  assert.equal(modelUri(cfg,{voice:true}),"gpt://f/yandexgpt-lite/rc");
+  assert.equal(modelUri(cfg),"gpt://f/yandexgpt-32k/latest");
+});
+
+test("скорость речи берётся из настроек, а не прибита единицей", async () => {
+  let body=null;
+  const fetchImpl=async(u,init)=>{body=new URLSearchParams(init.body);return {ok:true,status:200,arrayBuffer:async()=>new ArrayBuffer(8)}};
+  await yandexTts("привет",{cfg:yandexConfig({YANDEX_API_KEY:"k",YANDEX_FOLDER_ID:"f"}),fetchImpl});
+  assert.equal(body.get("speed"),"1.08","чуть быстрее обычного: медленная речь слушается как задумчивость");
+  await yandexTts("привет",{cfg:yandexConfig({YANDEX_API_KEY:"k",YANDEX_FOLDER_ID:"f",YANDEX_SPEED:"1.3"}),fetchImpl});
+  assert.equal(body.get("speed"),"1.3");
 });

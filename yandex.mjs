@@ -25,16 +25,25 @@ export function yandexConfig(env=process.env){
     key,folder,
     ready:Boolean(key&&folder),
     model:env.YANDEX_MODEL||"yandexgpt/latest",
-    voice:env.YANDEX_VOICE||"alena",
-    emotion:env.YANDEX_EMOTION||"good",
+    // В разговоре вслух важнее скорость ответа, чем глубина: реплика всё равно
+    // два предложения, а лишняя секунда молчания в живом диалоге заметнее, чем
+    // разница в формулировке. Для переписки остаётся старшая модель.
+    voiceModel:env.YANDEX_VOICE_MODEL||"yandexgpt-lite/latest",
+    voice:env.YANDEX_VOICE||"filipp",
+    emotion:env.YANDEX_EMOTION||"neutral",
+    speed:Number(env.YANDEX_SPEED||1.08),
     temperature:Number(env.YANDEX_TEMPERATURE||0.3),
-    maxTokens:Number(env.YANDEX_MAX_TOKENS||1500)
+    maxTokens:Number(env.YANDEX_MAX_TOKENS||1500),
+    // Потолок на реплику вслух: модель не может заговориться, а синтез
+    // начинается раньше — время генерации прямо пропорционально длине.
+    voiceMaxTokens:Number(env.YANDEX_VOICE_MAX_TOKENS||220)
   };
 }
 
-export function modelUri(cfg){
+export function modelUri(cfg,{voice=false}={}){
   // Полный URI можно задать целиком, иначе собираем из папки и имени модели.
-  return /^gpt:\/\//.test(cfg.model)?cfg.model:`gpt://${cfg.folder}/${cfg.model}`;
+  const name=voice&&cfg.voiceModel?cfg.voiceModel:cfg.model;
+  return /^gpt:\/\//.test(name)?name:`gpt://${cfg.folder}/${name}`;
 }
 
 export class YandexError extends Error{
@@ -89,13 +98,13 @@ async function call(url,{method="POST",headers={},body,cfg,timeoutMs=20000,fetch
  * messages — [{role:"system"|"user"|"assistant", text}].
  * Возвращает {text, usage, model}.
  */
-export async function yandexComplete(messages,{cfg=yandexConfig(),fetchImpl=fetch,timeoutMs=20000,signal=null,temperature,maxTokens}={}){
+export async function yandexComplete(messages,{cfg=yandexConfig(),fetchImpl=fetch,timeoutMs=20000,signal=null,temperature,maxTokens,voice=false}={}){
   const body=JSON.stringify({
-    modelUri:modelUri(cfg),
+    modelUri:modelUri(cfg,{voice}),
     completionOptions:{
       stream:false,
       temperature:Number.isFinite(temperature)?temperature:cfg.temperature,
-      maxTokens:String(maxTokens||cfg.maxTokens)
+      maxTokens:String(maxTokens||(voice?cfg.voiceMaxTokens:cfg.maxTokens))
     },
     messages:messages.map(m=>({role:m.role,text:String(m.text??"")}))
   });
@@ -132,13 +141,13 @@ export async function yandexStt(audio,{cfg=yandexConfig(),fetchImpl=fetch,lang="
 
 /** Синтез речи. Возвращает Buffer с MP3. */
 export async function yandexTts(text,{cfg=yandexConfig(),fetchImpl=fetch,lang="ru-RU",
-  voice,emotion,speed=1.0,format="mp3",timeoutMs=15000,signal=null}={}){
+  voice,emotion,speed,format="mp3",timeoutMs=15000,signal=null}={}){
   const t=String(text||"").trim();
   if(!t)throw new YandexError("Нечего произносить",{status:0});
   const form=new URLSearchParams({
     text:t.slice(0,TTS_MAX_CHARS),lang,
     voice:voice||cfg.voice,
-    speed:String(speed),
+    speed:String(Number.isFinite(speed)?speed:cfg.speed),
     format,
     folderId:cfg.folder
   });

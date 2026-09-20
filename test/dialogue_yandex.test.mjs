@@ -96,7 +96,9 @@ test("голосовой режим меняет правила речи в по
   const system=m.seen[0][0];
   assert.equal(system.role,"system");
   assert.match(system.text,/ГОВОРИШЬ ВСЛУХ/);
-  assert.match(system.text,/одна-две фразы/);
+  assert.match(system.text,/ДВА ПРЕДЛОЖЕНИЯ/);
+  // Главная причина «воды» вслух — пересказ того, что и так на карточке.
+  assert.match(system.text,/НЕ произносишь часы работы, адреса, цены/);
   const m2=model(JSON.stringify({say:"x",tool:null}));
   await runYandexDialogue("бар",[],{cfg:CFG,fetchImpl:m2.fetchImpl,deps:{},voice:false});
   assert.ok(!/ГОВОРИШЬ ВСЛУХ/.test(m2.seen[0][0].text));
@@ -135,4 +137,58 @@ test("история продолжается между ходами", async ()
   const sent=m2.seen[0].filter(x=>x.role!=="system");
   assert.equal(sent[0].text,"привет","прошлая реплика на месте");
   assert.equal(sent[sent.length-1].text,"а теперь бар");
+});
+
+// ---- Что произносится вслух ----
+
+test("вслух итогом отдаётся только последняя реплика", async () => {
+  // Промежуточное «секунду, смотрю» человек слышит сразу, пока идёт поиск.
+  // Если оно попадёт ещё и в итог, он услышит его дважды — и оба раза с
+  // задержкой на всю склейку.
+  const m=model(
+    JSON.stringify({say:"Секунду, смотрю",tool:"recommend_free",args:{query:"бар"}}),
+    JSON.stringify({say:"Ближе всего Ровесник",tool:null}));
+  const said=[];
+  const out=await runYandexDialogue("бар рядом",[],{cfg:CFG,fetchImpl:m.fetchImpl,voice:true,
+    emit:(t,d)=>{if(t==="delta")said.push(d.text)},
+    deps:{recommend_free:async()=>PLACES}});
+  assert.deepEqual(said,["Секунду, смотрю","Ближе всего Ровесник"],"обе реплики произносятся по мере готовности");
+  assert.equal(out.text,"Ближе всего Ровесник","итог не повторяет уже сказанное");
+});
+
+test("в переписке видно весь ход целиком", async () => {
+  const m=model(
+    JSON.stringify({say:"Секунду, смотрю",tool:"recommend_free",args:{query:"бар"}}),
+    JSON.stringify({say:"Ближе всего Ровесник",tool:null}));
+  const out=await runYandexDialogue("бар",[],{cfg:CFG,fetchImpl:m.fetchImpl,voice:false,
+    deps:{recommend_free:async()=>PLACES}});
+  assert.equal(out.text,"Секунду, смотрю\nБлиже всего Ровесник");
+});
+
+test("вслух агент не ходит к модели третий раз", async () => {
+  // Каждый лишний заход — ещё секунда тишины в живом разговоре.
+  const m=model(...Array(5).fill(JSON.stringify({say:"ищу",tool:"recommend_free",args:{query:"бар"}})));
+  await runYandexDialogue("бар",[],{cfg:CFG,fetchImpl:m.fetchImpl,voice:true,
+    deps:{recommend_free:async()=>PLACES}});
+  assert.equal(m.seen.length,2,"вслух — не больше двух обращений к модели");
+});
+
+test("у консьержа мужской голос, и он совпадает с умолчанием клиента", async () => {
+  const {CONCIERGE}=await import("../agent.mjs");
+  const {yandexConfig}=await import("../yandex.mjs");
+  // Савва — мужское имя. Раньше здесь стояла alena, то есть голос Алисы:
+  // собственный агент звучал как чужой продукт.
+  assert.ok(!["alena","jane","omazh","dasha","julia","lera","marina"].includes(CONCIERGE.voice),
+    "женский голос для Саввы — ошибка");
+  assert.equal(CONCIERGE.voice,yandexConfig({}).voice,
+    "личность и умолчание клиента не должны разъезжаться");
+});
+
+test("агент умеет попросить о близости отдельно от центра", async () => {
+  const {AGENT_TOOLS,agentSystem}=await import("../agent.mjs");
+  const rec=AGENT_TOOLS.find(t=>t.name==="recommend_free");
+  assert.ok(rec.args.near,"у поиска есть признак близости");
+  assert.match(rec.args.near,/ближайшее/);
+  assert.match(rec.args.area,/только если человек прямо назвал центр/);
+  assert.match(agentSystem({}),/Центр города тут ни при чём/);
 });

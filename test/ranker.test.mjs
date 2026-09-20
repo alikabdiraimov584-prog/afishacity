@@ -80,3 +80,48 @@ test("шкала ДНК: пороги ранкера и UI достижимы", 
   const out=run([cowork],{query:"поработать с ноутбуком"});
   assert.ok(out[0]._reasons.includes("удобно для работы"),out[0]._reasons.join(","));
 });
+
+// ---- Близость ----
+// Живой разговор: «найди ближайшие» возвращало места в центре, потому что
+// слова «ближайший» ранкер не знал вовсе, а агент подменял близость центром.
+
+test("«ближайшие» и «поблизости» считаются просьбой о близости", ()=>{
+  const near=venue("near","Рядом",{coords:{lat:55.700,lon:37.560}});   // ~200 м
+  const far=venue("far","Далеко",{coords:{lat:55.860,lon:37.560}});    // ~18 км
+  const me={lat:55.6985,lon:37.5600};
+  for(const q of ["ближайшие бары","бар поблизости","бар рядом","бар в шаговой доступности"]){
+    const out=run([far,near],{query:q,user_location:me});
+    assert.equal(out[0].id,"near",`«${q}»: ближнее место должно быть первым`);
+  }
+});
+
+test("без слова о близости порядок по близости не навязывается", ()=>{
+  const near=venue("near","Рядом",{coords:{lat:55.700,lon:37.560}});
+  const far=venue("far","Далеко",{coords:{lat:55.860,lon:37.560},keywords:"бар коктейли авторские"});
+  const out=run([far,near],{query:"коктейльный бар",user_location:{lat:55.6985,lon:37.56}});
+  assert.equal(out.length,2,"оба места остаются в выдаче");
+});
+
+test("агент может попросить о близости явно, не надеясь на формулировку запроса", ()=>{
+  const near=venue("near","Рядом",{coords:{lat:55.700,lon:37.560}});
+  const far=venue("far","Далеко",{coords:{lat:55.860,lon:37.560}});
+  const me={lat:55.6985,lon:37.5600};
+  // Модель переписывает запрос своими словами, и слово «ближайший» в нём
+  // не обязано уцелеть. Флаг near должен работать сам по себе.
+  const out=run([far,near],{query:"бар",near:true,user_location:me});
+  assert.equal(out[0].id,"near");
+  assert.ok((out[0]._reasons||[]).includes("рядом"),"человеку видно, почему это первое");
+});
+
+test("близость и центр — разные вещи", ()=>{
+  // Человек в Кузьминках просит ближайшее: центр ему не ближе.
+  const kuzminki={lat:55.6950,lon:37.7900};
+  const here=venue("here","У дома",{coords:{lat:55.6960,lon:37.7930}});
+  const centre=venue("centre","В центре",{coords:{lat:55.7560,lon:37.6200}});
+  const near=run([centre,here],{query:"ближайший бар",user_location:kuzminki});
+  assert.equal(near[0].id,"here");
+  // А если прямо попросили центр — центр и получает преимущество.
+  const asked=run([here,centre],{query:"бар",area:"центр",user_location:kuzminki});
+  assert.equal(asked[0].id,"centre");
+  assert.ok(!asked.some(x=>x.id==="here"),"далёкое от центра при просьбе о центре отсеивается");
+});

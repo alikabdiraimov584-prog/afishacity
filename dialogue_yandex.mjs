@@ -12,6 +12,7 @@ import {agentSystem,parseAgentReply,toolResultForAgent,CONCIERGE} from "./agent.
 import {yandexComplete,yandexConfig} from "./yandex.mjs";
 
 export const MAX_ROUNDS=3;                    // ход модели + инструмент + вывод
+export const VOICE_ROUNDS=2;                  // вслух: спросил инструмент — ответил
 export const MAX_HISTORY=24;                  // чтобы подсказка не росла бесконечно
 
 const TOOL_MARK="[РЕЗУЛЬТАТ ПОИСКА]";
@@ -36,26 +37,27 @@ export function trimHistory(messages,max=MAX_HISTORY){
  */
 export async function runYandexDialogue(message,history=[],{
   context={},emit=null,signal=null,voice=false,
-  cfg=yandexConfig(),fetchImpl=fetch,deps={},maxRounds=MAX_ROUNDS
+  cfg=yandexConfig(),fetchImpl=fetch,deps={},maxRounds=null
 }={}){
+  if(!Number.isFinite(maxRounds))maxRounds=voice?VOICE_ROUNDS:MAX_ROUNDS;
   const send=(type,data)=>{if(emit){try{emit(type,data)}catch{}}};
   const system=agentSystem({voice,context:context.summary||""});
   const messages=trimHistory([...history,{role:"user",text:String(message||"")}]);
 
-  let said="",results=[],plan=null,toolUsed=false;
+  const says=[];let results=[],plan=null,toolUsed=false;
 
   for(let round=0;round<maxRounds;round++){
     if(signal&&signal.aborted)throw Object.assign(new Error("клиент отключился"),{name:"AbortError"});
 
     const reply=await yandexComplete([{role:"system",text:system},...messages],
-      {cfg,fetchImpl,signal});
+      {cfg,fetchImpl,signal,voice});
     const parsed=parseAgentReply(reply.text);
     // В историю кладём ровно то, что вернула модель: иначе на следующем ходу
     // она не увидит собственного формата и начнёт отвечать по-разному.
     messages.push({role:"assistant",text:reply.text});
 
     if(parsed.say){
-      said=said?`${said}\n${parsed.say}`:parsed.say;
+      says.push(parsed.say);
       send("delta",{text:parsed.say});
     }
     if(!parsed.tool)break;
@@ -80,6 +82,9 @@ export async function runYandexDialogue(message,history=[],{
     }
   }
 
-  return {text:said.trim(),results,plan,tool_used:toolUsed,
+  // Вслух итог — только последняя реплика: предыдущие человек уже услышал,
+  // пока шёл поиск. В переписке наоборот, там видно всё сразу.
+  const text=(voice&&says.length>1?says[says.length-1]:says.join("\n")).trim();
+  return {text,says:says.slice(),results,plan,tool_used:toolUsed,
     messages:trimHistory(messages),agent:CONCIERGE.name};
 }

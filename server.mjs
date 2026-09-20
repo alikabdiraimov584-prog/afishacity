@@ -68,7 +68,7 @@ function identify(req,auth){
 const CACHE=new Map();
 const CACHE_MS=5*60*1000;
 
-const mime={".html":"text/html; charset=utf-8",".js":"text/javascript; charset=utf-8",".mjs":"text/javascript; charset=utf-8",".css":"text/css; charset=utf-8",".json":"application/json; charset=utf-8",".svg":"image/svg+xml",".png":"image/png"};
+const mime={".html":"text/html; charset=utf-8",".js":"text/javascript; charset=utf-8",".mjs":"text/javascript; charset=utf-8",".css":"text/css; charset=utf-8",".json":"application/json; charset=utf-8",".svg":"image/svg+xml",".png":"image/png",".mp3":"audio/mpeg",".webp":"image/webp",".ico":"image/x-icon"};
 
 // CORS для мобильного приложения: WebView Capacitor живёт на capacitor://localhost (iOS) и http://localhost (Android).
 const CORS_ORIGINS=new Set(String(process.env.CORS_ORIGINS||"capacitor://localhost,ionic://localhost,http://localhost,https://localhost").split(",").map(x=>x.trim()).filter(Boolean));
@@ -707,7 +707,7 @@ const server=http.createServer(async(req,res)=>{
       const text=String(body.text||"").trim();
       if(!text)return json(res,400,{error:"text_required"});
       try{
-        const mp3=await yandexTts(text,{cfg:YANDEX,voice:body.voice||CONCIERGE.voice});
+        const mp3=await yandexTts(text,{cfg:YANDEX,voice:body.voice||YANDEX.voice});
         res.writeHead(200,{"Content-Type":"audio/mpeg","Cache-Control":"no-store",
           "Content-Length":String(mp3.length),...corsHeaders(req)});
         return res.end(mp3);
