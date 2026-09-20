@@ -2,13 +2,14 @@ import http from "node:http";
 import {readFile} from "node:fs/promises";
 import {extname,join,normalize} from "node:path";
 import {fileURLToPath} from "node:url";
-import {randomUUID} from "node:crypto";
+import {randomUUID,createHmac,timingSafeEqual} from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import {verifyInitData,createRateLimiter} from "./telegram.mjs";
 import {buildPlan,planSummary} from "./planner.mjs";
 import {openStore} from "./store.mjs";
-import {mkdirSync,writeFileSync as writeFileSyncFs,existsSync,readdirSync,unlinkSync,statSync} from "node:fs";
+import {mkdirSync,writeFileSync as writeFileSyncFs,readFileSync as readFileSyncFs,existsSync,readdirSync,unlinkSync,statSync} from "node:fs";
 import {searchLiveInventory,providerHealth} from "./providers.mjs";
+import {renderCover} from "./cover.mjs";
 import {rankLive,resultPayload} from "./live_ranker.mjs";
 import {startWarmup} from "./warmup.mjs";
 import {loadDotenv} from "./env.mjs";
@@ -197,6 +198,48 @@ const planTool={
   }
 };
 function planId(){return randomUUID().replace(/-/g,"").slice(0,10)}
+
+// ---- Обложка места ----
+// Ссылку подписываем: без подписи любой смог бы нарисовать на нашем домене
+// произвольный текст и выдать его за карточку FREE. Секрет живёт в процессе,
+// поэтому после перезапуска старые ссылки перестают действовать — карточки
+// всё равно собираются заново на каждый ответ.
+// Секрет обязан переживать перезапуск: страницы общих планов живут неделями,
+// и после рестарта их обложки иначе отдавали бы 400.
+const COVER_SECRET=(()=>{
+  if(process.env.COVER_SECRET)return process.env.COVER_SECRET;
+  if(process.env.NODE_ENV==="test")return "test-cover-secret";
+  const file=join(__dirname,"data","cover_secret");
+  try{const v=readFileSyncFs(file,"utf8").trim();if(v)return v}catch{}
+  const v=randomUUID();
+  try{mkdirSync(join(__dirname,"data"),{recursive:true});writeFileSyncFs(file,v,{mode:0o600})}catch{}
+  return v;
+})();
+function b64url(buf){return Buffer.from(buf).toString("base64").replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")}
+function coverSign(data){return b64url(createHmac("sha256",COVER_SECRET).update(data).digest()).slice(0,27)}
+export function coverUrl(x){
+  const d=b64url(JSON.stringify({
+    n:String(x.name||"Место").slice(0,120),
+    c:String(x.category||x.cat||"").slice(0,60),
+    t:(x.tags||[]).slice(0,4),
+    a:String(x.area||x.metro||"").slice(0,80),
+    h:String(x.hours_label||"").slice(0,120),
+    p:String(x.price_label||x.price||"").slice(0,60),
+    k:x.kind==="event"?"event":"venue",
+    g:x.coords||null
+  }));
+  return `/api/cover.svg?d=${d}&s=${coverSign(d)}`;
+}
+function coverFromQuery(url){
+  const d=url.searchParams.get("d")||"",s=url.searchParams.get("s")||"";
+  if(!d||!s||d.length>2400)return null;
+  const want=Buffer.from(coverSign(d)),got=Buffer.from(s);
+  if(want.length!==got.length||!timingSafeEqual(want,got))return null;
+  try{
+    const o=JSON.parse(Buffer.from(d.replace(/-/g,"+").replace(/_/g,"/"),"base64").toString("utf8"));
+    return {name:o.n,category:o.c,tags:Array.isArray(o.t)?o.t:[],area:o.a,hours_label:o.h,price_label:o.p,kind:o.k,coords:o.g};
+  }catch{return null}
+}
 const CARD_DIR=join(__dirname,"data","cards");
 const CARD_MAX=900*1024;
 function saveCard(id,dataUrl){
@@ -493,6 +536,16 @@ const server=http.createServer(async(req,res)=>{
     const url=new URL(req.url,`http://${req.headers.host||"localhost"}`);
     res.req=req;
     if(req.method==="OPTIONS"){res.writeHead(204,corsHeaders(req));return res.end()}
+
+    if(req.method==="GET"&&url.pathname==="/api/cover.svg"){
+      const args=coverFromQuery(url);
+      if(!args)return send(res,400,"bad signature");
+      const svg=renderCover(args);
+      res.writeHead(200,{"Content-Type":"image/svg+xml; charset=utf-8","Cache-Control":"public, max-age=86400",
+        "Content-Length":String(Buffer.byteLength(svg)),"X-Content-Type-Options":"nosniff",
+        "Content-Security-Policy":"default-src 'none'; style-src 'unsafe-inline'",...corsHeaders(req)});
+      return res.end(svg);
+    }
 
     if(req.method==="GET"&&url.pathname==="/api/health"){
       return json(res,200,{
