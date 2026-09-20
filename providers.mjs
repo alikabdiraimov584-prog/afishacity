@@ -1,3 +1,7 @@
+import {join} from "node:path";
+import {fileURLToPath} from "node:url";
+import {createCache,withBreaker,breakerStatus} from "./cache.mjs";
+
 const MOSCOW_POINT = "37.6173,55.7558";
 const TIMEOUT_MS = 6500;
 
@@ -355,12 +359,16 @@ function normalizeOsmItem(x,plan){
     keywords:norm(text),coords:{lat:x.lat||x.center?.lat||null,lon:x.lon||x.center?.lon||null}
   };
 }
-export async function searchOSM(plan){
+export function osmFilters(plan){
   const q=norm(plan.raw||plan.safeQuery||"");
   const filters=[];
   for(const r of OSM_RULES) if(r.re.test(q)) filters.push(...r.filters);
-  if(!filters.length || !plan.placeIntent) return {items:[],errors:[],disabled:false};
-  const query=`[out:json][timeout:18];(${uniq(filters).map(s=>s.replaceAll("{{bbox}}",MOSCOW_BBOX)).join("")});out center tags 80;`;
+  return plan.placeIntent?uniq(filters):[];
+}
+export async function searchOSM(plan){
+  const filters=osmFilters(plan);
+  if(!filters.length) return {items:[],errors:[],disabled:false};
+  const query=`[out:json][timeout:18];(${filters.map(s=>s.replaceAll("{{bbox}}",MOSCOW_BBOX)).join("")});out center tags 80;`;
   try{
     const body=new URLSearchParams({data:query}).toString();
     const d=await fetchJson(OVERPASS_URL,{
@@ -387,22 +395,71 @@ function dedupe(items){
   return [...seen.values()];
 }
 
-export async function searchLiveInventory(args={},env=process.env){
+// --- Надёжность поиска: кеш ответов провайдеров + предохранитель на каждый источник ---
+const LIVE_TTL_MS=10*60_000;          // свежий ответ переиспользуется 10 минут
+const LIVE_STALE_MS=6*60*60_000;      // при сбое источника отдаём сохранённый ответ до 6 часов
+const BREAKER={failures:3,cooldownMs:5*60_000};
+const CACHE_FILE=process.env.NODE_ENV==="test"?null:join(fileURLToPath(new URL(".",import.meta.url)),"data","live_cache.json");
+const PROVIDER_LABEL={kudago:"KudaGo",timepad:"Timepad",osm:"OpenStreetMap/Overpass",dgis:"2GIS"};
+let liveCache=null;
+export function getLiveCache(){return liveCache||(liveCache=createCache({ttlMs:LIVE_TTL_MS,staleMs:LIVE_STALE_MS,file:CACHE_FILE}))}
+
+// Ключ кеша — только то, что реально влияет на запрос к провайдеру (и plan.tags, которые попадают в карточки).
+function cacheKeyFor(name,plan,hasKey){
+  const base={t:plan.tags};
+  const part={
+    kudago:{e:plan.eventQueries.slice(0,3),p:plan.placeQueries.slice(0,3),f:plan.freeOnly,d:plan.targetDate},
+    timepad:{e:plan.eventQueries.length?plan.eventQueries.slice(0,3):[plan.coreQuery||""],d:plan.targetDate,f:plan.freeOnly,m:plan.maxPrice},
+    osm:{f:osmFilters(plan)},
+    dgis:{p:plan.placeQueries.slice(0,4),k:!!hasKey}
+  }[name];
+  return `${name}:${JSON.stringify({...base,...part})}`;
+}
+
+// Провайдер считается упавшим, если бросил исключение или вернул одни ошибки без единого результата.
+async function cachedProvider(name,key,fn,{cache,now,breaker}){
+  const hit=cache.get(key);
+  if(hit&&hit.fresh)return {items:hit.value.items,errors:[],from_cache:true,degraded:breakerStatus(name,{cooldownMs:breaker.cooldownMs,now}).open};
+  try{
+    const r=await withBreaker(name,async()=>{
+      const r=await fn();
+      if((r.errors||[]).length&&!(r.items||[]).length){const e=new Error(r.errors.join("; "));e.labeled=true;throw e}
+      return r;
+    },{...breaker,now});
+    cache.set(key,{items:r.items||[]});
+    return {items:r.items||[],errors:r.errors||[],from_cache:false,degraded:false};
+  }catch(e){
+    const msg=e.open||e.labeled?e.message:`${PROVIDER_LABEL[name]}: ${e.message}`;
+    if(hit)return {items:hit.value.items,errors:[msg],from_cache:true,degraded:true};
+    return {items:[],errors:[msg],from_cache:false,degraded:true};
+  }
+}
+
+// opts: {providers:{kudago,timepad,osm,dgis}, cache, now, breaker} — для тестов и прогрева.
+export async function searchLiveInventory(args={},env=process.env,opts={}){
   const plan=buildSearchPlan(args);
-  const tasks=[
-    searchKudago(plan),
-    searchTimepad(plan),
-    searchOSM(plan),
-    search2GIS(plan,env.DGIS_API_KEY||env.TWOGIS_API_KEY||"")
-  ];
-  const [k,t,o,d]=await Promise.all(tasks);
+  const P={kudago:searchKudago,timepad:searchTimepad,osm:searchOSM,dgis:search2GIS,...(opts.providers||{})};
+  const ctx={cache:opts.cache||getLiveCache(),now:opts.now||Date.now,breaker:{...BREAKER,...(opts.breaker||{})}};
+  const dgisKey=env.DGIS_API_KEY||env.TWOGIS_API_KEY||"";
+  const [k,t,o,d]=await Promise.all([
+    cachedProvider("kudago",cacheKeyFor("kudago",plan),()=>P.kudago(plan),ctx),
+    cachedProvider("timepad",cacheKeyFor("timepad",plan),()=>P.timepad(plan),ctx),
+    cachedProvider("osm",cacheKeyFor("osm",plan),()=>P.osm(plan),ctx),
+    dgisKey?cachedProvider("dgis",cacheKeyFor("dgis",plan,true),()=>P.dgis(plan,dgisKey),ctx):{items:[],errors:[],from_cache:false,degraded:false,disabled:true}
+  ]);
   const items=dedupe([...(d.items||[]),...(o.items||[]),...(k.items||[]),...(t.items||[])]);
+  const degraded={kudago:k.degraded,timepad:t.degraded,osm:o.degraded,dgis:d.degraded};
+  const from_cache={kudago:k.from_cache,timepad:t.from_cache,osm:o.from_cache,dgis:d.from_cache};
+  const anyDegraded=Object.values(degraded).some(Boolean);
+  const anyStale=[k,t,o,d].some(x=>x.degraded&&x.from_cache);
+  const notes=[];
+  if(plan.heavyDrinkingPhrase)notes.push("Запрос интерпретирован как поиск баров/пабов/ночных заведений; FREE не ранжирует места по количеству алкоголя.");
+  if(anyDegraded)notes.push(anyStale?"Часть источников временно недоступна, показываю сохранённые результаты.":"Часть источников временно недоступна.");
   return {
     plan,items,
     errors:[...(k.errors||[]),...(t.errors||[]),...(o.errors||[]),...(d.errors||[])],
     providers:{kudago:true,timepad:true,osm:true,dgis:!d.disabled},
-    note:plan.heavyDrinkingPhrase
-      ?"Запрос интерпретирован как поиск баров/пабов/ночных заведений; FREE не ранжирует места по количеству алкоголя."
-      :null
+    degraded,from_cache,
+    note:notes.length?notes.join(" "):null
   };
 }
