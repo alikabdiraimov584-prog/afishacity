@@ -9,38 +9,67 @@
 if(matchMedia("(max-width:700px)").matches){location.replace((new URLSearchParams(location.search).get("src")||"index.html"))}
 </script>
 <style>
-:root{--bg:#e6e7ea;--ink:#111214;--muted:#727780;--phone:#101114;--screen:#f6f6f4}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1b1c20;--ink:#f2f2f2;--muted:#9a9ea6}}
-:root[data-theme="dark"]{--bg:#1b1c20;--ink:#f2f2f2;--muted:#9a9ea6}
+:root{--bg:#e6e7ea;--ink:#111214;--muted:#727780;--phone:#101114;--screen:#f6f6f4;--chip:#fff;--chipOn:#111316}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1b1c20;--ink:#f2f2f2;--muted:#9a9ea6;--chip:#2a2b30;--chipOn:#f2f2f2}}
+:root[data-theme="dark"]{--bg:#1b1c20;--ink:#f2f2f2;--muted:#9a9ea6;--chip:#2a2b30;--chipOn:#f2f2f2}
 html,body{height:100%}
-body{margin:0;background:radial-gradient(900px 600px at 50% 0%,rgba(255,255,255,.5),transparent),var(--bg);color:var(--ink);font-family:-apple-system,Inter,"Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:16px;box-sizing:border-box}
-.phone{width:430px;max-width:100%;height:min(932px,calc(100vh - 80px));background:var(--phone);border-radius:58px;padding:13px;box-shadow:0 40px 90px rgba(0,0,0,.35),inset 0 0 0 2px #2a2b30;position:relative;box-sizing:border-box}
+body{margin:0;background:radial-gradient(900px 600px at 50% 0%,rgba(255,255,255,.45),transparent),var(--bg);color:var(--ink);font-family:-apple-system,Inter,"Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:16px 16px 20px;box-sizing:border-box;gap:10px;overflow:hidden}
+.devices{display:flex;gap:6px;flex:0 0 auto}
+.devices button{border:1px solid rgba(20,24,28,.12);background:var(--chip);color:var(--ink);border-radius:999px;padding:7px 12px;font-size:12px;cursor:pointer;font-weight:600}
+.devices button.on{background:var(--chipOn);color:var(--bg);border-color:transparent}
+.stageWrap{flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center;width:100%}
+.stage{transform-origin:center center}
+.phone{background:var(--phone);border-radius:var(--r);padding:var(--pad);box-shadow:0 40px 90px rgba(0,0,0,.35),inset 0 0 0 2px #2a2b30;position:relative;box-sizing:content-box;width:var(--w);height:var(--h)}
 .phone::before,.phone::after{content:"";position:absolute;background:#2a2b30;border-radius:3px}
 .phone::before{left:-3px;top:150px;width:3px;height:34px;box-shadow:0 52px 0 #2a2b30,0 108px 0 #2a2b30}
 .phone::after{right:-3px;top:210px;width:3px;height:70px}
-.screen{height:100%;border-radius:46px;overflow:hidden;background:var(--screen);display:flex;flex-direction:column;position:relative}
-.status{height:52px;display:flex;align-items:center;justify-content:space-between;padding:12px 30px 0;font-size:15px;font-weight:600;color:#111;position:relative;flex:0 0 auto}
-.island{position:absolute;left:50%;top:11px;transform:translateX(-50%);width:122px;height:36px;background:#101114;border-radius:20px}
+.screen{width:100%;height:100%;border-radius:calc(var(--r) - var(--pad));overflow:hidden;background:var(--screen);display:flex;flex-direction:column;position:relative}
+.status{height:54px;display:flex;align-items:center;justify-content:space-between;padding:14px 30px 0;font-size:16px;font-weight:600;color:#111;position:relative;flex:0 0 auto}
+.island{position:absolute;left:50%;top:11px;transform:translateX(-50%);width:126px;height:37px;background:#101114;border-radius:20px}
 .status .icons{display:flex;gap:6px;align-items:center;font-size:12px}
 .status .icons i{display:inline-block;width:25px;height:12px;border:1.5px solid #111;border-radius:4px;position:relative;opacity:.9}
 .status .icons i::after{content:"";position:absolute;left:2px;top:2px;bottom:2px;width:16px;background:#111;border-radius:2px}
 iframe{border:0;flex:1 1 auto;width:100%;display:block;background:var(--screen)}
-.home{flex:0 0 auto;height:26px;display:flex;align-items:center;justify-content:center}
-.home i{width:134px;height:5px;border-radius:3px;background:#111;opacity:.85}
-.caption{font-size:12px;color:var(--muted);text-align:center;max-width:430px;line-height:1.5}
+.home{flex:0 0 auto;height:28px;display:flex;align-items:center;justify-content:center}
+.home i{width:140px;height:5px;border-radius:3px;background:#111;opacity:.85}
+.caption{flex:0 0 auto;font-size:12px;color:var(--muted);text-align:center;max-width:560px;line-height:1.5}
 .caption a{color:inherit}
 </style>
 </head>
 <body>
-<div class="phone"><div class="screen">
+<div class="devices" id="devices"></div>
+<div class="stageWrap"><div class="stage" id="stage"><div class="phone" id="phone"><div class="screen">
   <div class="status"><span>9:41</span><div class="island"></div><div class="icons">●●●● <i></i></div></div>
   <iframe id="app" title="FREE" allow="geolocation; clipboard-write; microphone"></iframe>
   <div class="home"><i></i></div>
-</div></div>
-<div class="caption">Предпросмотр интерфейса в размере iPhone. Голос, геолокация и системный шаринг в рамке работают ограниченно: полный набор доступен только в нативной сборке. <a id="direct" href="index.html">Открыть без рамки</a></div>
+</div></div></div></div>
+<div class="caption"><span id="devLabel"></span>. Интерфейс отрисован в реальном размере экрана и масштабирован под окно. Голос, геолокация и системный шаринг в рамке ограничены браузером: полный набор есть только в нативной сборке. <a id="direct" href="index.html">Открыть без рамки</a></div>
 <script>
-const src=new URLSearchParams(location.search).get("src")||"index.html";
+const DEVICES=[
+  {id:"promax",name:"iPhone 16 Pro Max",w:440,h:956,r:62,pad:14},
+  {id:"pro",name:"iPhone 16 Pro",w:402,h:874,r:58,pad:13},
+  {id:"base",name:"iPhone 16",w:393,h:852,r:56,pad:13}
+];
+const q=new URLSearchParams(location.search);
+const src=q.get("src")||"index.html";
+let cur=DEVICES.find(d=>d.id===(q.get("device")||localStorage.getItem("free_preview_device")))||DEVICES[0];
+const stage=document.getElementById("stage"),phone=document.getElementById("phone");
 document.getElementById("app").src=src;document.getElementById("direct").href=src;
+function apply(){
+  phone.style.setProperty("--w",cur.w+"px");phone.style.setProperty("--h",cur.h+"px");phone.style.setProperty("--r",cur.r+"px");phone.style.setProperty("--pad",cur.pad+"px");
+  document.getElementById("devLabel").textContent=cur.name+" · "+cur.w+"×"+cur.h;
+  document.getElementById("devices").innerHTML=DEVICES.map(d=>`<button class="${d.id===cur.id?"on":""}" data-d="${d.id}">${d.name}</button>`).join("");
+  document.querySelectorAll("[data-d]").forEach(b=>b.onclick=()=>{cur=DEVICES.find(d=>d.id===b.dataset.d);try{localStorage.setItem("free_preview_device",cur.id)}catch(_){}apply()});
+  fit();
+}
+function fit(){
+  const wrap=document.querySelector(".stageWrap");
+  const fullW=cur.w+cur.pad*2+8,fullH=cur.h+cur.pad*2+8;
+  const s=Math.min(1,(wrap.clientHeight-8)/fullH,(wrap.clientWidth-8)/fullW);
+  stage.style.transform=`scale(${s.toFixed(4)})`;
+  stage.style.width=fullW+"px";stage.style.height=fullH+"px";
+}
+addEventListener("resize",fit);apply();
 </script>
 </body>
 </html>

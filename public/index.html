@@ -12,9 +12,11 @@
   --dark:#111316;--green:#14865a;--blue:#315fff;--shadow:0 16px 46px rgba(31,36,46,.08)
 }
 *{box-sizing:border-box}html{scroll-behavior:smooth}
-body{margin:0;background:radial-gradient(900px 520px at 50% -10%,#fff,transparent 72%),var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Arial,sans-serif;padding-bottom:92px}
+body{margin:0;background:radial-gradient(900px 520px at 50% -10%,#fff,transparent 72%),var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Arial,sans-serif;padding-bottom:calc(170px + env(safe-area-inset-bottom,0px))}
 button,input{font:inherit}button{cursor:pointer}
-.top{position:sticky;top:0;z-index:50;padding:calc(10px + env(safe-area-inset-top,0px)) 12px 10px}
+.top{position:sticky;top:0;z-index:50;padding:calc(10px + env(safe-area-inset-top,0px)) 12px 10px;background:linear-gradient(var(--bg) 78%,rgba(246,246,244,0))}
+/* На iPhone скроллбаров нет — не показываем их и в веб-версии, чтобы предпросмотр совпадал с приложением */
+html{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-webkit-scrollbar{width:0;height:0;display:none}
 .topbar{max-width:860px;margin:auto;background:rgba(250,251,252,.72);border:1px solid rgba(255,255,255,.9);backdrop-filter:blur(24px);border-radius:999px;padding:7px 9px 7px 14px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 8px 26px rgba(35,39,48,.05)}
 .brand{font-weight:820;letter-spacing:-.04em}.sub{font-size:10px;color:#777d86;margin-top:1px}.avatar{width:34px;height:34px;border-radius:50%;border:0;background:#111;color:#fff;font-weight:800}
 .shell{max-width:860px;margin:auto;padding:0 14px}
