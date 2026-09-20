@@ -144,9 +144,9 @@ test("обе модели настраиваются отдельно", () => {
 test("скорость речи берётся из настроек, а не прибита единицей", async () => {
   let body=null;
   const fetchImpl=async(u,init)=>{body=new URLSearchParams(init.body);return {ok:true,status:200,arrayBuffer:async()=>new ArrayBuffer(8)}};
-  await yandexTts("привет",{cfg:yandexConfig({YANDEX_API_KEY:"k",YANDEX_FOLDER_ID:"f",YANDEX_TTS_VERSION:"v1"}),fetchImpl});
+  await yandexTts("привет",{cfg:yandexConfig({YANDEX_API_KEY:"k",YANDEX_FOLDER_ID:"f",YANDEX_TTS_VERSION:"v1",YANDEX_VOICE:"filipp"}),fetchImpl});
   assert.equal(body.get("speed"),"1.08","чуть быстрее обычного: медленная речь слушается как задумчивость");
-  await yandexTts("привет",{cfg:yandexConfig({YANDEX_API_KEY:"k",YANDEX_FOLDER_ID:"f",YANDEX_TTS_VERSION:"v1",YANDEX_SPEED:"1.3"}),fetchImpl});
+  await yandexTts("привет",{cfg:yandexConfig({YANDEX_API_KEY:"k",YANDEX_FOLDER_ID:"f",YANDEX_TTS_VERSION:"v1",YANDEX_VOICE:"filipp",YANDEX_SPEED:"1.3"}),fetchImpl});
   assert.equal(body.get("speed"),"1.3");
 });
 
@@ -218,4 +218,52 @@ test("голос, которого нет в v1, молча не подменя�
   }
   assert.equal(ttsEngineState().v3_disabled,false,"чужая ошибка не выключает версию для всех");
   resetTtsEngine();
+});
+
+// ---- Подмена голоса ----
+// Живой разговор: «сначала говорила Варя, потом обратно Алиса». Выключенная
+// третья версия отправляла голос, которого в первой нет, в первую — и та
+// молча подставляла свой стандартный.
+
+test("выключенная v3 не повод отдать чужой голос", async () => {
+  resetTtsEngine();
+  const seen=[];
+  const fetchImpl=async(url,init)=>{
+    if(String(url).includes("/v3/")){seen.push("v3");return fail(404,{message:"no such method"})}
+    seen.push("v1:"+new URLSearchParams(init.body).get("voice"));
+    return ok({});
+  };
+  const cfg={...CFG,ttsVersion:"auto",voice:"filipp",role:"",speed:1.0};
+  await yandexTts("раз",{cfg,fetchImpl});                     // filipp есть в v1 — откат законен
+  assert.equal(ttsEngineState().v3_disabled,true);
+
+  // А теперь голос, которого в первой версии не существует.
+  seen.length=0;
+  await assert.rejects(()=>yandexTts("два",{cfg:{...cfg,voice:"masha"},fetchImpl}),
+    /недоступен в каталоге/,"молчание честнее чужого голоса");
+  assert.ok(!seen.some(x=>x.startsWith("v1:")),`в первую версию masha уходить не должна: ${seen}`);
+  resetTtsEngine();
+});
+
+test("разовый сбой не лишает агента голоса до перезапуска", async () => {
+  resetTtsEngine();
+  let n=0;
+  // Таймаут, лимит и пятисотка ничего не говорят о наличии версии.
+  for(const [status,body] of [[429,{message:"too many"}],[503,{}],[500,{}]]){
+    const fetchImpl=async(url)=>String(url).includes("/v3/")?fail(status,body):ok({});
+    await assert.rejects(()=>yandexTts("раз",{cfg:{...CFG,ttsVersion:"auto",voice:"filipp",role:""},fetchImpl}));
+    assert.equal(ttsEngineState().v3_disabled,false,`${status} не должен выключать версию`);
+    n++;
+  }
+  assert.equal(n,3);
+  resetTtsEngine();
+});
+
+test("выбранная первая версия с голосом из третьей — понятная ошибка, а не подмена", async () => {
+  resetTtsEngine();
+  let called=false;
+  const fetchImpl=async()=>{called=true;return ok({})};
+  await assert.rejects(()=>yandexTts("привет",{cfg:{...CFG,ttsVersion:"v1",voice:"masha"},fetchImpl}),
+    /только в третьей версии/);
+  assert.equal(called,false,"в сеть ходить незачем: настройки противоречат друг другу");
 });

@@ -197,8 +197,18 @@ async function ttsV3(t,{cfg,fetchImpl,voice,role,speed,timeoutMs,signal}){
     outputAudioSpec:{containerAudio:{containerAudioType:"MP3"}},
     loudnessNormalizationType:"LUFS"
   });
-  const out=await call(TTS_V3_URL,{body,cfg,fetchImpl,timeoutMs,signal,text:true,
-    headers:{"Content-Type":"application/json","x-folder-id":cfg.folder}});
+  let out;
+  try{
+    out=await call(TTS_V3_URL,{body,cfg,fetchImpl,timeoutMs,signal,text:true,
+      headers:{"Content-Type":"application/json","x-folder-id":cfg.folder}});
+  }catch(e){
+    // Общий разбор ошибок говорит про YANDEX_MODEL — для синтеза это сбивает
+    // с толку: модель тут ни при чём, речь о версии API и о голосе.
+    if(e instanceof YandexError&&(e.status===404||e.status===400))
+      throw new YandexError(`Третья версия синтеза не ответила (${e.status}): голос ${voice}${r?` в амплуа ${r}`:""} может быть недоступен в каталоге`,
+        {status:e.status,code:e.code,retryable:false});
+    throw e;
+  }
   const mp3=parseV3Audio(out);
   if(!mp3||!mp3.length)throw new YandexError("Синтез вернул пустой звук",{status:0,retryable:true});
   return mp3;
@@ -206,9 +216,22 @@ async function ttsV3(t,{cfg,fetchImpl,voice,role,speed,timeoutMs,signal}){
 
 // Откат на первую версию делается один раз на весь процесс: если шлюз третью
 // не отдаёт, незачем ходить туда на каждой реплике и тратить по секунде.
-let v3Broken=false;
-export function ttsEngineState(){return {v3_disabled:v3Broken}}
-export function resetTtsEngine(){v3Broken=false}
+let v3Broken=false,v3Why=null;
+export function ttsEngineState(){return {v3_disabled:v3Broken,v3_reason:v3Why}}
+export function resetTtsEngine(){v3Broken=false;v3Why=null}
+
+/**
+ * Выключать третью версию можно только тогда, когда её тут нет совсем.
+ *
+ * Раньше это делал любой сбой, включая разовый таймаут: одна заминка — и
+ * агент терял голос до перезапуска сервиса. Повторяемые ошибки (429, 5xx,
+ * обрыв) про версию не говорят ничего, их надо просто пережить.
+ */
+function v3Missing(e){
+  if(!(e instanceof YandexError))return false;
+  if(e.retryable)return false;
+  return e.status===404||e.status===501||e.status===400;
+}
 
 /** Синтез речи. Возвращает Buffer с MP3. */
 export async function yandexTts(text,{cfg=yandexConfig(),fetchImpl=fetch,lang="ru-RU",
@@ -216,17 +239,25 @@ export async function yandexTts(text,{cfg=yandexConfig(),fetchImpl=fetch,lang="r
   const t=String(text||"").trim();
   if(!t)throw new YandexError("Нечего произносить",{status:0});
   const name=voice||cfg.voice;
-  const wantV3=cfg.ttsVersion==="v3"||
-    (cfg.ttsVersion!=="v1"&&!v3Broken&&(V3_ONLY_VOICES.has(name)||Boolean(role||cfg.role)||format==="mp3"));
+  // Голос, которого в первой версии нет, туда отправлять нельзя ни при каких
+  // обстоятельствах: она подставит вместо него свой стандартный и отдаст
+  // чужой голос как ни в чём не бывало. Именно так Варя посреди разговора
+  // превращалась обратно в Алису.
+  const v3Only=V3_ONLY_VOICES.has(name);
+  if(v3Only&&cfg.ttsVersion==="v1")
+    throw new YandexError(`Голос ${name} есть только в третьей версии синтеза, а выбрана первая: смените YANDEX_VOICE или YANDEX_TTS_VERSION`,{status:0});
+  // v3Only проверяется ДО v3Broken: выключенная версия не повод подменять голос.
+  const wantV3=cfg.ttsVersion==="v3"||v3Only||
+    (cfg.ttsVersion!=="v1"&&!v3Broken&&(Boolean(role||cfg.role)||format==="mp3"));
   if(wantV3){
     try{
       return await ttsV3(t.slice(0,TTS_MAX_CHARS),{cfg,fetchImpl,voice:name,role,speed,timeoutMs,signal});
     }catch(e){
-      // Голоса, которых в первой версии нет, отката не имеют: молча подменять
-      // выбранный голос другим — хуже, чем честно сказать, что не вышло.
-      if(cfg.ttsVersion==="v3"||V3_ONLY_VOICES.has(name))throw e;
-      v3Broken=true;
-      console.error("SpeechKit v3 недоступен, перехожу на v1:",e&&e.message||e);
+      // Откат имеет смысл только для голосов, которые в первой версии есть.
+      if(cfg.ttsVersion==="v3"||v3Only)throw e;
+      if(!v3Missing(e))throw e;            // разовый сбой — не приговор версии
+      v3Broken=true;v3Why=String(e&&e.message||e).slice(0,200);
+      console.error("SpeechKit v3 недоступен, перехожу на v1:",v3Why);
     }
   }
   const form=new URLSearchParams({

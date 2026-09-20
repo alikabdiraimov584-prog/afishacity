@@ -20,7 +20,7 @@ const MIN_MS=350;               // случайное касание запис�
 
 const state={
   open:false,phase:"idle",      // idle | listening | thinking | speaking | error
-  ctx:null,stream:null,node:null,source:null,analyser:null,
+  ctx:null,stream:null,node:null,source:null,analyser:null,playCtx:null,
   chunks:[],startedAt:0,quietSince:0,raf:0,level:0,smooth:0,
   audio:null,playAnalyser:null,conversation:null,api:null,busy:false
 };
@@ -113,8 +113,10 @@ function stopCapture(){
   try{state.node&&state.node.disconnect()}catch(_){}
   try{state.source&&state.source.disconnect()}catch(_){}
   try{state.stream&&state.stream.getTracks().forEach(t=>t.stop())}catch(_){}
-  try{state.ctx&&state.ctx.close()}catch(_){}
+  // Частоту берём до закрытия: у закрытого контекста читать её незачем, а
+  // ошибка здесь тихо сдвинет высоту звука и испортит распознавание.
   const rate=state.ctx?state.ctx.sampleRate:48000;
+  try{state.ctx&&state.ctx.close()}catch(_){}
   const chunks=state.chunks;
   Object.assign(state,{ctx:null,stream:null,node:null,source:null,analyser:null,chunks:[]});
   return {chunks,rate};
@@ -301,10 +303,13 @@ async function readEvents(body,onEvent){
  * ждать его в момент, когда предыдущая фраза договорена, между фразами
  * появляется дыра. Поэтому синтез запускается сразу при постановке в очередь
  * и идёт, пока звучит предыдущая; проигрывание при этом строго по порядку. */
-const speech={queue:[],draining:false,token:0};
+const speech={queue:[],draining:false,token:0,stopCurrent:null};
 
 function resetSpeech(){
   speech.token++;                      // всё, что было заказано, больше не наше
+  // Отменённые реплики всё равно надо дочитать: синтез уже заказан, и если
+  // промис никто не тронет, браузер сообщит о необработанном отказе.
+  for(const item of speech.queue)if(item&&item.audio)item.audio.catch(()=>{});
   speech.queue.length=0;
   stopSpeaking();
 }
@@ -313,7 +318,9 @@ function enqueueSpeech(text){
   const t=String(text||"").trim();
   if(!t)return;
   const mine=speech.token;
-  speech.queue.push({mine,audio:ttsBlob(t)});
+  const audio=ttsBlob(t);
+  audio.catch(()=>{});                 // отказ разберём в очереди, здесь только гасим
+  speech.queue.push({mine,audio});
   if(!speech.draining)drainSpeech();
 }
 
@@ -348,24 +355,56 @@ async function speechIdle(){
   while(speech.draining||speech.queue.length)await new Promise(r=>setTimeout(r,60));
 }
 
+/* Один звуковой контекст на весь разговор.
+ *
+ * Раньше он создавался на каждую фразу. Браузеры разрешают держать всего
+ * несколько штук одновременно, и после пары ходов создание начинало падать:
+ * шар переставал дышать под голос, а контексты копились незакрытыми. */
+function audioCtx(){
+  // Отдельный контекст от записи: stopCapture() закрывает свой после каждой
+  // фразы, и общий на двоих закрывался бы прямо перед ответом агента.
+  if(state.playCtx&&state.playCtx.state!=="closed")return state.playCtx;
+  const Ctx=window.AudioContext||window.webkitAudioContext;
+  if(!Ctx)return null;
+  try{state.playCtx=new Ctx()}catch(_){state.playCtx=null}
+  return state.playCtx;
+}
+
 function playBlob(blob){
   const url=URL.createObjectURL(blob);
   const audio=new Audio(url);
   audio.playsInline=true;
   state.audio=audio;
+  let node=null;
   // Анализатор на воспроизведении: тот же шар должен дышать под голос агента.
   try{
-    const Ctx=window.AudioContext||window.webkitAudioContext;
-    const ctx=new Ctx();
-    const src=ctx.createMediaElementSource(audio);
-    const an=ctx.createAnalyser();an.fftSize=1024;
-    src.connect(an);an.connect(ctx.destination);
-    state.playAnalyser=an;
-    audio.addEventListener("ended",()=>{try{ctx.close()}catch(_){}},{once:true});
+    const ctx=audioCtx();
+    if(ctx){
+      if(ctx.state==="suspended")ctx.resume().catch(()=>{});
+      node=ctx.createMediaElementSource(audio);
+      const an=ctx.createAnalyser();an.fftSize=1024;
+      node.connect(an);an.connect(ctx.destination);
+      state.playAnalyser=an;
+    }
   }catch(_){state.playAnalyser=null}
   setPhase("speaking","");
   return new Promise((resolve)=>{
-    const end=()=>{URL.revokeObjectURL(url);state.audio=null;state.playAnalyser=null;resolve()};
+    let done=false;
+    const end=()=>{
+      if(done)return;                  // ended и error могут прийти оба
+      done=true;
+      speech.stopCurrent=null;
+      try{audio.pause()}catch(_){}
+      try{if(node)node.disconnect()}catch(_){}
+      URL.revokeObjectURL(url);
+      if(state.audio===audio)state.audio=null;
+      state.playAnalyser=null;
+      resolve();
+    };
+    // Перебить агента должно заканчивать реплику, а не подвешивать очередь:
+    // pause() не вызывает ended, и цикл воспроизведения ждал бы его вечно —
+    // после первого же перебивания агент замолкал до перезагрузки страницы.
+    speech.stopCurrent=end;
     audio.addEventListener("ended",end,{once:true});
     audio.addEventListener("error",end,{once:true});
     audio.play().catch(end);
@@ -373,6 +412,8 @@ function playBlob(blob){
 }
 
 function stopSpeaking(){
+  const end=speech.stopCurrent;speech.stopCurrent=null;
+  if(end)end();                        // освобождаем ожидание в playBlob
   if(state.audio){try{state.audio.pause()}catch(_){}state.audio=null}
   state.playAnalyser=null;
 }
@@ -415,6 +456,9 @@ function open(){
 function close(){
   state.open=false;
   resetSpeech();
+  // Звуковой контекст держит устройство вывода: закрытый экран не должен
+  // оставлять его висеть.
+  if(state.playCtx){const c=state.playCtx;state.playCtx=null;try{c.close()}catch(_){}}
   if(state.phase==="listening")stopCapture();
   cancelAnimationFrame(state.raf);state.raf=0;
   const root=$("#voiceScreen");
@@ -429,7 +473,9 @@ root.FreeVoice={
   get phase(){return state.phase},
   get isOpen(){return state.open},
   reset(){state.conversation=null;clearLog();const c=$("#voiceCards");if(c)c.innerHTML=""},
-  // Открыто для тестов: разбор звука проверяется без микрофона.
-  _audio:{downsample,toPcm16,rms}
+  // Открыто для тестов: разбор звука проверяется без микрофона, а состояние
+  // очереди речи — без угадывания по таймингам.
+  _audio:{downsample,toPcm16,rms},
+  _speech:speech
 };
 })(typeof globalThis!=="undefined"?globalThis:this);
