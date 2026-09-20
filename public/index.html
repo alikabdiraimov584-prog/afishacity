@@ -349,7 +349,8 @@ function fallbackSearch(args){
   out.sort((a,b)=>b._s-a._s);return out.slice(0,3).map((v,i)=>({id:v.id,name:v.name,organizer:v.organizer,category:v.cat,date:v.date_start||"постоянно",time:v.times?.[0]||v.hours_label||"",price:v.price_label,availability:v.availability,area:v.area,metro:v.metro,source:v.source,point_source:v.point_source||v.source,official_source:v.official_source||null,coords:v.coords||null,provider:"Fallback",image_url:v.image_url||null,booking_url:v.booking_url||null,booking_kind:v.booking_kind||null,booking_provider:v.booking_provider||null,phone:v.phone||null,reasons:[],dna:v.dna,match:Math.max(76,94-i*5),kind:v.kind}))}
 async function recommend(){
   const args=await liveArgs();
-  try{const r=await apiFetch("/api/recommend",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(args)});if(r.ok){const d=await r.json();if(d.results?.length)return d.results.slice(0,3)}}catch(_){}
+  chatState.lastNote=null;
+  try{const r=await apiFetch("/api/recommend",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(args)});if(r.ok){const d=await r.json();chatState.lastNote=d.note||null;if(d.results?.length)return d.results.slice(0,3)}}catch(_){}
   return fallbackSearch(args);
 }
 function reason(r){const a=[...(r.reasons||[])],d=r.dna||{};if(d.quiet>=68)a.push("можно разговаривать");if(d.romantic>=70)a.push("подходит вдвоём");if(d.late>=70)a.push("работает поздно");return [...new Set(a)].slice(0,3).join(" · ")||"лучшее совпадение с вашим контекстом"}
@@ -400,7 +401,8 @@ async function showMatches(){
   if(!rs.length){addMsg("ai","По этим условиям точных вариантов нет. Что можно ослабить — бюджет, район или формат?"+quick(["Бюджет не важен","Любой район","Покажи похожее"]));bindQuick();return}
   chatState.phase="results";
   const intro=chatState.intent==="event"?"Нашёл несколько реальных событий. Выбирал по дате и формату.":"Вот три варианта, которые лучше всего совпали с контекстом.";
-  const resultMessage=addMsg("ai",`${intro}<div class="small">${esc(styleText())}</div>${cards(rs)}`);bindCards();setTimeout(()=>scrollChatToLatest(resultMessage),120);
+  const note=chatState.lastNote?`<div class="small" style="margin-top:6px;color:#b45309">${esc(chatState.lastNote)}</div>`:"";
+  const resultMessage=addMsg("ai",`${intro}<div class="small">${esc(styleText())}</div>${note}${cards(rs)}`);bindCards();setTimeout(()=>scrollChatToLatest(resultMessage),120);
 }
 
 function continuationCue(text){
