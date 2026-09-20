@@ -146,19 +146,38 @@ const API_BASE=(window.FREE_CONFIG&&window.FREE_CONFIG.apiBase)||"";
 const CAP=(window.Capacitor&&typeof window.Capacitor.isNativePlatform==="function"&&window.Capacitor.isNativePlatform())?window.Capacitor:null;
 const NATIVE=CAP?(()=>{const P=n=>{try{return CAP.registerPlugin(n)}catch(_){return null}};return {platform:CAP.getPlatform(),Geolocation:P("Geolocation"),Browser:P("Browser"),Share:P("Share"),Haptics:P("Haptics"),StatusBar:P("StatusBar"),Speech:P("SpeechRecognition"),Keyboard:P("Keyboard"),App:P("App"),Filesystem:P("Filesystem")}})():null;
 if(NATIVE){try{NATIVE.StatusBar&&NATIVE.StatusBar.setStyle({style:"LIGHT"})}catch(_){}try{NATIVE.Keyboard&&NATIVE.Keyboard.setAccessoryBarVisible&&NATIVE.Keyboard.setAccessoryBarVisible({isVisible:false})}catch(_){}}
+// ---- Telegram Mini App: тонкий слой поверх той же страницы. В нативном приложении не загружается. ----
+let TG=null;
+const IN_TELEGRAM=!NATIVE&&(/(^|[?#&])tgWebApp/.test(location.href)||typeof window.TelegramWebviewProxy!=="undefined"||Boolean(window.Telegram&&window.Telegram.WebApp&&window.Telegram.WebApp.initData));
+async function initTelegram(){
+  if(!IN_TELEGRAM)return;
+  if(!(window.Telegram&&window.Telegram.WebApp)){
+    await new Promise(res=>{const el=document.createElement("script");el.src="https://telegram.org/js/telegram-web-app.js";el.onload=res;el.onerror=res;document.head.appendChild(el)});
+  }
+  const w=window.Telegram&&window.Telegram.WebApp;
+  if(!w||!w.initData)return;
+  TG=w;
+  try{TG.ready();TG.expand();TG.setHeaderColor("#f6f6f4");TG.setBackgroundColor("#f6f6f4");if(TG.disableVerticalSwipes)TG.disableVerticalSwipes()}catch(_){}
+  // Безопасные зоны из Telegram, чтобы шапка не пряталась под чёлкой.
+  const top=(TG.contentSafeAreaInset&&TG.contentSafeAreaInset.top)||(TG.safeAreaInset&&TG.safeAreaInset.top)||0;
+  const bottom=(TG.safeAreaInset&&TG.safeAreaInset.bottom)||0;
+  if(top)document.documentElement.style.setProperty("--sat",(top+6)+"px");
+  if(bottom)document.documentElement.style.setProperty("--sab",bottom+"px");
+}
 function haptic(kind="light"){if(!NATIVE||!NATIVE.Haptics)return;try{if(kind==="success")NATIVE.Haptics.notification({type:"SUCCESS"});else NATIVE.Haptics.impact({style:kind==="medium"?"MEDIUM":"LIGHT"})}catch(_){}}
 // Анонимный идентификатор клиента: профиль живёт на сервере и переживает переустановку веб-части.
 let CLIENT_ID=null;try{CLIENT_ID=localStorage.getItem("free_client_id");if(!CLIENT_ID){CLIENT_ID=(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2));localStorage.setItem("free_client_id",CLIENT_ID)}}catch(_){CLIENT_ID=null}
-function apiFetch(path,opts={}){const headers={...(opts.headers||{})};if(CLIENT_ID)headers["X-Free-Client"]=CLIENT_ID;return fetch(API_BASE+path,{...opts,headers})}
+function apiFetch(path,opts={}){const headers={...(opts.headers||{})};if(CLIENT_ID)headers["X-Free-Client"]=CLIENT_ID;if(TG&&TG.initData)headers["X-Telegram-Init-Data"]=TG.initData;return fetch(API_BASE+path,{...opts,headers})}
 function openExternal(url){
   if(!url)return;
   if(NATIVE){if(/^https?:/i.test(url)&&NATIVE.Browser){NATIVE.Browser.open({url,presentationStyle:"popover"}).catch(()=>{window.location.href=url});return}window.location.href=url;return}
+  if(TG){try{if(/^https?:\/\/t\.me\//i.test(url))TG.openTelegramLink(url);else if(/^https?:/i.test(url))TG.openLink(url);else window.location.href=url;return}catch(_){}}
   const w=window.open(url,"_blank","noopener");
   if(!w)window.location.href=url; // всплывающее окно заблокировано — открываем в этой вкладке
 }
 // Окно надо открыть синхронно в обработчике клика, иначе после await браузер сочтёт его всплывающим и заблокирует.
 function deferredOpen(){
-  if(NATIVE)return {go:openExternal,cancel(){}}; // нативный браузер открывается и после await
+  if(NATIVE||TG)return {go:openExternal,cancel(){}}; // нативный и телеграм-браузер открываются и после await
   let w=null;try{w=window.open("about:blank","_blank")}catch(_){}
   if(w){try{w.opener=null}catch(_){}}
   return {
@@ -891,6 +910,7 @@ async function sharePlanLink(){
       }
       await NATIVE.Share.share(payload);haptic("success");return;
     }
+    if(TG&&url){openExternal("https://t.me/share/url?url="+encodeURIComponent(url)+"&text="+encodeURIComponent(text.split("\n")[0]));return}
     if(navigator.share){
       const file=blob?new File([blob],"free-plan.png",{type:"image/png"}):null;
       const withFile=file&&navigator.canShare&&navigator.canShare({files:[file]});
@@ -1029,7 +1049,7 @@ function browserVoice(){
 }
 $("#input").addEventListener("focus",()=>setTimeout(()=>{$(".composerWrap")?.scrollIntoView({block:"end"});scrollChatToLatest()},220));
 $("#sendBtn").onclick=()=>submitUser($("#input").value);$("#input").addEventListener("keydown",e=>{if(e.key==="Enter")submitUser($("#input").value)});$("#voiceBtn").onclick=browserVoice;$$("[data-view]").forEach(b=>b.onclick=()=>switchView(b.dataset.view));$("#detail").onclick=e=>{if(e.target===$("#detail"))$("#detail").classList.remove("on")};
-renderSaved();renderPlan();renderTaste();detectCapabilities();startConversation();initDemoSample();
+initTelegram();renderSaved();renderPlan();renderTaste();detectCapabilities();startConversation();initDemoSample();
 </script>
 </body>
 </html>
