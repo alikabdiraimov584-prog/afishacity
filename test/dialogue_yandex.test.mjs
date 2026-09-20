@@ -257,3 +257,26 @@ test("сленг дозирован, а не запрещён и не насып
   assert.match(t,/одно на реплику/);
   assert.match(t,/понятно любому/,"речь должна оставаться понятной не только своим");
 });
+
+test("промежуточная реплика помечена как непроизносимая", async () => {
+  // Живой разговор: «ответ дублируется, будто два агента отвечают по очереди».
+  // Агент говорит дважды за ход: сперва «секунду, смотрю», потом ответ. Лёгкая
+  // модель кладёт в первую реплику готовый ответ — и он звучит дважды.
+  const m=model(
+    JSON.stringify({say:"Секунду, смотрю",tool:"recommend_free",args:{query:"бар"}}),
+    JSON.stringify({say:"Ровесник в двух шагах.",tool:null}));
+  const seen=[];
+  await runYandexDialogue("бар рядом",[],{cfg:CFG,fetchImpl:m.fetchImpl,voice:true,
+    emit:(t,d)=>{if(t==="delta")seen.push(d)},
+    deps:{recommend_free:async()=>PLACES}});
+  assert.deepEqual(seen.map(d=>d.interim),[true,false],"озвучивать можно только последнюю");
+  assert.equal(seen[1].text,"Ровесник в двух шагах.");
+});
+
+test("реплика без поиска произносится сразу", async () => {
+  const m=model(JSON.stringify({say:"Уточни, в каком районе?",tool:null}));
+  const seen=[];
+  await runYandexDialogue("что-нибудь",[],{cfg:CFG,fetchImpl:m.fetchImpl,voice:true,
+    emit:(t,d)=>{if(t==="delta")seen.push(d)},deps:{}});
+  assert.deepEqual(seen.map(d=>d.interim),[false],"тут нечего ждать — это и есть ответ");
+});

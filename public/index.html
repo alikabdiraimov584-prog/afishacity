@@ -124,6 +124,10 @@ html{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-we
 .voiceScreen[data-phase="listening"] .vMic{background:#fff;color:#111;border:1px solid var(--line);
   box-shadow:0 0 0 8px rgba(20,134,90,.1),0 12px 35px rgba(31,36,46,.12)}
 .vSide{width:44px;height:44px;border-radius:50%;border:1px solid var(--line);background:#fff;color:#5a6069;font-size:15px}
+/* Разговор без рук включён — это видно, иначе непонятно, почему микрофон
+   загорается сам. Выключенный режим выглядит как обычная белая кнопка. */
+.vSide.on{background:#111;color:#fff;border-color:#111}
+.voiceScreen[data-phase="listening"] .vSide.on{box-shadow:0 0 0 6px rgba(20,134,90,.12)}
 .quick{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.quick button{border:1px solid var(--line);background:#fff;color:#4e555f;border-radius:999px;padding:8px 11px;font-size:11px}.quick button.primary{background:#111;color:#fff}
 .inlineCards{display:flex;gap:10px;overflow-x:auto;padding:8px 0 3px;scroll-snap-type:x mandatory}
 .placeCard{min-width:min(330px,85vw);max-width:330px;scroll-snap-align:start;border-radius:23px;background:#fff;border:1px solid rgba(255,255,255,.95);padding:16px;box-shadow:var(--shadow)}
@@ -207,7 +211,7 @@ html{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-we
   <div class="vBottom">
     <button class="vSide" id="vClear" title="Начать заново" aria-label="Начать заново">⟲</button>
     <button class="vMic" id="vMic" aria-label="Говорить">🎙</button>
-    <button class="vSide" id="vText" title="Перейти в переписку" aria-label="Перейти в переписку">⌨</button>
+    <button class="vSide" id="vHands" aria-pressed="true" title="Разговор идёт сам" aria-label="Разговор без рук">∞</button>
   </div>
 </div>
 <div id="onboard" class="onboard" aria-hidden="true">
@@ -281,6 +285,9 @@ function rememberPlaces(list){
 // всего разговора, иначе тест ломается от любой правки в ходе диалога.
 if(typeof window!=="undefined")Object.assign(window,{
   __placeById:(id)=>placeById(id),
+  __conv:()=>chatState.aiResponseId,
+  __hist:()=>chatState.history.length,
+  __restoreChat:()=>restoreChat(),
   __setResults:(rs)=>{currentResults=rs;rememberPlaces(rs)},
   __seenSize:()=>seenPlaces.size});
 function placeById(id){
@@ -366,6 +373,87 @@ function norm(s=""){return String(s).toLowerCase().replace(/ё/g,"е").replace(/
 // В приватном окне и при переполнении квоты setItem бросает исключение.
 // Раньше оно обрывало весь обработчик: место не сохранялось и интерфейс замирал.
 function persist(key,value){try{localStorage.setItem(key,JSON.stringify(value))}catch(_){}}
+
+/* Переписка переживает закрытие приложения.
+   Мини-приложение Telegram выгружается при каждом сворачивании, и разговор
+   пропадал целиком: человек возвращался к пустому экрану, а агент терял нить,
+   потому что вместе с перепиской терялся и идентификатор разговора на сервере.
+   Храним последние реплики, идентификатор разговора и показанные места —
+   без них кнопки на восстановленных карточках не нашли бы, о чём речь. */
+const CHAT_KEY="free_v14_chat",CHAT_MAX=60,CHAT_BYTES=400000;
+// Пока переписка не восстановлена, писать в хранилище нельзя. Приветствие
+// рисуется на старте раньше восстановления, и сохранение по каждой реплике
+// затирало им настоящий разговор: человек возвращался к пустому экрану и
+// видел приветствие дважды — своё и «восстановленное».
+let chatLoaded=false;
+// Снимок берём с экрана, а не из chatState.history: там разметка запомнена в
+// момент создания, а карточки и ответы дорисовываются в тот же узел позже —
+// в историю попадали пустые заготовки и индикатор «печатает».
+function chatSnapshot(){
+  const box=$("#chat");if(!box)return [];
+  return [...box.children]
+    .filter(n=>n.classList&&n.classList.contains("msg"))
+    .slice(-CHAT_MAX)
+    .map(n=>({role:n.classList.contains("user")?"user":"ai",html:n.innerHTML}))
+    .filter(m=>m.html&&!/class="typing"/.test(m.html));
+}
+function saveChat(){
+  if(!chatLoaded)return;
+  try{
+    let items=chatSnapshot();
+    if(!items.length)return;
+    let payload={v:1,at:Date.now(),id:chatState.aiResponseId||null,
+      items,places:[...seenPlaces.values()].slice(-120),selected:chatState.selected||null};
+    let text=JSON.stringify(payload);
+    // Карточки с картинками занимают много: режем по половине, пока не влезет.
+    while(text.length>CHAT_BYTES&&payload.items.length>4){
+      payload.items=payload.items.slice(Math.ceil(payload.items.length/2));
+      payload.places=payload.places.slice(-40);
+      text=JSON.stringify(payload);
+    }
+    localStorage.setItem(CHAT_KEY,text);
+  }catch(_){/* переполнение хранилища не должно ломать разговор */}
+}
+function restoreChat(){
+  let d=null;
+  try{d=JSON.parse(localStorage.getItem(CHAT_KEY)||"null")}catch(_){return false}
+  const box=$("#chat");
+  if(!d||d.v!==1||!Array.isArray(d.items)||!d.items.length||!box){chatLoaded=true;return false}
+  // Приветствие, нарисованное на старте, заменяем разговором целиком:
+  // в сохранённой переписке уже есть своё начало.
+  box.innerHTML="";chatState.history.length=0;
+  for(const m of d.items){
+    if(!m||typeof m.html!=="string"||typeof m.role!=="string")continue;
+    const el=document.createElement("div");
+    el.className="msg "+(m.role==="user"?"user":"ai");
+    el.innerHTML=m.html;
+    // Разметку писали мы сами, но хранилище правит кто угодно с доступом к
+    // origin: перед возвратом на экран снимаем то, что исполняется.
+    el.querySelectorAll("script,iframe,object,embed").forEach(n=>n.remove());
+    el.querySelectorAll("*").forEach(n=>{
+      for(const a of [...n.attributes])if(/^on/i.test(a.name)||/^\s*javascript:/i.test(a.value))n.removeAttribute(a.name);
+    });
+    box.appendChild(el);
+    chatState.history.push({role:m.role,html:el.innerHTML});
+  }
+  if(Array.isArray(d.places)){currentResults=d.places.slice();rememberPlaces(d.places)}
+  if(d.id)chatState.aiResponseId=d.id;
+  if(d.selected&&d.selected.id)chatState.selected=d.selected;
+  chatState.phase="results";
+  try{bindCards(box);bindQuick();bindPlanCard(box)}catch(_){/* часть кнопок может не восстановиться — это не повод терять переписку */}
+  chatLoaded=true;
+  scrollChatToLatest(box.lastElementChild);
+  return true;
+}
+function clearChat(){try{localStorage.removeItem(CHAT_KEY)}catch(_){}}
+let saveTimer=0;
+function scheduleSaveChat(){clearTimeout(saveTimer);saveTimer=setTimeout(saveChat,500)}
+// Ответ дописывается в уже добавленный узел, карточки приходят следом, а
+// идентификатор разговора приходит последним. Ловим любое изменение.
+function watchChat(){
+  const box=$("#chat");if(!box||typeof MutationObserver!=="function")return;
+  new MutationObserver(scheduleSaveChat).observe(box,{childList:true,subtree:true,characterData:true});
+}
 function save(){persist("free_v14_taste",taste);persist("free_v14_saved",saved);persist("free_v14_plan",plan);renderSaved();renderPlan();renderTaste();pushProfile()}
 // ---- Профиль на сервере ----
 let profileState={ready:false,evenings:[],stats:{},user:null},pushTimer=null;
@@ -434,6 +522,7 @@ function addMsg(role,html){
   $("#chat").appendChild(d);
   chatState.history.push({role,html});
   scrollChatToLatest(d);
+  scheduleSaveChat();
   return d
 }
 function typing(){const d=addMsg("ai",'<span class="typing"><i></i><i></i><i></i></span>');return d}
@@ -1324,6 +1413,11 @@ async function detectCapabilities(){
     chatState.aiReady=false;
     $("#aiStatus").textContent="Preview fallback · Москва";
   }
+  // Переписку возвращаем до опроса: человеку, который уже разговаривал,
+  // вступительные вопросы задавать не надо.
+  const restored=restoreChat();
+  watchChat();
+  if(restored){obMarkSeen();return}
   maybeOnboard();
 }
 const VOICE_ERRORS={"not-allowed":"Доступ к микрофону запрещён. Разрешите его в настройках браузера.","service-not-allowed":"Распознавание речи отключено в этом браузере.","audio-capture":"Микрофон не найден.","network":"Распознавание речи недоступно в этой сети: Chrome отправляет звук на серверы Google. Напишите текстом.","no-speech":"Не услышал речь. Нажмите и говорите сразу.","aborted":""};
@@ -1398,8 +1492,20 @@ function initVoiceScreen(){
   const on=(sel,fn)=>{const el=$(sel);if(el)el.onclick=fn};
   on("#vMic",()=>{haptic("medium");FreeVoice.toggle()});
   on("#vClose",()=>FreeVoice.close());
-  on("#vClear",()=>{FreeVoice.reset();haptic("light")});
-  on("#vText",()=>{FreeVoice.close();$("#input")&&$("#input").focus()});
+  // «Начать заново» должно значить именно это: иначе сохранённую переписку
+  // нечем стереть, и человек застревает в старом разговоре навсегда.
+  on("#vClear",()=>{
+    FreeVoice.reset();
+    clearChat();
+    chatState.history=[];chatState.aiResponseId=null;chatState.selected=null;
+    chatState.intent=null;chatState.slots={};chatState.phase="idle";
+    currentResults=[];seenPlaces.clear();
+    const box=$("#chat");if(box)box.innerHTML="";
+    haptic("light");toast("Разговор начат заново");
+  });
+  // Переход в переписку остался за крестиком сверху — он делает ровно это.
+  on("#vHands",()=>{FreeVoice.setHands(!FreeVoice.hands);haptic("light");
+    toast(FreeVoice.hands?"Говорите — микрофон включится сам":"Микрофон только по кнопке")});
   on("#vRoute",()=>{if(lastVoiceItems.length)routeItems(lastVoiceItems);else toast("Пока нечего показывать на карте")});
   const nameEl=$("#vName");
   document.addEventListener("keydown",e=>{if(e.key==="Escape"&&FreeVoice.isOpen)FreeVoice.close()});

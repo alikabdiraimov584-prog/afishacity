@@ -58,7 +58,10 @@ export async function runYandexDialogue(message,history=[],{
 
     if(parsed.say){
       says.push(parsed.say);
-      send("delta",{text:parsed.say});
+      // Промежуточная реплика — та, после которой агент идёт искать. Вслух её
+      // произносить нельзя: модель кладёт туда не «секунду, смотрю», а готовый
+      // ответ, и человек слышит одно и то же дважды, будто отвечают по очереди.
+      send("delta",{text:parsed.say,interim:Boolean(parsed.tool)});
     }
     if(!parsed.tool)break;
 

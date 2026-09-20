@@ -22,8 +22,14 @@ const state={
   open:false,phase:"idle",      // idle | listening | thinking | speaking | error
   ctx:null,stream:null,node:null,source:null,analyser:null,playCtx:null,
   chunks:[],startedAt:0,quietSince:0,raf:0,level:0,smooth:0,
-  audio:null,playAnalyser:null,conversation:null,api:null,busy:false
+  audio:null,playAnalyser:null,conversation:null,api:null,busy:false,
+  // Разговор без рук: после ответа микрофон включается сам. Выключается по
+  // кнопке, по закрытию экрана или после двух подряд неудачных распознаваний —
+  // иначе в шумном месте экран будет бесконечно слушать пустоту.
+  hands:true,silentRuns:0,resumeTimer:0
 };
+const RESUME_MS=420;          // пауза перед новым слушанием: хвост ответа не должен попасть в запись
+const SILENT_LIMIT=2;
 
 // ---- Звук ----
 
@@ -185,21 +191,25 @@ async function stopAndSend(){
   if(state.phase!=="listening")return;
   setPhase("thinking");
   const {chunks,rate}=stopCapture();
-  if(!chunks.length){setPhase("idle");return}
+  if(!chunks.length){setPhase("idle");state.silentRuns++;maybeResume();return}
   const pcm=toPcm16(chunks,rate);
-  if(pcm.length<TARGET_RATE*0.25){setPhase("idle","Слишком коротко — попробуйте ещё раз");return}
+  if(pcm.length<TARGET_RATE*0.25){setPhase("idle","Слишком коротко — попробуйте ещё раз");state.silentRuns++;maybeResume();return}
   try{
     const r=await state.api.apiFetch(`/api/voice/stt?rate=${TARGET_RATE}`,{
       method:"POST",headers:{"Content-Type":"application/octet-stream"},body:pcm.buffer});
     const d=await r.json().catch(()=>({}));
     if(!r.ok)throw new Error(d.message||"Не удалось распознать");
     const text=String(d.text||"").trim();
-    if(!text){setPhase("idle","Не расслышал. Скажите ещё раз");return}
+    if(!text){setPhase("idle","Не расслышал. Скажите ещё раз");state.silentRuns++;maybeResume();return}
+    state.silentRuns=0;                  // услышали — счётчик пустых попыток обнуляем
     showHeard(text);showSaid("");
     await ask(text);
   }catch(e){
     setPhase("error",String(e.message||e));
     showSaid("Не получилось: "+(e.message||e));
+    // После ошибки сам не продолжаем: непрерывный разговор превратился бы
+    // в цикл из одной и той же ошибки.
+    state.hands=false;updateHandsButton();
     setTimeout(()=>{if(state.phase==="error")setPhase("idle")},2600);
   }
 }
@@ -229,9 +239,12 @@ async function ask(text){
     let failed=null;
     await readEvents(r.body,(type,data)=>{
       if(type==="delta"&&data.text){
-        // Реплика пришла — произносим сразу и показываем её же подписью.
+        // Промежуточную реплику показываем, но не произносим: следом придёт
+        // ответ по существу, и озвучивать обе — это два голоса подряд об
+        // одном и том же.
         showSaid(data.text);
-        enqueueSpeech(data.text);
+        if(!data.interim)enqueueSpeech(data.text);
+        else setPhase("thinking","Ищу");
       }else if(type==="status"&&data&&data.text){
         if(state.phase==="thinking")setPhase("thinking",data.text+"…");
       }else if(type==="done"){
@@ -247,6 +260,7 @@ async function ask(text){
     resetSpeech();
     showSaid("Не получилось: "+(e.message||e));
     setPhase("error");
+    state.hands=false;updateHandsButton();
     setTimeout(()=>{if(state.phase==="error")setPhase("idle")},2600);
   }
 }
@@ -347,7 +361,24 @@ async function drainSpeech(){
   }finally{
     speech.draining=false;
     if(state.phase==="speaking")setPhase("idle");
+    maybeResume();
   }
+}
+
+/** Продолжаем слушать сами, если разговор идёт без рук. */
+function maybeResume(){
+  clearTimeout(state.resumeTimer);
+  if(!state.hands||!state.open)return;
+  if(state.phase!=="idle")return;
+  if(state.silentRuns>=SILENT_LIMIT){
+    setPhase("idle","Нажмите, когда будете готовы");
+    return;
+  }
+  // Небольшая пауза: без неё в запись попадает хвост собственного ответа,
+  // и агент отвечает сам себе.
+  state.resumeTimer=setTimeout(()=>{
+    if(state.hands&&state.open&&state.phase==="idle")listen();
+  },RESUME_MS);
 }
 
 /** Ждём, пока очередь опустеет: ход закончен, когда всё произнесено. */
@@ -438,7 +469,23 @@ async function listen(){
 function toggle(){
   if(state.phase==="listening")stopAndSend();
   else if(state.phase==="speaking"){resetSpeech();setPhase("idle")}
-  else if(state.phase==="idle"||state.phase==="error")listen();
+  else if(state.phase==="idle"||state.phase==="error"){state.silentRuns=0;listen()}
+}
+
+/** Включить или выключить разговор без рук. */
+function setHands(on){
+  state.hands=Boolean(on);
+  state.silentRuns=0;
+  clearTimeout(state.resumeTimer);
+  updateHandsButton();
+  if(state.hands&&state.open&&state.phase==="idle")maybeResume();
+  else if(!state.hands&&state.phase==="listening")stopCapture(),setPhase("idle");
+}
+function updateHandsButton(){
+  const b=$("#vHands");if(!b)return;
+  b.classList.toggle("on",state.hands);
+  b.setAttribute("aria-pressed",state.hands?"true":"false");
+  b.title=state.hands?"Разговор идёт сам — нажмите, чтобы отвечать по кнопке":"Включить разговор без рук";
 }
 
 function open(){
@@ -449,12 +496,15 @@ function open(){
   root.setAttribute("aria-hidden","false");
   document.body.style.overflow="hidden";
   setPhase("idle");
+  state.silentRuns=0;
+  updateHandsButton();
   if(!state.raf)state.raf=requestAnimationFrame(animate);
   listen();                                // окно открылось — сразу слушаем
 }
 
 function close(){
   state.open=false;
+  clearTimeout(state.resumeTimer);state.resumeTimer=0;
   resetSpeech();
   // Звуковой контекст держит устройство вывода: закрытый экран не должен
   // оставлять его висеть.
@@ -469,13 +519,18 @@ function close(){
 
 root.FreeVoice={
   init(api){state.api=api||{}},
-  open,close,toggle,listen,
+  open,close,toggle,listen,setHands,
+  get hands(){return state.hands},
   get phase(){return state.phase},
   get isOpen(){return state.open},
   reset(){state.conversation=null;clearLog();const c=$("#voiceCards");if(c)c.innerHTML=""},
   // Открыто для тестов: разбор звука проверяется без микрофона, а состояние
   // очереди речи — без угадывания по таймингам.
   _audio:{downsample,toPcm16,rms},
-  _speech:speech
+  _speech:speech,
+  // Ход разговора без микрофона: в песочнице он не отдаёт звука, и проверить
+  // иначе, что промежуточная реплика не произносится, невозможно.
+  _ask:(text)=>ask(text),
+  get _silent(){return state.silentRuns}
 };
 })(typeof globalThis!=="undefined"?globalThis:this);
