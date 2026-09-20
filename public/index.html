@@ -56,62 +56,66 @@ html{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-we
 .obCard.on .tick{display:block}
 .obNext{margin-top:12px;border:0;border-radius:18px;background:var(--dark);color:#fff;padding:15px;font-size:15px;font-weight:600}
 .obNext[disabled]{opacity:.35}
-/* Полноэкранный разговор: как экран проигрывателя — одно действие в центре,
-   всё остальное уходит на второй план. Тёмная тема здесь намеренная: экран
-   включается в движении и часто вечером. */
+/* Полноэкранный разговор. Это тот же разговор, что в переписке, поэтому и
+   выглядит он так же: светлый фон приложения, полупрозрачные белые поверхности,
+   пилюли, чёрный как цвет действия. Собственных стилей у реплик нет — они берут
+   .msg.ai и .msg.user, чтобы место не начало выглядеть иначе, чем минуту назад. */
 .voiceScreen{position:fixed;inset:0;z-index:300;display:none;flex-direction:column;
-  background:radial-gradient(120% 90% at 50% 8%,#1d2530,#0c0f13 62%,#07090c);
-  color:#f3f5f7;
-  padding:calc(12px + max(env(safe-area-inset-top,0px),var(--sat,0px))) 16px calc(18px + max(env(safe-area-inset-bottom,0px),var(--sab,0px)))}
+  background:radial-gradient(900px 520px at 50% -10%,#fff,transparent 72%),var(--bg);color:var(--ink);
+  padding:calc(10px + max(env(safe-area-inset-top,0px),var(--sat,0px))) 12px calc(22px + max(env(safe-area-inset-bottom,0px),var(--sab,0px)))}
 .voiceScreen.on{display:flex}
-.vTop{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.vClose{width:38px;height:38px;border-radius:999px;border:1px solid rgba(255,255,255,.16);
-  background:rgba(255,255,255,.07);color:#fff;font-size:17px;line-height:1}
-.vWho{text-align:center;flex:1}
-.vWho b{display:block;font-size:15px;letter-spacing:-.2px}
-.vWho span{display:block;font-size:11px;color:rgba(255,255,255,.5);margin-top:2px}
-.vStage{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;min-height:0}
-.vOrbWrap{position:relative;width:min(58vw,230px);aspect-ratio:1;display:grid;place-items:center;flex:none;
+.vTop{max-width:860px;width:100%;margin:0 auto;background:rgba(250,251,252,.72);border:1px solid rgba(255,255,255,.9);
+  backdrop-filter:blur(24px);border-radius:999px;padding:7px 9px 7px 9px;display:flex;align-items:center;
+  justify-content:space-between;gap:8px;box-shadow:0 8px 26px rgba(35,39,48,.05);flex:none}
+.vWho{text-align:center;flex:1;min-width:0}
+.vWho b{display:block;font-weight:820;letter-spacing:-.04em;font-size:15px}
+.vWho span{display:block;font-size:10px;color:#777d86;margin-top:1px}
+.vRound{width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#fff;color:var(--ink);
+  font-size:14px;line-height:1;display:grid;place-items:center;flex:none}
+
+.vStage{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;min-height:0;padding-top:8px}
+
+/* Шар — та же белая поверхность, что у карточек: круг с мягкой тенью и тонким
+   кольцом. Дышит он масштабом и толщиной кольца, а цвет кольца говорит о фазе. */
+.vOrbWrap{position:relative;width:min(52vw,196px);aspect-ratio:1;display:grid;place-items:center;flex:none;
   transition:width .38s cubic-bezier(.2,.8,.2,1)}
-/* Пошёл разговор — шар уходит на второй план, как обложка в проигрывателе,
-   когда открываешь очередь. Иначе он съедает место у того, ради чего пришли. */
-.voiceScreen.hasContent .vOrbWrap{width:min(30vw,116px)}
-.voiceScreen.hasContent .vRing{inset:-9px}
-.voiceScreen.hasContent .vRing.two{inset:-19px}
-.voiceScreen.hasContent .vStage{justify-content:flex-start;gap:14px;padding-top:6px}
-.vOrb{position:absolute;inset:0;border-radius:50%;
-  background:radial-gradient(circle at 34% 30%,#9fe8c4,#3fb98a 38%,#1b6d57 72%,#0f3b31);
-  transform:scale(var(--orb-scale,1));transition:background .5s ease;
-  box-shadow:0 0 calc(40px + 70px*var(--orb-glow,0)) rgba(63,185,138,calc(.22 + .5*var(--orb-glow,0)));
-  will-change:transform}
-.vRing{position:absolute;inset:-14px;border-radius:50%;border:1px solid rgba(255,255,255,.1)}
-.vRing.two{inset:-30px;border-color:rgba(255,255,255,.05)}
-.voiceScreen[data-phase="thinking"] .vOrb{background:radial-gradient(circle at 34% 30%,#cfd8e6,#7d8ea6 40%,#3c4a5e 74%,#222c39);
-  animation:vSpin 3.4s linear infinite}
-.voiceScreen[data-phase="speaking"] .vOrb{background:radial-gradient(circle at 34% 30%,#ffe3ad,#e8a94b 40%,#8c5f1c 74%,#4a3210)}
-.voiceScreen[data-phase="error"] .vOrb{background:radial-gradient(circle at 34% 30%,#ffc9c2,#d86a5c 42%,#7d3227 76%,#3d1a15)}
-@keyframes vSpin{to{transform:rotate(360deg) scale(var(--orb-scale,1))}}
-@media (prefers-reduced-motion:reduce){.vOrb{animation:none!important;transition:none}}
-.vHint{font-size:15px;color:rgba(255,255,255,.62);min-height:20px;text-align:center}
-.vLog{width:100%;max-width:520px;max-height:30vh;overflow:auto;flex:none;display:flex;flex-direction:column;gap:8px;
-  -webkit-mask-image:linear-gradient(transparent,#000 18px,#000 calc(100% - 4px),transparent);
-  mask-image:linear-gradient(transparent,#000 18px,#000 calc(100% - 4px),transparent)}
-.vLine{font-size:15px;line-height:1.42;padding:9px 13px;border-radius:15px;max-width:88%;white-space:pre-wrap}
-.vUser{align-self:flex-end;background:rgba(255,255,255,.13)}
-.vAgent{align-self:flex-start;background:rgba(63,185,138,.15);border:1px solid rgba(63,185,138,.22)}
-/* Карточке нужна вся высота: внизу у неё кнопки брони и маршрута,
-   обрезанная карточка бесполезна. */
-.vCards{width:100%;max-width:520px;flex:1 1 auto;min-height:0;overflow:auto}
+.vOrb{position:absolute;inset:0;border-radius:50%;background:rgba(255,255,255,.92);
+  border:1px solid rgba(255,255,255,.96);box-shadow:var(--shadow);
+  transform:scale(var(--orb-scale,1));will-change:transform}
+.vOrb::after{content:"";position:absolute;inset:calc(6px + 10px*var(--orb-glow,0));border-radius:50%;
+  border:2px solid var(--vAccent,#c9ced6);opacity:calc(.35 + .5*var(--orb-glow,0));transition:border-color .35s ease}
+.vRing{position:absolute;inset:-13px;border-radius:50%;border:1px solid var(--line);
+  transform:scale(calc(1 + .06*var(--orb-glow,0)))}
+.vRing.two{inset:-28px;border-color:rgba(20,24,28,.05);transform:scale(calc(1 + .1*var(--orb-glow,0)))}
+.voiceScreen[data-phase="listening"]{--vAccent:var(--green)}
+.voiceScreen[data-phase="thinking"]{--vAccent:#aeb4bd}
+.voiceScreen[data-phase="speaking"]{--vAccent:var(--ink)}
+.voiceScreen[data-phase="error"]{--vAccent:#c2554a}
+.voiceScreen[data-phase="thinking"] .vRing{animation:vPulse 1.9s ease-in-out infinite}
+.voiceScreen[data-phase="thinking"] .vRing.two{animation:vPulse 1.9s ease-in-out .35s infinite}
+@keyframes vPulse{0%,100%{opacity:.35}50%{opacity:1}}
+@media (prefers-reduced-motion:reduce){.vRing{animation:none!important}.vOrb{transition:none}}
+
+.voiceScreen.hasContent .vOrbWrap{width:min(26vw,96px)}
+.voiceScreen.hasContent .vRing{inset:-8px}
+.voiceScreen.hasContent .vRing.two{inset:-17px}
+.voiceScreen.hasContent .vStage{justify-content:flex-start;gap:12px}
+
+.vHint{font-size:13px;color:var(--muted);min-height:18px;text-align:center}
+/* Реплики — те же пузыри, что в переписке. */
+.vLog{width:100%;max-width:560px;max-height:26vh;overflow:auto;display:flex;flex-direction:column;gap:8px;flex:none;
+  -webkit-mask-image:linear-gradient(transparent,#000 16px,#000 calc(100% - 2px),transparent);
+  mask-image:linear-gradient(transparent,#000 16px,#000 calc(100% - 2px),transparent)}
+.vCards{width:100%;max-width:560px;flex:1 1 auto;min-height:0;overflow:auto}
 .vCards:empty{flex:0}
-.vCards .placeCard{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.1);color:#f3f5f7}
-.vCards .placeCard h3,.vCards .placeCard .tag{color:#f3f5f7}
-.vCards .placeCard p,.vCards .placeCard .reason,.vCards .placeCard .small{color:rgba(255,255,255,.62)}
-.vBottom{display:flex;align-items:center;justify-content:center;gap:18px;padding-top:14px;flex:none}
-.vMic{width:74px;height:74px;border-radius:999px;border:0;background:#f3f5f7;color:#101418;
-  font-size:26px;display:grid;place-items:center;box-shadow:0 10px 34px rgba(0,0,0,.4)}
-.voiceScreen[data-phase="listening"] .vMic{background:#e5564a;color:#fff}
-.vSide{width:46px;height:46px;border-radius:999px;border:1px solid rgba(255,255,255,.16);
-  background:rgba(255,255,255,.07);color:#fff;font-size:15px}
+
+.vBottom{max-width:560px;width:100%;margin:0 auto;display:flex;align-items:center;justify-content:center;gap:16px;
+  padding-top:12px;flex:none}
+.vMic{width:66px;height:66px;border-radius:50%;border:0;background:#111;color:#fff;font-size:24px;
+  display:grid;place-items:center;box-shadow:0 12px 35px rgba(31,36,46,.22)}
+.voiceScreen[data-phase="listening"] .vMic{background:#fff;color:#111;border:1px solid var(--line);
+  box-shadow:0 0 0 8px rgba(20,134,90,.1),0 12px 35px rgba(31,36,46,.12)}
+.vSide{width:44px;height:44px;border-radius:50%;border:1px solid var(--line);background:#fff;color:#5a6069;font-size:15px}
 .quick{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.quick button{border:1px solid var(--line);background:#fff;color:#4e555f;border-radius:999px;padding:8px 11px;font-size:11px}.quick button.primary{background:#111;color:#fff}
 .inlineCards{display:flex;gap:10px;overflow-x:auto;padding:8px 0 3px;scroll-snap-type:x mandatory}
 .placeCard{min-width:min(330px,85vw);max-width:330px;scroll-snap-align:start;border-radius:23px;background:#fff;border:1px solid rgba(255,255,255,.95);padding:16px;box-shadow:var(--shadow)}
@@ -178,12 +182,15 @@ html{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-we
 <body>
 <div id="voiceScreen" class="voiceScreen" aria-hidden="true">
   <div class="vTop">
-    <button class="vClose" id="vClose" aria-label="Закрыть">✕</button>
+    <button class="vRound" id="vClose" aria-label="Закрыть">✕</button>
     <div class="vWho"><b id="vName">Савва</b><span id="vRole">консьерж по Москве</span></div>
-    <button class="vSide" id="vRoute" title="Маршрут" aria-label="Маршрут">↗</button>
+    <button class="vRound" id="vRoute" title="Маршрут" aria-label="Маршрут">↗</button>
   </div>
   <div class="vStage">
-    <div class="vOrbWrap"><div class="vRing two"></div><div class="vRing"></div><div class="vOrb" id="voiceOrb"></div></div>
+    <div class="vOrbWrap">
+      <div class="vRing two"></div><div class="vRing"></div>
+      <div class="vOrb" id="voiceOrb"></div>
+    </div>
     <div class="vHint" id="voiceHint">Нажмите и говорите</div>
     <div class="vLog" id="voiceLog"></div>
     <div class="vCards" id="voiceCards"></div>

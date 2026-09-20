@@ -140,7 +140,9 @@ function addLine(who,text){
   const box=$("#voiceLog");if(!box||!text)return null;
   markContent();
   const el=document.createElement("div");
-  el.className="vLine "+(who==="user"?"vUser":"vAgent");
+  // Те же классы, что в переписке: одно место не должно выглядеть по-разному
+  // в зависимости от того, спросили о нём голосом или написали.
+  el.className="msg "+(who==="user"?"user":"ai");
   el.textContent=text;
   box.appendChild(el);
   box.scrollTop=box.scrollHeight;
