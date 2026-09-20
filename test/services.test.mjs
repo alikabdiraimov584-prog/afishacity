@@ -107,3 +107,33 @@ test("область поиска входит в ключ кеша", async () =
   await searchLiveInventory({query:"парк",area:"центр"},{},{providers});
   assert.deepEqual(seen,[null,"центр"]);
 });
+
+test("свободная фраза не обнуляет выдачу", () => {
+  // Абсолютный порог выбрасывал все результаты, если ни одно слово запроса
+  // не встретилось в текстах — человек получал пустой ответ при живых местах.
+  const bars=[venue({id:"a",name:"Ровесник",cat:"Бар",tags:["bar"],cat_tags:["bar"]}),
+              venue({id:"b",name:"Клава",cat:"Бар",tags:["bar"],cat_tags:["bar"]})];
+  for(const q of ["посоветуй что-нибудь","ываыва","","куда бы сходить"])
+    assert.ok(rankArea(q,null,bars).length>0,`пусто на запросе ${JSON.stringify(q)}`);
+});
+
+test("мусорные веса вкуса не выбрасывают результаты", () => {
+  const bars=[venue({id:"a",name:"Ровесник",cat:"Бар",tags:["bar"],cat_tags:["bar"]})];
+  for(const taste of [{quiet:1e9},{quiet:NaN},{quiet:"много"},{quiet:null},{чужое:5}]){
+    const out=rankArea("бар",null,bars,{taste_weights:taste});
+    assert.equal(out.length,1,`пусто при весах ${JSON.stringify(taste)}`);
+    assert.ok(out[0]._match>=50&&out[0]._match<=99,`совпадение вне шкалы: ${out[0]._match}`);
+  }
+});
+
+test("синоним не срабатывает внутри другого слова", () => {
+  // «клубнику» попадала в ночные клубы, потому что строковые синонимы
+  // сравнивались через includes() без границ слова.
+  const dessert=venue({id:"d",name:"Клубничный десерт",cat:"Кондитерская",tags:["pastry"],cat_tags:["pastry"]});
+  const [top]=rankArea("клубнику купить",null,[dessert]);
+  assert.ok(top,"десерт должен находиться");
+  assert.ok(!top._reasons.includes("ночной клуб"),`лишняя причина: ${top._reasons.join(", ")}`);
+  // При этом обычное окончание по-прежнему ловится: «кофейня» по запросу «кофе».
+  const coffee=venue({id:"c",name:"Кофейня Skuratov",cat:"Кофейня",tags:["coffee"],cat_tags:["coffee"]});
+  assert.equal(rankArea("кофе",null,[coffee]).length,1);
+});

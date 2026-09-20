@@ -11,8 +11,26 @@ function norm(s=""){return String(s).toLowerCase().replace(/ё/g,"е").replace(/
 function stripHtml(s=""){return String(s).replace(/<[^>]*>/g," ").replace(/&nbsp;/g," ").replace(/&amp;/g,"&").replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/\s+/g," ").trim()}
 function uniq(a){return [...new Set(a.filter(Boolean))]}
 function clampText(s,n=440){s=stripHtml(s);return s.length>n?s.slice(0,n-1)+"…":s}
-function parseMoney(s=""){const m=String(s).replace(/\s/g,"").match(/(\d{2,6})/);return m?+m[1]:null}
-function isoDate(x){if(!x)return null;const d=new Date(x);return Number.isFinite(d.valueOf())?d.toISOString().slice(0,10):null}
+// Цену засчитываем только рядом с денежным признаком. Раньше бралась первая
+// группа цифр, и «18+» становилось ценой 18 ₽, «с 12:00 до 23:00» — 12 ₽,
+// а «2026 год» — 2026 ₽; эти числа потом проходили фильтр бюджета.
+const MONEY_UNIT="(?:₽|руб[а-я]*(?![а-я])|р(?![а-я])|rub)";
+const MONEY_RANGE=new RegExp(`(\\d[\\d\\s]{0,7}\\d|\\d)\\s*[-–—]\\s*(?:\\d[\\d\\s]{0,7}\\d|\\d)\\s*${MONEY_UNIT}`);
+const MONEY_PLAIN=new RegExp(`(\\d[\\d\\s]{0,7}\\d|\\d)\\s*${MONEY_UNIT}`);
+const MONEY_CTX=/(?:от|до|цена|стоимость|билет[а-я]*)\s*(\d[\d\s]{0,7}\d|\d)(?![\d:+])/;
+function parseMoney(s=""){
+  const t=String(s).toLowerCase().replace(/\u00a0/g," ");
+  // Возраст, время и год — не цена.
+  const cleaned=t.replace(/\d+\s*\+/g," ").replace(/\d{1,2}[:.]\d{2}/g," ").replace(/(?<!\d)(19|20)\d{2}(?![\d])/g," ");
+  const m=MONEY_RANGE.exec(cleaned)||MONEY_PLAIN.exec(cleaned)||MONEY_CTX.exec(cleaned);
+  if(!m)return null;
+  const n=Number(String(m[1]).replace(/\s/g,""));
+  return Number.isFinite(n)&&n>=0&&n<=1000000?n:null;
+}
+// Дата берётся по Москве, а не по UTC: событие, начинающееся в 00:30 МСК,
+// иначе получало вчерашнюю дату и не находилось по фильтру «сегодня».
+const MSK_DATE=new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Moscow",year:"numeric",month:"2-digit",day:"2-digit"});
+function isoDate(x){if(!x)return null;const d=new Date(x);return Number.isFinite(d.valueOf())?MSK_DATE.format(d):null}
 function hhmm(x){if(!x)return null;const d=new Date(x);if(!Number.isFinite(d.valueOf()))return null;return new Intl.DateTimeFormat("ru-RU",{timeZone:"Europe/Moscow",hour:"2-digit",minute:"2-digit",hour12:false}).format(d)}
 function moscowDate(){return new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Moscow",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date())}
 function addDays(dateStr,n){const d=new Date(dateStr+"T12:00:00Z");d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10)}
@@ -31,7 +49,7 @@ const ART_RE=/выстав|искусств|галере|(?<![а-я])арт(?![�
 const STOP=new Set(["куда","сходить","пойти","хочу","хочется","сегодня","завтра","вечером","после","москва","москве","москву","очень","сильно","много","какой","какое","какие","что","чтобы","можно","найди","найти","место","места","нибудь","что-нибудь","есть","нужно","надо","давай","давайте","посоветуй","подскажи","рядом","около","недалеко","меня","нас","мне","мы","нам","компанией","человек"]);
 
 async function fetchJson(url,opts={}){
-  const ctrl=new AbortController();const t=setTimeout(()=>ctrl.abort(),TIMEOUT_MS);
+  const ctrl=new AbortController();const t=setTimeout(()=>ctrl.abort(),opts.timeoutMs||TIMEOUT_MS);
   try{
     const r=await fetch(url,{...opts,signal:ctrl.signal,headers:{"User-Agent":"FREE-Moscow/0.9 (+local prototype)",...(opts.headers||{})}});
     if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);
@@ -283,6 +301,7 @@ export async function search2GIS(plan,key){
 
 
 const MOSCOW_BBOX = "55.49,37.30,55.96,37.99";
+const OVERPASS_TIMEOUT_S=12;
 // Центр — примерно кольцо радиусом 5 км вокруг Кремля: Садовое и ближние районы.
 const CENTER_BBOX = "55.71,37.55,55.80,37.69";
 export function wantsCenter(area){return /центр/.test(String(area||"").toLowerCase())}
@@ -359,13 +378,16 @@ export async function searchOSM(plan){
   if(!filters.length) return {items:[],errors:[],disabled:false};
   // Просят центр — сужаем область поиска, иначе Overpass отдаёт всю Москву.
   const bbox=wantsCenter(plan.area)?CENTER_BBOX:MOSCOW_BBOX;
-  const query=`[out:json][timeout:18];(${filters.map(s=>s.replaceAll("{{bbox}}",bbox)).join("")});out center tags 80;`;
+  // Overpass просили считать до 18 с, а клиент обрывал на 6.5 с: тяжёлые запросы
+  // всегда падали по таймауту и накручивали предохранителю отказы. Сводим вместе.
+  const query=`[out:json][timeout:${OVERPASS_TIMEOUT_S}];(${filters.map(s=>s.replaceAll("{{bbox}}",bbox)).join("")});out center tags 80;`;
   try{
     const body=new URLSearchParams({data:query}).toString();
     const d=await fetchJson(OVERPASS_URL,{
       method:"POST",
       headers:{"Content-Type":"application/x-www-form-urlencoded;charset=UTF-8"},
-      body
+      body,
+      timeoutMs:(OVERPASS_TIMEOUT_S+2)*1000
     });
     const items=(d.elements||[]).map(x=>normalizeOsmItem(x,plan)).filter(x=>x.name!=="Заведение");
     return {items,errors:[],disabled:false};

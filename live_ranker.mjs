@@ -29,7 +29,21 @@ for(const [k,v] of Object.entries({nightlife:"ночная жизнь",outdoors:
   art:"выставки",theatre:"театр",comedy:"стендап",jazz:"джаз",rock:"рок",science:"наука",festival:"фестиваль",
   lecture:"лекция",workshop:"мастер-класс",experience:"впечатления",friends:"для компании",beauty:"красота"}))TAG_RU.set(k,v);
 function tagRu(t){return TAG_RU.get(t)||t}
-function hasTerm(n,t){return t instanceof RegExp?t.test(n):n.includes(norm(t))}
+// Строковые синонимы сравнивались через includes(), поэтому «клубнику» попадала
+// в ночные клубы, а «джакузи» — в медицину. Границы слова для кириллицы задаём
+// явно: \b в JS работает только для латиницы. До трёх букв окончания допускаем,
+// чтобы «кофейня» по-прежнему находилась по «кофе».
+const TERM_RE=new Map();
+function termRe(t){
+  let re=TERM_RE.get(t);
+  if(!re){
+    const body=norm(t).replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+    re=new RegExp(`(?<![а-яa-z0-9])${body}[а-я]{0,3}(?![а-я])`);
+    TERM_RE.set(t,re);
+  }
+  return re;
+}
+function hasTerm(n,t){return t instanceof RegExp?t.test(n):termRe(t).test(n)}
 // Кремль: точка отсчёта для запросов «в центре».
 const CENTER={lat:55.7539,lon:37.6208};
 function requestedTags(query,plan){const n=norm(query),out=[...(plan.tags||[])];for(const [tag,terms] of Object.entries(SYN))if(terms.some(t=>hasTerm(n,t)))out.push(tag);return [...new Set(out)]}
@@ -127,10 +141,20 @@ function contextDnaReasons(dna,args){
   return out;
 }
 
+// Веса вкуса приходят из тела запроса. Без проверки NaN и огромные значения
+// уводили оценку в минус и выбрасывали все результаты.
+function sanitizeTaste(raw){
+  const out={};
+  for(const [k,v] of Object.entries(raw||{})){
+    const n=Number(v);
+    if(Number.isFinite(n))out[k]=Math.max(-5,Math.min(5,n));
+  }
+  return out;
+}
 export function rankLive(items,args={},plan={}){
   const q=args.query||"",qwords=words(q),tags=requestedTags(q,plan),
     strong=new Set(tags.filter(t=>Object.keys(SYN).includes(t))),
-    taste=args.taste_weights||{}, user=coordsPair(args.user_location), near=/рядом|недалеко|от меня|пешком/.test(norm(q)),
+    taste=sanitizeTaste(args.taste_weights), user=coordsPair(args.user_location), near=/рядом|недалеко|от меня|пешком/.test(norm(q)),
     rain=args.weather_context?.rain===true,moment=hoursMoment(args),
     serviceAsked=tags.some(t=>SERVICE_TAGS.has(t)),
     centerAsked=/центр/.test(norm(args.area||""));
@@ -199,7 +223,10 @@ export function rankLive(items,args={},plan={}){
   }
   scored.sort((a,b)=>b._score-a._score);
   if(!scored.length)return [];
-  const top=scored[0]._score,close=scored.filter(x=>x._score>=Math.max(14,top-42));
+  // Абсолютный порог выбрасывал ВСЮ выдачу, когда ни одно слово запроса не нашлось
+  // в текстах: на «посоветуй что-нибудь» человек получал пустой ответ при живых
+  // подходящих местах. Отсекаем только слабых относительно лучшего.
+  const top=scored[0]._score,close=scored.filter(x=>x._score>=top-42);
   const out=[],pool=[...close];
   while(pool.length&&out.length<5){
     let best=null,bestAdj=-Infinity;
