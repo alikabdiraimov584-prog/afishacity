@@ -8,7 +8,7 @@ import {verifyInitData,createRateLimiter} from "./telegram.mjs";
 import {buildPlan,planSummary} from "./planner.mjs";
 import {openStore} from "./store.mjs";
 import {mkdirSync,writeFileSync as writeFileSyncFs,existsSync,readdirSync,unlinkSync,statSync} from "node:fs";
-import {searchLiveInventory} from "./providers.mjs";
+import {searchLiveInventory,providerHealth} from "./providers.mjs";
 import {rankLive,resultPayload} from "./live_ranker.mjs";
 import {startWarmup} from "./warmup.mjs";
 import {loadDotenv} from "./env.mjs";
@@ -503,7 +503,8 @@ const server=http.createServer(async(req,res)=>{
         env_skipped_lines:ENV_SKIPPED,
         voice_ready:false,
         voice_model:null,
-        providers:{kudago:true,timepad:true,osm:true,dgis:Boolean(process.env.DGIS_API_KEY||process.env.TWOGIS_API_KEY)}
+        providers:{kudago:true,timepad:true,osm:true,dgis:Boolean(process.env.DGIS_API_KEY||process.env.TWOGIS_API_KEY)},
+        provider_health:providerHealth()
       });
     }
 

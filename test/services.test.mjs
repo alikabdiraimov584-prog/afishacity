@@ -62,3 +62,48 @@ test("справочник делит категории на услуги и д
   for(const t of ["pharmacy","barber","carrepair","dentist","hotel"])assert.ok(SERVICE_TAGS.has(t),t);
   for(const t of ["bar","food","park","museum","club"])assert.ok(!SERVICE_TAGS.has(t),t);
 });
+
+const park=(id,name,lat,lon)=>venue({id,name,cat:"Парк",tags:["park","outdoors"],cat_tags:["park"],coords:{lat,lon},provider:"KudaGo"});
+const PARKS=[
+  park("sal","Саларьево парк",55.622,37.406),      // ~15 км от Кремля
+  park("sad","Сад будущего",55.836,37.666),        // ~9 км
+  park("gorky","Парк Горького",55.7304,37.6017),   // ~2.9 км
+  park("zar","Зарядье",55.7510,37.6286)            // ~0.5 км
+];
+const rankArea=(query,area,items,extra={})=>{
+  const args={query,area,taste_weights:{},...extra};
+  return rankLive(items,args,buildSearchPlan(args));
+};
+
+test("«в центре» отсекает места за пределами центра", () => {
+  assert.deepEqual(rankArea("парк",null,PARKS).map(x=>x.id).sort(),["gorky","sad","sal","zar"]);
+  assert.deepEqual(rankArea("парк","центр",PARKS).map(x=>x.id),["zar","gorky"]);
+});
+
+test("совпадение считается по запросу, а не по месту в тройке", () => {
+  // Раньше первый результат всегда получал 97 % независимо от того, что нашлось.
+  const wide=rankArea("парк",null,PARKS);
+  assert.ok(wide.every(x=>x._match===wide[0]._match),"без условий места равны");
+  assert.ok(wide[0]._match<97,`не выдаём 97 % просто за первое место (получили ${wide[0]._match})`);
+  const center=rankArea("парк","центр",PARKS);
+  assert.ok(center[0]._match>center[1]._match,"ближе к центру — выше совпадение");
+  assert.ok(center.every(x=>x._match>=50&&x._match<=99));
+});
+
+test("в причинах русские названия, без служебных тегов и слов запроса", () => {
+  const [top]=rankArea("парк","центр",PARKS);
+  assert.ok(top._reasons.includes("парк"),top._reasons.join(","));
+  assert.ok(top._reasons.includes("в центре"));
+  assert.ok(!top._reasons.includes("park"),"служебный тег не показываем");
+  assert.ok(!top._reasons.includes("outdoors"));
+});
+
+test("область поиска входит в ключ кеша", async () => {
+  const seen=[];
+  const osm=async(plan)=>{seen.push(plan.area);return {items:[],errors:[]}};
+  const providers={kudago:async()=>({items:[],errors:[]}),timepad:async()=>({items:[],errors:[]}),osm,dgis:async()=>({items:[],errors:[]})};
+  const cache=new Map(),store={get:k=>cache.get(k),set:(k,v)=>cache.set(k,v)};
+  await searchLiveInventory({query:"парк"},{},{providers});
+  await searchLiveInventory({query:"парк",area:"центр"},{},{providers});
+  assert.deepEqual(seen,[null,"центр"]);
+});

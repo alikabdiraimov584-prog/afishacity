@@ -22,7 +22,16 @@ for(const c of CATEGORIES){
   const cur=SYN[c.tag]||[];
   if(!cur.some(x=>x instanceof RegExp&&String(x)===String(c.re)))SYN[c.tag]=[...cur,c.re];
 }
+// В карточке показываем русское название категории, а не служебный тег:
+// у справочника первый поисковый запрос как раз и есть такое название.
+const TAG_RU=new Map(CATEGORIES.map(c=>[c.tag,(c.queries||[])[0]||c.tag]));
+for(const [k,v] of Object.entries({nightlife:"ночная жизнь",outdoors:"на воздухе",music:"музыка",culture:"культура",
+  art:"выставки",theatre:"театр",comedy:"стендап",jazz:"джаз",rock:"рок",science:"наука",festival:"фестиваль",
+  lecture:"лекция",workshop:"мастер-класс",experience:"впечатления",friends:"для компании",beauty:"красота"}))TAG_RU.set(k,v);
+function tagRu(t){return TAG_RU.get(t)||t}
 function hasTerm(n,t){return t instanceof RegExp?t.test(n):n.includes(norm(t))}
+// Кремль: точка отсчёта для запросов «в центре».
+const CENTER={lat:55.7539,lon:37.6208};
 function requestedTags(query,plan){const n=norm(query),out=[...(plan.tags||[])];for(const [tag,terms] of Object.entries(SYN))if(terms.some(t=>hasTerm(n,t)))out.push(tag);return [...new Set(out)]}
 function moscowDate(){return new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Moscow",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date())}
 function itemText(x){return norm([x.name,x.organizer,x.cat,x.area,x.metro,x.desc,x.keywords,(x.tags||[]).join(" ")].filter(Boolean).join(" "))}
@@ -123,7 +132,8 @@ export function rankLive(items,args={},plan={}){
     strong=new Set(tags.filter(t=>Object.keys(SYN).includes(t))),
     taste=args.taste_weights||{}, user=coordsPair(args.user_location), near=/рядом|недалеко|от меня|пешком/.test(norm(q)),
     rain=args.weather_context?.rain===true,moment=hoursMoment(args),
-    serviceAsked=tags.some(t=>SERVICE_TAGS.has(t));
+    serviceAsked=tags.some(t=>SERVICE_TAGS.has(t)),
+    centerAsked=/центр/.test(norm(args.area||""));
   const scored=[];
   for(const x of items){
     if(!dateOkay(x,args)||!timeOkay(x,args)||!priceOkay(x,args))continue;
@@ -140,9 +150,11 @@ export function rankLive(items,args={},plan={}){
       // Услугу засчитываем только по категории из источника: «Аптекарский огород»
       // — парк, а «Хлебозавод» с барбершопом в описании — не барбершоп.
       const hit=SERVICE_TAGS.has(t)?ctags.has(t):(xtags.has(t)||ctags.has(t)||SYN[t]?.some(k=>hasTerm(text,k)));
-      if(hit){s+=strong.has(t)?58:22;strongHit++;reasons.push(t)}
+      if(hit){s+=strong.has(t)?58:22;strongHit++;reasons.push(tagRu(t))}
     }
-    let lex=0;for(const w of qwords){if(text.includes(w)){lex+=9;reasons.push(w)}}s+=Math.min(54,lex);
+    // Слова запроса влияют на ранг, но в причины не идут: «парк · park» — не объяснение.
+    let lex=0;for(const w of qwords)if(text.includes(w))lex+=9;
+    s+=Math.min(54,lex);
     if(strong.size&&strongHit===0&&lex<18)continue;
     // Спросили услугу — показываем только подтверждённые источником места.
     if(serviceAsked&&strongHit===0)continue;
@@ -150,15 +162,40 @@ export function rankLive(items,args={},plan={}){
     if(args.target_date&&x.kind==="event"){s+=22;reasons.push("по дате")}
     if(args.after_time&&x.times?.length){s+=9;reasons.push("по времени")}
     if(args.max_price_rub!==undefined&&args.max_price_rub!==null&&x.price_min!==null&&x.price_min<=args.max_price_rub){s+=10;reasons.push("в бюджете")}
-    s+=tasteScore(dna,taste);
+    const ts=tasteScore(dna,taste);
+    s+=ts;
     reasons.push(...contextDnaReasons(dna,args));
     let distance_km=null;
     const c=coordsPair(x.coords);
     if(user&&c){distance_km=hav(user,c);if(near)s+=Math.max(-30,32-distance_km*5);else s+=Math.max(0,8-distance_km*.6);if(distance_km<2)reasons.push("рядом")}
+    // Просили центр — место за его пределами не показываем вовсе.
+    let center_km=null;
+    if(centerAsked&&c){
+      center_km=hav(CENTER,c);
+      if(center_km>6)continue;
+      s+=Math.max(0,20-center_km*3);
+      reasons.push(center_km<=2?"в центре":`${center_km.toFixed(1)} км от центра`);
+    }
     if(rain&&dna.outdoors>=55)s-=42;
     if(rain&&dna.outdoors<40)s+=8;
     if(x.live)s+=8;if(x.provider==="2GIS")s+=5;
-    scored.push({...x,_score:s,_reasons:[...new Set(reasons)].slice(0,5),_dna:dna,_distance_km:distance_km,_hours:hours});
+    // Совпадение считаем по самому запросу: сколько его условий место выполнило
+    // и насколько оно совпало со вкусом. Раньше проценты нормировались внутри
+    // выдачи, и первый вариант получал 97 независимо от того, что нашлось.
+    // Условие может быть выполнено частично: «в центре» за 1 км и за 5 км — разное.
+    const crit=[];
+    if(tags.length)crit.push([3,strongHit>0?1:0]);
+    if(qwords.length)crit.push([2,lex>0?1:0]);
+    if(args.target_date)crit.push([2,x.kind!=="event"||x.date_start?1:0]);
+    if(args.after_time)crit.push([2,!hours||hours.open_now!==false?1:0]);
+    if(centerAsked)crit.push([3,center_km===null?0:clamp(1-center_km/6,0,1)]);
+    if(near&&user)crit.push([2,distance_km===null?0:clamp(1-distance_km/5,0,1)]);
+    if(hours)crit.push([1,hours.open_now?1:0]);
+    if(args.max_price_rub!==undefined&&args.max_price_rub!==null)crit.push([1,x.price_min===null||x.price_min<=+args.max_price_rub?1:0]);
+    const tot=crit.reduce((a,[w])=>a+w,0),got=crit.reduce((a,[w,v])=>a+w*v,0);
+    const fit=tot?got/tot:0.6,align=clamp((ts+30)/60,0,1);
+    const match=Math.round(clamp(52+36*fit+24*(align-.5),50,99));
+    scored.push({...x,_score:s,_match:match,_reasons:[...new Set(reasons)].slice(0,5),_dna:dna,_distance_km:distance_km,_center_km:center_km,_hours:hours});
   }
   scored.sort((a,b)=>b._score-a._score);
   if(!scored.length)return [];
@@ -171,11 +208,6 @@ export function rankLive(items,args={},plan={}){
       const a=x._score-p;if(a>bestAdj){best=x;bestAdj=a}
     }
     out.push(best);pool.splice(pool.indexOf(best),1);
-  }
-  const max=out[0]?._score||1,min=out[out.length-1]?._score||0;
-  for(let i=0;i<out.length;i++){
-    const rel=max===min?0:(out[i]._score-min)/(max-min);
-    out[i]._match=Math.round(Math.max(68,Math.min(97,86+rel*11-i*2)));
   }
   return out;
 }

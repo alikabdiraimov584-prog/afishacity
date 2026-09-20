@@ -340,6 +340,10 @@ function extractSlots(t){
   if(/спокой|тихо|разговар/.test(n))s.vibe="quiet";if(/шумно|весело|тусов/.test(n))s.vibe="social";if(/красив/.test(n))s.vibe="beautiful";
   if(/(?<![а-я])рок(?![а-я])/.test(n))s.genre="rock";if(/джаз/.test(n))s.genre="jazz";if(/стендап/.test(n))s.genre="standup";
   if(/рядом|недалеко|от меня/.test(n))s.near=true;
+  // «В центре» — это район поиска, а не слово запроса: раньше оно просто терялось,
+  // и на «погулять в центре» приходило Саларьево. «Торговый центр» сюда не относится.
+  if(/(?<![а-я])в центре(?![а-я])|(?<![а-я])центр[еа] город|в пределах садового/.test(n)
+     &&!/(торгов\w*|бизнес.?|фитнес.?|деловой) ?центр/.test(n))s.area="центр";
   return s;
 }
 function mergeSlots(t){Object.assign(chatState.slots,extractSlots(t))}
@@ -413,6 +417,7 @@ async function liveArgs(){
   const s=chatState.slots,args={query:queryFromState(),taste_weights:{...taste}};
   if(s.max_price_rub&&s.max_price_rub<999999)args.max_price_rub=s.max_price_rub;if(s.party_size)args.party_size=s.party_size;if(s.after_time)args.after_time=s.after_time;
   if(["today","tomorrow","weekend"].includes(s.date_word))args.target_date=dateStr(s.date_word);
+  if(s.area)args.area=s.area;
   if(s.near){const g=await geo(false);if(g)args.user_location={lat:g.lat,lon:g.lon}}
   return args;
 }
@@ -797,10 +802,22 @@ async function submitDemoUser(text){
     toast(DEMO_ERRORS[code]||"Не удалось получить ответ Claude.");
   }
 }
+// Поиск идёт несколько секунд. Без замка повторное нажатие (или второй onend
+// у распознавания речи) отправляло тот же запрос дважды — в чате появлялись
+// два одинаковых сообщения и два индикатора набора.
+function setComposerBusy(on){
+  const b=$("#sendBtn");if(!b)return;
+  b.disabled=on;b.textContent=on?"Ищу…":"Отправить";
+}
 async function submitUser(text){
-  if(chatState.aiReady)return submitNeuralUser(text);
-  if(demoSample)return submitDemoUser(text);
-  return submitScriptedUser(text,false);
+  text=String(text||"").trim();
+  if(!text||chatState.busy)return;
+  chatState.busy=true;setComposerBusy(true);
+  try{
+    if(chatState.aiReady)return await submitNeuralUser(text);
+    if(demoSample)return await submitDemoUser(text);
+    return await submitScriptedUser(text,false);
+  }finally{chatState.busy=false;setComposerBusy(false)}
 }
 
 
@@ -1175,7 +1192,7 @@ function browserVoice(){
   rec.onstart=()=>{$("#voiceBtn").classList.add("live");$("#input").placeholder="Говорите… (нажмите ещё раз, чтобы остановить)"};
   rec.onresult=e=>{let t="";for(let i=0;i<e.results.length;i++)t+=e.results[i][0].transcript;gotResult=true;$("#input").value=t};
   rec.onerror=e=>{const m=VOICE_ERRORS[e.error]??("Голос недоступен: "+e.error);if(m)toast(m)};
-  rec.onend=()=>{voice.rec=null;$("#voiceBtn").classList.remove("live");$("#input").placeholder="Например: хочу выпить";const t=$("#input").value.trim();if(gotResult&&t)submitUser(t)};
+  rec.onend=()=>{if(voice.rec!==rec)return;voice.rec=null;$("#voiceBtn").classList.remove("live");$("#input").placeholder="Например: хочу выпить";const t=$("#input").value.trim();if(gotResult&&t)submitUser(t)};
   try{rec.start()}catch(e){voice.rec=null;toast("Не удалось включить микрофон: "+e.message)}
 }
 $("#input").addEventListener("focus",()=>setTimeout(()=>{$(".composerWrap")?.scrollIntoView({block:"end"});scrollChatToLatest()},220));

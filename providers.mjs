@@ -274,7 +274,7 @@ export async function search2GIS(plan,key){
   const out=[],errors=[];
   for(const q of plan.placeQueries.slice(0,4)){
     try{
-      const u=new URL("https://catalog.api.2gis.com/3.0/items");u.searchParams.set("key",key);u.searchParams.set("q",q);u.searchParams.set("type","branch");u.searchParams.set("point",MOSCOW_POINT);u.searchParams.set("radius","50000");u.searchParams.set("page_size","50");u.searchParams.set("locale","ru_RU");u.searchParams.set("fields","items.point,items.rubrics,items.schedule,items.full_address_name,items.contact_groups");
+      const u=new URL("https://catalog.api.2gis.com/3.0/items");u.searchParams.set("key",key);u.searchParams.set("q",q);u.searchParams.set("type","branch");u.searchParams.set("point",MOSCOW_POINT);u.searchParams.set("radius",wantsCenter(plan.area)?"6000":"50000");u.searchParams.set("page_size","50");u.searchParams.set("locale","ru_RU");u.searchParams.set("fields","items.point,items.rubrics,items.schedule,items.full_address_name,items.contact_groups");
       const d=await fetchJson(u);for(const x of (d.result?.items||[]))out.push(normalize2gisItem(x,plan));
     }catch(e){errors.push(`2GIS: ${e.message}`)}
   }
@@ -283,6 +283,9 @@ export async function search2GIS(plan,key){
 
 
 const MOSCOW_BBOX = "55.49,37.30,55.96,37.99";
+// Центр — примерно кольцо радиусом 5 км вокруг Кремля: Садовое и ближние районы.
+const CENTER_BBOX = "55.71,37.55,55.80,37.69";
+export function wantsCenter(area){return /центр/.test(String(area||"").toLowerCase())}
 const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
 
 // Фильтры OpenStreetMap — из того же справочника.
@@ -347,7 +350,9 @@ export function osmFilters(plan){
 export async function searchOSM(plan){
   const filters=osmFilters(plan);
   if(!filters.length) return {items:[],errors:[],disabled:false};
-  const query=`[out:json][timeout:18];(${filters.map(s=>s.replaceAll("{{bbox}}",MOSCOW_BBOX)).join("")});out center tags 80;`;
+  // Просят центр — сужаем область поиска, иначе Overpass отдаёт всю Москву.
+  const bbox=wantsCenter(plan.area)?CENTER_BBOX:MOSCOW_BBOX;
+  const query=`[out:json][timeout:18];(${filters.map(s=>s.replaceAll("{{bbox}}",bbox)).join("")});out center tags 80;`;
   try{
     const body=new URLSearchParams({data:query}).toString();
     const d=await fetchJson(OVERPASS_URL,{
@@ -381,11 +386,22 @@ const BREAKER={failures:3,cooldownMs:5*60_000};
 const CACHE_FILE=process.env.NODE_ENV==="test"?null:join(fileURLToPath(new URL(".",import.meta.url)),"data","live_cache.json");
 const PROVIDER_LABEL={kudago:"KudaGo",timepad:"Timepad",osm:"OpenStreetMap/Overpass",dgis:"2GIS"};
 let liveCache=null;
+// Состояние источников: какой из них сейчас отключён предохранителем и почему.
+// Иначе «часть источников временно недоступна» в интерфейсе ничем не объяснить.
+export function providerHealth(){
+  const out={};
+  for(const n of ["kudago","timepad","osm","dgis"]){
+    const b=breakerStatus(n,{cooldownMs:BREAKER.cooldownMs});
+    out[n]={ok:!b.open,failures:b.failures,last_error:b.lastError||null,retry_in_sec:Math.round(b.retryInMs/1000)};
+  }
+  return out;
+}
 export function getLiveCache(){return liveCache||(liveCache=createCache({ttlMs:LIVE_TTL_MS,staleMs:LIVE_STALE_MS,file:CACHE_FILE}))}
 
 // Ключ кеша — только то, что реально влияет на запрос к провайдеру (и plan.tags, которые попадают в карточки).
 function cacheKeyFor(name,plan,hasKey){
-  const base={t:plan.tags};
+  // Область входит в ключ: у центра и всей Москвы результаты разные.
+  const base={t:plan.tags,c:wantsCenter(plan.area)};
   const part={
     kudago:{e:plan.eventQueries.slice(0,3),p:plan.placeQueries.slice(0,3),f:plan.freeOnly,d:plan.targetDate},
     timepad:{e:plan.eventQueries.length?plan.eventQueries.slice(0,3):[plan.coreQuery||""],d:plan.targetDate,f:plan.freeOnly,m:plan.maxPrice},
