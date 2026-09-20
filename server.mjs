@@ -5,6 +5,8 @@ import {fileURLToPath} from "node:url";
 import {randomUUID} from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import {verifyInitData,createRateLimiter} from "./telegram.mjs";
+import {buildPlan,planSummary} from "./planner.mjs";
+import {mkdirSync,existsSync,readFileSync as readFileSyncFs,writeFileSync as writeFileSyncFs} from "node:fs";
 import {searchLiveInventory} from "./providers.mjs";
 import {rankLive,resultPayload} from "./live_ranker.mjs";
 
@@ -138,6 +140,68 @@ const recommendTool={
   }
 };
 
+const planTool={
+  name:"plan_evening",
+  description:"Собирает связку из 2–4 точек на вечер (например: ужин → бар → кальян) с реальными местами, временем каждой точки, переходами между ними и маршрутом. Вызывай, когда пользователь просит план на вечер, несколько активностей подряд («поужинать, а потом в бар»), или хочет продолжить вечер после выбранного места (тогда одна остановка + anchor = координаты выбранного места и start_time = время его окончания). Для одиночного запроса «куда пойти» используй recommend_free.",
+  input_schema:{
+    type:"object",
+    properties:{
+      stops:{type:"array",minItems:1,maxItems:4,items:{type:"object",properties:{query:{type:"string",description:"Что искать на этом шаге, по-русски: «ужин ресторан итальянская кухня», «коктейльный бар», «кальянная»"},duration_min:{type:"integer",minimum:15,maximum:300}},required:["query"]},description:"Остановки по порядку."},
+      start_time:{type:"string",description:"Начало вечера HH:MM. По умолчанию 19:00."},
+      target_date:{type:"string",description:"Дата YYYY-MM-DD, если известна."},
+      party_size:{type:"integer",minimum:1,maximum:20},
+      max_price_rub:{type:"integer",minimum:0,description:"Бюджет на человека на весь вечер, если назван."},
+      anchor:{type:"object",properties:{lat:{type:"number"},lon:{type:"number"}},description:"Точка старта: координаты пользователя или выбранного места."},
+      area:{type:"string",description:"Район или метро, если пользователь назвал."}
+    },
+    required:["stops"]
+  }
+};
+const PLAN_DIR=join(__dirname,"data");
+const PLAN_FILE=join(PLAN_DIR,"plans.json");
+const PLANS=new Map();
+try{if(existsSync(PLAN_FILE))for(const [k,v] of Object.entries(JSON.parse(readFileSyncFs(PLAN_FILE,"utf8"))))PLANS.set(k,v)}catch(e){console.error("plans load:",e.message)}
+function plansFlush(){try{mkdirSync(PLAN_DIR,{recursive:true});writeFileSyncFs(PLAN_FILE,JSON.stringify(Object.fromEntries(PLANS)))}catch(e){console.error("plans save:",e.message)}}
+function planId(){return randomUUID().replace(/-/g,"").slice(0,10)}
+function sharePlan(plan,meta={}){
+  const id=planId();
+  const stops=(plan.stops||[]).map(s=>({...s,alternatives:[]}));
+  PLANS.set(id,{id,created_at:new Date().toISOString(),title:meta.title||"Вечер с FREE",date:meta.date||null,plan:{...plan,stops}});
+  if(PLANS.size>5000){const oldest=[...PLANS.keys()].slice(0,PLANS.size-5000);for(const k of oldest)PLANS.delete(k)}
+  plansFlush();return id;
+}
+async function planEvening(args,context={}){
+  const req={...args};
+  if(req.area&&Array.isArray(req.stops))req.stops=req.stops.map(s=>({...s,query:`${s.query} ${req.area}`}));
+  if(context.taste_weights&&typeof context.taste_weights==="object")req.taste_weights=context.taste_weights;
+  if(!req.anchor&&context.user_location&&Number.isFinite(+context.user_location.lat))req.anchor={lat:+context.user_location.lat,lon:+context.user_location.lon};
+  const now=new Date();
+  const msk=new Intl.DateTimeFormat("ru-RU",{timeZone:"Europe/Moscow",hour:"2-digit",minute:"2-digit",hour12:false}).format(now).split(":").map(Number);
+  req.now_min=Math.max(msk[0]*60+msk[1]+30,18*60);
+  return buildPlan(req,recommend);
+}
+function planForModel(plan){
+  return {status:plan.status,total:plan.total,summary:planSummary(plan),
+    stops:(plan.stops||[]).map(s=>({index:s.index,query:s.query,slot:`${s.slot_start}–${s.slot_end}`,travel_in:s.travel_in,conflict:s.conflict,
+      place:s.place?{id:s.place.id,name:s.place.name,category:s.place.category,area:s.place.area,metro:s.place.metro,time:s.place.time,price:s.place.price,availability:s.place.availability,booking_kind:s.place.booking_kind}:null,
+      alternatives:(s.alternatives||[]).map(a=>({id:a.id,name:a.name,category:a.category,area:a.area}))}))};
+}
+function escapeHtml(s=""){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+function sharedPlanPage(rec){
+  const p=rec.plan,e=escapeHtml;
+  const rows=(p.stops||[]).map(s=>{
+    const pl=s.place;
+    const travel=s.travel_to_next?`<div class="travel">↓ ${s.travel_to_next.mode==="walk"?"пешком":s.travel_to_next.mode==="taxi"?"такси":"переход"} ~${s.travel_to_next.minutes} мин${s.travel_to_next.km?` · ${s.travel_to_next.km} км`:""}</div>`:"";
+    return `<div class="stop"><div class="time">${e(s.slot_start)}–${e(s.slot_end)}</div><div class="body"><h3>${pl?e(pl.name):e(s.query)+" — не найдено"}</h3>${pl?`<p>${e(pl.category||"")}${pl.area?" · "+e(pl.area):""}${pl.metro?" · м. "+e(pl.metro):""}</p><p class="muted">${e(pl.price||"")}${pl.availability?" · "+e(pl.availability):""}</p>${pl.booking_url||pl.source?`<a href="${e(pl.booking_url||pl.source)}" target="_blank" rel="noopener">${pl.booking_url?"Бронь / билеты":"Страница места"}</a>`:""}`:""}</div></div>${travel}`;
+  }).join("");
+  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${e(rec.title)} · FREE</title>
+<style>body{margin:0;font-family:-apple-system,Inter,Segoe UI,Roboto,sans-serif;background:#f6f6f4;color:#111214}main{max-width:560px;margin:0 auto;padding:24px 16px 48px}.eyebrow{font-size:11px;letter-spacing:.14em;color:#727780;text-transform:uppercase}h1{font-size:28px;margin:6px 0 4px}.sub{color:#727780;margin:0 0 20px}.stop{display:flex;gap:14px;background:#fff;border:1px solid rgba(20,24,28,.08);border-radius:18px;padding:14px 16px;box-shadow:0 10px 30px rgba(31,36,46,.06)}.time{min-width:92px;font-weight:700;font-variant-numeric:tabular-nums}.body h3{margin:0 0 4px;font-size:17px}.body p{margin:2px 0;font-size:13px}.muted{color:#727780}.body a{display:inline-block;margin-top:8px;font-size:13px;color:#315fff;text-decoration:none;font-weight:600}.travel{padding:8px 0 8px 108px;color:#727780;font-size:12px}.cta{display:flex;gap:10px;margin-top:22px;flex-wrap:wrap}.cta a{flex:1;text-align:center;padding:13px 16px;border-radius:14px;text-decoration:none;font-weight:700;font-size:14px}.cta .dark{background:#111316;color:#fff}.cta .light{background:#fff;color:#111214;border:1px solid rgba(20,24,28,.12)}.foot{margin-top:28px;font-size:12px;color:#727780}</style></head>
+<body><main><div class="eyebrow">План вечера</div><h1>${e(rec.title)}</h1><p class="sub">${e(p.total?.start||"")}–${e(p.total?.end||"")}${rec.date?" · "+e(rec.date):""}${p.total?.travel_km?" · переходы "+e(String(p.total.travel_km))+" км":""}</p>
+${rows}
+<div class="cta">${p.route_url?`<a class="dark" href="${e(p.route_url)}" target="_blank" rel="noopener">Маршрут в Яндекс Картах</a>`:""}<a class="light" href="/">Собрать свой вечер в FREE</a></div>
+<div class="foot">Составлено FREE по данным KudaGo, Timepad, OpenStreetMap и официальных сайтов. Часы и наличие мест стоит перепроверить у заведения.</div></main></body></html>`;
+}
+
 const TEXT_MODEL=process.env.CLAUDE_MODEL||"claude-opus-5";
 const TEXT_EFFORT=process.env.CLAUDE_EFFORT||"medium";
 const AI_READY=Boolean(process.env.ANTHROPIC_API_KEY);
@@ -176,7 +240,9 @@ function dialogueContextSummary(context={}){
     category:context.selected_place.category,
     area:context.selected_place.area,
     time:context.selected_place.time,
-    price:context.selected_place.price
+    price:context.selected_place.price,
+    coords:context.selected_place.coords||null,
+    slot_end:context.selected_place.slot_end||null
   }:null;
   const plan=Array.isArray(context.plan)?context.plan.slice(0,6).map(x=>({
     name:x.name,category:x.category,area:x.area,time:x.time,price:x.price
@@ -201,6 +267,8 @@ const DIALOGUE_SYSTEM=[
   "Если пользователь меняет тему — например после кальяна пишет «теперь хочу потанцевать» — это новое намерение. Не переноси старый intent автоматически.",
   "Используй выбранное место как контекст только если пользователь явно связывает следующий запрос с ним словами вроде «после этого», «рядом», «а потом», «продолжить вечер».",
   "Когда пользователь просит куда пойти, где поесть, выпить, покурить кальян, потанцевать, сходить на событие или провести время — вызывай recommend_free, когда информации уже достаточно.",
+  "Когда пользователь хочет несколько активностей подряд («поужинать, а потом в бар», «план на вечер», «что-то после концерта») — вызывай plan_evening с остановками по порядку. Если он продолжает вечер после выбранного места (selected_place в контексте), передай anchor = его координаты и start_time = время окончания, а остановку только одну.",
+  "После plan_evening интерфейс покажет план-карточку с временем и маршрутом. В тексте коротко опиши логику вечера: почему такой порядок, где пешком, где такси, и что можно заменить. Не перечисляй заново все поля.",
   "После recommend_free используй только факты из результата инструмента. Не придумывай заведения, цены, часы, доступность, фотографии или каналы бронирования.",
   "Карточки результатов интерфейс покажет сам. В тексте после поиска достаточно коротко объяснить, почему эти варианты подходят и какой из них чем отличается.",
   "Если хороших совпадений мало — покажи мало. Не добивай список нерелевантными местами.",
@@ -226,7 +294,7 @@ async function claudeTurn(system,messages){
     max_tokens:4000,
     system,
     messages,
-    tools:[recommendTool],
+    tools:[recommendTool,planTool],
     tool_choice:{type:"auto",disable_parallel_tool_use:true},
     output_config:{effort:TEXT_EFFORT},
     betas:["server-side-fallback-2026-07-01"],
@@ -243,6 +311,7 @@ async function runDialogue(message,conversationId,context={}){
   messages.push({role:"user",content:String(message)});
 
   let latestResults=[];
+  let latestPlan=null;
   let toolUsed=false;
   let response=null;
 
@@ -258,12 +327,24 @@ async function runDialogue(message,conversationId,context={}){
 
     const results=[];
     for(const call of calls){
+      const args=(call.input&&typeof call.input==="object")?{...call.input}:{};
+      if(call.name==="plan_evening"){
+        toolUsed=true;
+        try{
+          const plan=await planEvening(args,context);
+          latestPlan=plan;
+          latestResults=(plan.stops||[]).map(s=>s.place).filter(Boolean);
+          results.push({type:"tool_result",tool_use_id:call.id,content:JSON.stringify(planForModel(plan))});
+        }catch(e){
+          results.push({type:"tool_result",tool_use_id:call.id,is_error:true,content:`plan_failed: ${e.message}`});
+        }
+        continue;
+      }
       if(call.name!=="recommend_free"){
         results.push({type:"tool_result",tool_use_id:call.id,is_error:true,content:"unknown tool"});
         continue;
       }
       toolUsed=true;
-      const args=(call.input&&typeof call.input==="object")?{...call.input}:{};
       if(!args.query)args.query=String(message);
       if(context.taste_weights&&typeof context.taste_weights==="object")args.taste_weights=context.taste_weights;
       if(context.user_location&&Number.isFinite(+context.user_location.lat)&&Number.isFinite(+context.user_location.lon)){
@@ -298,6 +379,7 @@ async function runDialogue(message,conversationId,context={}){
     reply,
     response_id:id,
     results:latestResults,
+    plan:latestPlan,
     tool_used:toolUsed,
     model:response?.model||TEXT_MODEL
   };
@@ -343,6 +425,35 @@ const server=http.createServer(async(req,res)=>{
         const err=dialogueError(e);
         return json(res,err.status,{error:err.error,message:err.message,fallback:true});
       }
+    }
+
+    if(req.method==="POST"&&url.pathname==="/api/plan"){
+      let body={};
+      try{body=JSON.parse(await readBody(req))}catch{return json(res,400,{error:"invalid_json"})}
+      if(!Array.isArray(body.stops)||!body.stops.length)return json(res,400,{error:"stops_required"});
+      const auth=authorize(req);if(auth.error)return json(res,auth.error.status,auth.error);
+      try{return json(res,200,await planEvening(body,body.context||{}))}
+      catch(e){console.error(e);return json(res,502,{error:"plan_failed",message:e.message})}
+    }
+
+    if(req.method==="POST"&&url.pathname==="/api/plan/share"){
+      let body={};
+      try{body=JSON.parse(await readBody(req,240000))}catch{return json(res,400,{error:"invalid_json"})}
+      if(!body.plan||!Array.isArray(body.plan.stops)||!body.plan.stops.length)return json(res,400,{error:"plan_required"});
+      const id=sharePlan(body.plan,{title:String(body.title||"").slice(0,80),date:String(body.date||"").slice(0,10)||null});
+      const origin=(req.headers["x-forwarded-proto"]||"http")+"://"+(req.headers["x-forwarded-host"]||req.headers.host||`localhost:${PORT}`);
+      return json(res,201,{id,url:`${origin}/p/${id}`});
+    }
+
+    if(req.method==="GET"&&/^\/api\/plan\/[a-z0-9]{6,20}$/.test(url.pathname)){
+      const rec=PLANS.get(url.pathname.split("/").pop());
+      return rec?json(res,200,rec):json(res,404,{error:"not_found"});
+    }
+
+    if(req.method==="GET"&&/^\/p\/[a-z0-9]{6,20}$/.test(url.pathname)){
+      const rec=PLANS.get(url.pathname.split("/").pop());
+      if(!rec)return send(res,404,"План не найден или удалён");
+      return send(res,200,sharedPlanPage(rec),"text/html; charset=utf-8");
     }
 
     if(req.method==="POST"&&url.pathname==="/api/recommend"){
@@ -393,7 +504,7 @@ const server=http.createServer(async(req,res)=>{
   }
 });
 
-export {runDialogue,conversationTrim,recommendTool,dialogueSystem};
+export {runDialogue,conversationTrim,recommendTool,planTool,dialogueSystem,sharePlan,sharedPlanPage,planEvening};
 
 if(process.env.NODE_ENV!=="test"){
   server.listen(PORT,HOST,()=>{

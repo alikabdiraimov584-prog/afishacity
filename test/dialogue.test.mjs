@@ -80,3 +80,25 @@ test("схема инструмента валидна", ()=>{
   assert.equal(recommendTool.input_schema.type,"object");
   assert.deepEqual(recommendTool.input_schema.required,["query"]);
 });
+
+test("plan_evening: план возвращается в ответе, модель получает сводку", async ()=>{
+  const {sharePlan,sharedPlanPage}=await import("../server.mjs");
+  const client=mockClient([
+    ()=>({model:"m",stop_reason:"tool_use",content:[{type:"tool_use",id:"tu_p",name:"plan_evening",input:{stops:[{query:"ужин"},{query:"бар"}],start_time:"19:00"}}]}),
+    (req)=>{const tr=req.messages.at(-1).content[0];assert.equal(tr.tool_use_id,"tu_p");const parsed=JSON.parse(tr.content);assert.ok("summary" in parsed);assert.equal(parsed.stops.length,2);
+      return {model:"m",stop_reason:"end_turn",content:[{type:"text",text:"План готов."}]}}
+  ]);
+  setDialogueClient(client);
+  const r=await runDialogue("поужинать и потом в бар",null,{});
+  assert.equal(r.reply,"План готов.");
+  assert.ok(r.plan&&Array.isArray(r.plan.stops)&&r.plan.stops.length===2);
+  assert.equal(r.plan.stops[0].slot_start,"19:00");
+  // Поделиться: страница рендерится и экранирует HTML
+  const fake={status:"ok",stops:[{index:1,query:"бар",slot_start:"19:00",slot_end:"20:30",place:{name:"<b>Бар</b>",category:"Бар",area:"Москва",source:"https://x"},travel_to_next:{mode:"walk",minutes:7,km:0.5}},{index:2,query:"кальян",slot_start:"20:40",slot_end:"22:40",place:null}],total:{start:"19:00",end:"22:40",travel_km:0.5},route_url:"https://yandex.ru/maps/?x"};
+  const id=sharePlan(fake,{title:"Тест"});
+  assert.match(id,/^[a-f0-9]{10}$/);
+  const html=sharedPlanPage({id,title:"Тест",plan:fake});
+  assert.ok(html.includes("&lt;b&gt;Бар&lt;/b&gt;"));
+  assert.ok(html.includes("пешком ~7 мин"));
+  assert.ok(html.includes("кальян — не найдено"));
+});

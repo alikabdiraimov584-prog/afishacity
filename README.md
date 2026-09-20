@@ -26,6 +26,7 @@ npm start              # http://localhost:3000
 | `server.mjs` | HTTP-сервер, статика из `public/`, API, диалог с Claude (tool use), обогащение карточек метаданными страниц |
 | `providers.mjs` | Live-источники: KudaGo, Timepad, OpenStreetMap/Overpass, 2GIS (по ключу). Построение плана поиска из запроса |
 | `live_ranker.mjs` | Фильтрация и ранжирование результатов, «ДНК места», учёт Taste Graph, геолокации и погоды |
+| `public/planner.js`, `planner.mjs` | Планировщик вечера: связка 2–4 точек, слоты времени, переходы пешком/такси, маршрут. Работает и в браузере, и на сервере |
 | `telegram.mjs` | Проверка подписи initData Telegram Mini App и лимит запросов |
 | `public/index.html` | Одностраничный UI: чат, карточки, план, сохранённое, Taste Graph, голос |
 
@@ -36,6 +37,8 @@ npm start              # http://localhost:3000
 | `GET /api/health` | Готовность текстового AI, голоса и провайдеров |
 | `POST /api/recommend` | Поиск по живым источникам. Тело: `{query, party_size, after_time, target_date, max_price_rub, area, taste_weights, user_location, weather_context}` |
 | `POST /api/dialogue` | Диалог через Claude с инструментом `recommend_free`. Тело: `{message, previous_response_id, context}`; ответ содержит `response_id` — идентификатор истории, которую сервер хранит 2 часа. Требует `ANTHROPIC_API_KEY` |
+| `POST /api/plan` | Собрать план вечера: `{stops:[{query}], start_time, party_size, max_price_rub, target_date, anchor}` |
+| `POST /api/plan/share` | Сохранить план и получить ссылку `/p/:id` (страница для отправки друзьям) |
 | `GET /api/weather` | Прогноз Open-Meteo по `lat`/`lon` |
 | `POST /api/live-session` | Возвращает 501: голос работает через распознавание речи в браузере и обычный `/api/dialogue` |
 
@@ -45,6 +48,14 @@ npm start              # http://localhost:3000
 кеширование системного промпта и серверный fallback на другую модель Anthropic при отказе
 по политике (`fallbacks: "default"`). Голосовой WebRTC-режим прежнего бэкенда убран:
 у Claude нет realtime-канала, поэтому речь распознаёт браузер.
+
+## План вечера
+
+Фраза вида «поужинать, потом в бар, а после кальян» превращается в план: агент (инструмент
+`plan_evening` у Claude или разбор фразы в резервном режиме) ищет каждую точку рядом с предыдущей,
+расставляет время с учётом длительности и сеансов событий, считает переходы и строит маршрут.
+В карточке плана точки можно заменить на альтернативы, добавить всё в «Мой план», открыть маршрут
+и поделиться ссылкой. Планы хранятся в `data/plans.json`.
 
 ## Telegram Mini App
 
