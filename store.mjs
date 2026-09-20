@@ -115,7 +115,17 @@ export function openStore(file=":memory:"){
     evenings(userId,limit=10){return q.evenings.all(userId,limit).map(r=>({id:r.id,title:r.title,date:r.date,created_at:r.created_at,plan:parse(r.plan,null)}))},
     removeEvening(userId,id){return q.delEvening.run(id,userId).changes>0},
     // История диалога с моделью
-    getConversation(id,ttlMs){const c=id?q.conv.get(id):null;if(!c)return null;if(ttlMs&&Date.now()-c.updated_at>ttlMs)return null;return {id:c.id,user_id:c.user_id,messages:parse(c.messages,[])}},
+    getConversation(id,ttlMs){
+      const c=id?q.conv.get(id):null;if(!c)return null;
+      if(ttlMs&&Date.now()-c.updated_at>ttlMs)return null;
+      const raw=parse(c.messages,[]);
+      // Движки хранят историю по-разному. Старый формат — просто массив,
+      // новый помечен движком: без пометки продолжать чужую историю нельзя.
+      const wrapped=raw&&!Array.isArray(raw)&&typeof raw==="object";
+      return {id:c.id,user_id:c.user_id,
+        provider:wrapped?String(raw.provider||"claude"):"claude",
+        messages:wrapped?(Array.isArray(raw.messages)?raw.messages:[]):raw};
+    },
     setConversation(id,messages,userId=null){q.upsertConv.run(id,userId,JSON.stringify(messages),Date.now())},
     sweepConversations(ttlMs){return q.sweepConv.run(Date.now()-ttlMs).changes},
     lastConversationId(userId){return q.lastConv.get(userId)?.id||null},

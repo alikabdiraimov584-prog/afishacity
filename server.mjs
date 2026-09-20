@@ -12,6 +12,9 @@ import {searchLiveInventory,providerHealth,snapshotStatus} from "./providers.mjs
 import {renderCover} from "./cover.mjs";
 import {safeRemoteUrl,guardedFetch,USER_AGENT} from "./net_guard.mjs";
 import {resolvePhoto,ownSiteUrl} from "./photos.mjs";
+import {yandexConfig,yandexStatus,yandexStt,yandexTts,YandexError,STT_MAX_BYTES} from "./yandex.mjs";
+import {runYandexDialogue} from "./dialogue_yandex.mjs";
+import {CONCIERGE} from "./agent.mjs";
 import {rankLive,resultPayload} from "./live_ranker.mjs";
 import {startWarmup} from "./warmup.mjs";
 import {loadDotenv} from "./env.mjs";
@@ -31,7 +34,9 @@ const dialogueLimiter=createRateLimiter({limit:Number(process.env.DIALOGUE_RATE_
 const shareLimiter=createRateLimiter({limit:Number(process.env.SHARE_RATE_LIMIT||20),windowMs:10*60*1000});
 const imageLimiter=createRateLimiter({limit:Number(process.env.IMAGE_RATE_LIMIT||240),windowMs:10*60*1000});
 const profileLimiter=createRateLimiter({limit:Number(process.env.PROFILE_RATE_LIMIT||120),windowMs:10*60*1000});
-setInterval(()=>{try{dialogueLimiter.sweep();shareLimiter.sweep();imageLimiter.sweep();profileLimiter.sweep()}catch(e){console.error("уборка лимитов:",e&&e.message||e)}},5*60*1000).unref();
+// Речь дороже текста: каждый вызов — обращение в SpeechKit.
+const voiceLimiter=createRateLimiter({limit:Number(process.env.VOICE_RATE_LIMIT||120),windowMs:10*60*1000});
+setInterval(()=>{try{dialogueLimiter.sweep();shareLimiter.sweep();imageLimiter.sweep();profileLimiter.sweep();voiceLimiter.sweep()}catch(e){console.error("уборка лимитов:",e&&e.message||e)}},5*60*1000).unref();
 // X-Forwarded-For присылает клиент, и подделка заголовка обнуляла лимит запросов
 // вместе с защитой ключа Claude. Доверяем ему, только когда соединение пришло от
 // собственного обратного прокси (TRUST_PROXY, по умолчанию — петля).
@@ -84,6 +89,12 @@ async function readJsonObject(req,max){
   const v=raw.trim()?JSON.parse(raw):{};
   if(v===null||typeof v!=="object"||Array.isArray(v))throw new SyntaxError("expected object");
   return v;
+}
+// Сырое тело: звук приходит байтами, без JSON-обёртки.
+async function readRaw(req,max){
+  const chunks=[];let size=0;
+  for await(const c of req){size+=c.length;if(size>max)throw new BodyTooLarge(max);chunks.push(c)}
+  return Buffer.concat(chunks);
 }
 class BodyTooLarge extends Error{constructor(max){super(`body too large (>${max})`);this.max=max}}
 async function readBody(req,max=160000){
@@ -382,8 +393,18 @@ ${rows}
 
 const TEXT_MODEL=process.env.CLAUDE_MODEL||"claude-opus-5";
 const TEXT_EFFORT=process.env.CLAUDE_EFFORT||"medium";
-const AI_READY=Boolean(process.env.ANTHROPIC_API_KEY);
-let anthropic=AI_READY?new Anthropic():null;
+// Движок диалога. auto — берём то, что настроено: Claude, если есть его ключ,
+// иначе Yandex. Так разворачивание не требует лишнего переключателя.
+const YANDEX=yandexConfig();
+const CLAUDE_READY=Boolean(process.env.ANTHROPIC_API_KEY);
+const AI_PROVIDER=(()=>{
+  const want=String(process.env.AI_PROVIDER||"auto").toLowerCase();
+  if(want==="claude")return CLAUDE_READY?"claude":"none";
+  if(want==="yandex")return YANDEX.ready?"yandex":"none";
+  return CLAUDE_READY?"claude":YANDEX.ready?"yandex":"none";
+})();
+const AI_READY=AI_PROVIDER!=="none";
+let anthropic=CLAUDE_READY?new Anthropic():null;
 export function setDialogueClient(client){anthropic=client}
 
 // История диалога хранится на сервере: Messages API не имеет состояния, а интерфейс
@@ -592,7 +613,55 @@ async function runDialogue(message,conversationId,context={},emit=null,signal=nu
   };
 }
 
+// Разговор на YandexGPT. Ответ намеренно той же формы, что у Claude-пути:
+// клиенту всё равно, какой движок отвечает.
+async function runYandexAgent(message,conversationId,context={},emit=null,signal=null,{voice=false}={}){
+  const stored=conversationGet(conversationId);
+  const owner=context.user_id??null;
+  // История одного движка не годится другому: формат сообщений разный.
+  const usable=stored&&(stored.user_id===null||stored.user_id===owner)&&stored.provider==="yandex"?stored:null;
+  const id=usable?conversationId:randomUUID();
+  const history=usable?usable.messages:[];
+
+  const out=await runYandexDialogue(message,history,{
+    voice,emit,signal,cfg:YANDEX,
+    context:{...context,summary:dialogueContextSummary(context)},
+    deps:{
+      recommend_free:async(args)=>{
+        const a={...args};
+        if(!a.query)a.query=String(message);
+        if(context.taste_weights&&typeof context.taste_weights==="object")a.taste_weights=context.taste_weights;
+        if(context.user_location&&Number.isFinite(+context.user_location.lat)&&Number.isFinite(+context.user_location.lon))
+          a.user_location={lat:+context.user_location.lat,lon:+context.user_location.lon};
+        return recommend(a);
+      },
+      plan_evening:async(args)=>planEvening(args,context),
+      status:(name,args)=>toolStatus({name,input:args})
+    }
+  });
+
+  store.setConversation(id,{provider:"yandex",messages:out.messages},context.user_id||null);
+  return {
+    reply:out.text,
+    reply_streamed:Boolean(emit),
+    response_id:id,
+    results:out.results,
+    plan:out.plan,
+    tool_used:out.tool_used,
+    agent:out.agent,
+    model:`yandexgpt (${YANDEX.model})`
+  };
+}
+
+// Единая точка входа: движок выбран настройками, вызывающий код о нём не знает.
+function runAgent(message,conversationId,context,emit=null,signal=null,opts={}){
+  if(AI_PROVIDER==="yandex")return runYandexAgent(message,conversationId,context,emit,signal,opts);
+  return runDialogue(message,conversationId,context,emit,signal);
+}
+
 function dialogueError(e){
+  if(e instanceof YandexError)return {status:e.status===401||e.status===403?502:e.retryable?503:502,
+    error:"dialogue_yandex",message:e.message};
   if(e instanceof Anthropic.AuthenticationError)return {status:502,error:"dialogue_auth",message:"Неверный ANTHROPIC_API_KEY"};
   if(e instanceof Anthropic.RateLimitError)return {status:503,error:"dialogue_rate_limited",message:"Лимит запросов к Claude, попробуйте чуть позже"};
   if(e instanceof Anthropic.BadRequestError)return {status:502,error:"dialogue_bad_request",message:e.message};
@@ -605,6 +674,48 @@ const server=http.createServer(async(req,res)=>{
     const url=new URL(req.url,`http://${req.headers.host||"localhost"}`);
     res.req=req;
     if(req.method==="OPTIONS"){res.writeHead(204,corsHeaders(req));return res.end()}
+
+    // ---- Речь ----
+    // Запись приходит сырым LPCM 16 кГц: это единственный формат, который
+    // SpeechKit принимает напрямую и который браузер умеет отдать без
+    // перекодирования (MediaRecorder даёт WebM/Opus, его SpeechKit не берёт).
+    if(req.method==="POST"&&url.pathname==="/api/voice/stt"){
+      if(!YANDEX.ready)return json(res,503,{error:"voice_not_configured",message:"Нужны YANDEX_API_KEY и YANDEX_FOLDER_ID"});
+      const auth=authorize(req);if(auth.error)return json(res,auth.error.status,auth.error);
+      const rl=voiceLimiter.check(auth.user?.id?`tg:${auth.user.id}`:`ip:${clientKey(req)}`);
+      if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return json(res,429,{error:"rate_limited",retry_after:rl.retryAfterSec})}
+      let audio;
+      try{audio=await readRaw(req,STT_MAX_BYTES)}
+      catch(e){return json(res,413,{error:"audio_too_large",message:"Реплика длиннее тридцати секунд"})}
+      try{
+        const text=await yandexStt(audio,{cfg:YANDEX,
+          sampleRateHertz:Number(url.searchParams.get("rate"))||16000});
+        return json(res,200,{text});
+      }catch(e){
+        const err=dialogueError(e);
+        return json(res,err.status,{error:err.error,message:err.message});
+      }
+    }
+
+    if(req.method==="POST"&&url.pathname==="/api/voice/tts"){
+      if(!YANDEX.ready)return json(res,503,{error:"voice_not_configured",message:"Нужны YANDEX_API_KEY и YANDEX_FOLDER_ID"});
+      const auth=authorize(req);if(auth.error)return json(res,auth.error.status,auth.error);
+      const rl=voiceLimiter.check(auth.user?.id?`tg:${auth.user.id}`:`ip:${clientKey(req)}`);
+      if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return json(res,429,{error:"rate_limited",retry_after:rl.retryAfterSec})}
+      let body={};
+      try{body=await readJsonObject(req,20000)}catch(e){return bodyError(res,e)}
+      const text=String(body.text||"").trim();
+      if(!text)return json(res,400,{error:"text_required"});
+      try{
+        const mp3=await yandexTts(text,{cfg:YANDEX,voice:body.voice||CONCIERGE.voice});
+        res.writeHead(200,{"Content-Type":"audio/mpeg","Cache-Control":"no-store",
+          "Content-Length":String(mp3.length),...corsHeaders(req)});
+        return res.end(mp3);
+      }catch(e){
+        const err=dialogueError(e);
+        return json(res,err.status,{error:err.error,message:err.message});
+      }
+    }
 
     if(req.method==="GET"&&url.pathname==="/api/cover.svg"){
       const args=coverFromQuery(url);
@@ -620,6 +731,10 @@ const server=http.createServer(async(req,res)=>{
       return json(res,200,{
         ok:true,
         text_ai_ready:AI_READY,
+        ai_provider:AI_PROVIDER,
+        agent:CONCIERGE.name,
+        yandex:yandexStatus(),
+        voice_provider:YANDEX.ready?"yandex-speechkit":null,
         text_ai_model:TEXT_MODEL,
         telegram_auth:TG_REQUIRED,
         env_skipped_lines:ENV_SKIPPED,
@@ -632,7 +747,7 @@ const server=http.createServer(async(req,res)=>{
     }
 
     if(req.method==="POST"&&url.pathname==="/api/dialogue"){
-      if(!AI_READY)return json(res,503,{error:"ANTHROPIC_API_KEY not set",fallback:true});
+      if(!AI_READY)return json(res,503,{error:"ai_not_configured",message:"Нужен ключ: ANTHROPIC_API_KEY или пара YANDEX_API_KEY + YANDEX_FOLDER_ID",fallback:true});
       const auth=authorize(req);if(auth.error)return json(res,auth.error.status,auth.error);
       const rl=dialogueLimiter.check(auth.user?.id?`tg:${auth.user.id}`:`ip:${clientKey(req)}`);
       if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return json(res,429,{error:"rate_limited",message:"Слишком много сообщений, подождите немного",retry_after:rl.retryAfterSec})}
@@ -642,7 +757,7 @@ const server=http.createServer(async(req,res)=>{
       if(!message)return json(res,400,{error:"message_required"});
       const me=identify(req,auth);
       try{
-        return json(res,200,await runDialogue(message,body.previous_response_id||null,{...(body.context||{}),user_id:me?.id||null}));
+        return json(res,200,await runAgent(message,body.previous_response_id||null,{...(body.context||{}),user_id:me?.id||null},null,null,{voice:Boolean(body.voice)}));
       }catch(e){
         console.error("dialogue:",e);
         const err=dialogueError(e);
@@ -721,7 +836,7 @@ const server=http.createServer(async(req,res)=>{
     }
 
     if(req.method==="POST"&&url.pathname==="/api/dialogue/stream"){
-      if(!AI_READY)return json(res,503,{error:"ANTHROPIC_API_KEY not set",fallback:true});
+      if(!AI_READY)return json(res,503,{error:"ai_not_configured",message:"Нужен ключ: ANTHROPIC_API_KEY или пара YANDEX_API_KEY + YANDEX_FOLDER_ID",fallback:true});
       const auth=authorize(req);if(auth.error)return json(res,auth.error.status,auth.error);
       const rl=dialogueLimiter.check(auth.user?.id?`tg:${auth.user.id}`:`ip:${clientKey(req)}`);
       if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return json(res,429,{error:"rate_limited",message:"Слишком много сообщений, подождите немного",retry_after:rl.retryAfterSec})}
@@ -739,8 +854,8 @@ const server=http.createServer(async(req,res)=>{
       req.on("close",onClose);
       const me=identify(req,auth);
       try{
-        const result=await runDialogue(message,body.previous_response_id||null,
-          {...(body.context||{}),user_id:me?.id||null},emit,abort.signal);
+        const result=await runAgent(message,body.previous_response_id||null,
+          {...(body.context||{}),user_id:me?.id||null},emit,abort.signal,{voice:Boolean(body.voice)});
         emit("done",result);
       }catch(e){
         console.error("dialogue/stream:",e);
@@ -813,7 +928,8 @@ if(process.env.NODE_ENV!=="test"){
     console.log(`FREE v18: http://${HOST}:${PORT}`);
     console.log("Telegram auth: "+(TG_REQUIRED?"required (TELEGRAM_BOT_TOKEN set)":"off"));
     console.log("Live providers: KudaGo + Timepad + OpenStreetMap/Overpass" + (process.env.DGIS_API_KEY||process.env.TWOGIS_API_KEY?" + 2GIS":""));
-    console.log("Text AI: "+(AI_READY?`Claude ${TEXT_MODEL} ready`:"scripted fallback (ANTHROPIC_API_KEY not set)"));
+    console.log("Диалог: "+(AI_PROVIDER==="claude"?`Claude ${TEXT_MODEL}`:AI_PROVIDER==="yandex"?`YandexGPT, агент ${CONCIERGE.name}`:"сценарный запасной режим (ключей нет)"));
+  console.log("Речь: "+(YANDEX.ready?`SpeechKit, голос ${YANDEX.voice}`:"распознавание в браузере"));
     console.log("Voice: browser speech recognition → text dialogue");
   });
   startWarmup();
