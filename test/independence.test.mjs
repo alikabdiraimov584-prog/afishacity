@@ -99,6 +99,7 @@ test("образ контейнера копирует все модули, ко
     assert.deepEqual(missing,[],`в образ не попадут: ${missing.join(", ")}`);
   }
   assert.ok(/VOLUME .*\/app\/data/.test(docker),"каталог данных должен быть томом");
+  assert.ok(/^COPY scripts /m.test(docker),"сборщик снимка должен попасть в образ");
   const compose=readFileSync(new URL("docker-compose.yml",root),"utf8");
   assert.ok(/\/app\/data/.test(compose),"том с данными не подключён");
 });

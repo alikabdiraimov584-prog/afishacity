@@ -1,6 +1,7 @@
 import {parseHours,moscowNow} from "./hours.mjs";
 
 import {CATEGORIES,SERVICE_TAGS} from "./categories.mjs";
+import {tagTitle as tagRu} from "./osm_tags.mjs";
 
 function norm(s=""){return String(s).toLowerCase().replace(/ё/g,"е").replace(/<[^>]*>/g," ").replace(/[^a-zа-я0-9\s]/gi," ").replace(/\s+/g," ").trim()}
 function words(s){const stop=new Set(["куда","сходить","пойти","хочу","хочется","сегодня","завтра","вечером","после","москва","москве","очень","сильно","много","какой","какое","что","для","чтобы","можно","найди","место"]);return norm(s).split(" ").filter(w=>w.length>3&&!stop.has(w))}
@@ -22,15 +23,9 @@ for(const c of CATEGORIES){
   const cur=SYN[c.tag]||[];
   if(!cur.some(x=>x instanceof RegExp&&String(x)===String(c.re)))SYN[c.tag]=[...cur,c.re];
 }
-// В карточке показываем русское название категории, а не служебный тег:
-// у справочника первый поисковый запрос как раз и есть такое название.
-const TAG_RU=new Map(CATEGORIES.map(c=>[c.tag,(c.queries||[])[0]||c.tag]));
-for(const [k,v] of Object.entries({nightlife:"ночная жизнь",outdoors:"на воздухе",music:"музыка",culture:"культура",
-  art:"выставки",theatre:"театр",comedy:"стендап",jazz:"джаз",rock:"рок",science:"наука",festival:"фестиваль",
-  lecture:"лекция",workshop:"мастер-класс",experience:"впечатления",friends:"для компании",beauty:"красота"}))TAG_RU.set(k,v);
-function tagRu(t){return TAG_RU.get(t)||t}
-// Строковые синонимы сравнивались через includes(), поэтому «клубнику» попадала
-// в ночные клубы, а «джакузи» — в медицину. Границы слова для кириллицы задаём
+// Русские названия категорий живут в osm_tags.mjs — ими пользуется и карточка.
+// Строковые синонимы сравнивались через includes(), поэтому «клубнику» относило
+// к ночным клубам, а «джакузи» — к медицине. Границы слова для кириллицы задаём
 // явно: \b в JS работает только для латиницы. До трёх букв окончания допускаем,
 // чтобы «кофейня» по-прежнему находилась по «кофе».
 const TERM_RE=new Map();

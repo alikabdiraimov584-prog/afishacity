@@ -87,6 +87,22 @@ sleep 2
 curl -fsS http://127.0.0.1:3000/api/health >/dev/null || { journalctl -u free -n 30 --no-pager; die "сервис не поднялся, лог выше"; }
 echo "   сервис отвечает на 127.0.0.1:3000"
 
+say "Снимок мест: таймер обновления"
+cp "$DIR/deploy/free-snapshot.service" /etc/systemd/system/free-snapshot.service
+cp "$DIR/deploy/free-snapshot.timer" /etc/systemd/system/free-snapshot.timer
+systemctl daemon-reload
+systemctl enable -q free-snapshot.timer
+systemctl start free-snapshot.timer
+if [ -s "$DIR/data/osm_moscow.db" ]; then
+  echo "   снимок на месте: $(du -h "$DIR/data/osm_moscow.db" | cut -f1)"
+else
+  # Первая сборка идёт десятки минут, поэтому запускаем её фоном: сервер уже
+  # отвечает, просто места пока ищутся через Overpass.
+  echo "   снимка ещё нет — собираю в фоне, места пока ищутся напрямую"
+  echo "   следить: journalctl -u free-snapshot -f"
+  systemctl start --no-block free-snapshot.service || true
+fi
+
 say "nginx для $DOMAIN"
 if ss -ltnp | grep -q ':80 .*apache2'; then systemctl disable -q --now apache2; fi
 # Шаблон ниже перезапишет конфиг вместе с блоком SSL, который дописал certbot.

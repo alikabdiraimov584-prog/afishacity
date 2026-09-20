@@ -1,0 +1,20 @@
+# Пересборка локального снимка мест Москвы. Запускается таймером, не сервером:
+# пользовательский запрос никогда не ждёт выгрузку города.
+[Unit]
+Description=FREE: пересборка снимка мест из OpenStreetMap
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=free
+WorkingDirectory=/opt/afishacity
+ExecStart=/usr/bin/node --no-warnings=ExperimentalWarning scripts/build_osm_snapshot.mjs
+# Сборка идёт десятки минут и не должна висеть вечно.
+TimeoutStartSec=3600
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/afishacity/data

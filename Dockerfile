@@ -6,6 +6,8 @@ RUN npm ci --omit=dev
 # и контейнер падал при старте с ERR_MODULE_NOT_FOUND.
 COPY *.mjs ./
 COPY public ./public
+# Сборщик снимка запускается в том же образе по расписанию.
+COPY scripts ./scripts
 # Данные (SQLite, карточки планов, файловый кеш) живут в томе, иначе стираются
 # при каждой пересборке образа.
 RUN mkdir -p /app/data && chown -R node:node /app

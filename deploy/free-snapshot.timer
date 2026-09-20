@@ -1,0 +1,13 @@
+# Раз в сутки ночью, со случайным разбросом: не бьём по зеркалам Overpass
+# в одну и ту же секунду со всех установок.
+[Unit]
+Description=FREE: ежесуточное обновление снимка мест
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+RandomizedDelaySec=3600
+Persistent=true
+Unit=free-snapshot.service
+
+[Install]
+WantedBy=timers.target

@@ -3,6 +3,10 @@ import {fileURLToPath} from "node:url";
 import {createCache,withBreaker,breakerStatus} from "./cache.mjs";
 
 import {CATEGORIES,SERVICE_TAGS,categoryTags} from "./categories.mjs";
+import {structuralTags,placeTitle} from "./osm_tags.mjs";
+import {openSnapshot} from "./osm_snapshot.mjs";
+import {statSync} from "node:fs";
+export {structuralTags};
 
 const MOSCOW_POINT = "37.6173,55.7558";
 const TIMEOUT_MS = 6500;
@@ -103,28 +107,7 @@ export function buildSearchPlan(args={}){
   };
 }
 
-// Соответствие структурных полей OSM нашим категориям — собирается из самих
-// фильтров справочника, поэтому новая категория подхватывается автоматически.
-const OSM_TAG_MAP=(()=>{
-  const m=new Map();
-  for(const c of CATEGORIES)for(const f of c.osm||[])
-    for(const [,key,op,vals] of f.matchAll(/\["([a-z:_]+)"([=~])"([^"]+)"\]/g)){
-      if(!/^[a-z_|]+$/.test(vals))continue;               // regex по имени — не категория
-      // Одно значение заявляют несколько категорий (hairdresser — и barber, и
-      // beauty), поэтому копим все, иначе последняя затирает предыдущие.
-      for(const v of (op==="~"?vals.split("|"):[vals])){
-        const k=`${key}=${v}`;
-        m.set(k,uniq([...(m.get(k)||[]),c.tag]));
-      }
-    }
-  return m;
-})();
-// Категория места по данным источника, а не по тексту названия.
-export function structuralTags(fields){
-  const out=[];
-  for(const [k,v] of Object.entries(fields||{}))out.push(...(OSM_TAG_MAP.get(`${k}=${v}`)||[]));
-  return uniq(out);
-}
+// Структурные теги OSM живут в osm_tags.mjs: ими пользуется и снимок города.
 // Рубрики источника (KudaGo, Timepad, 2GIS) — тоже структурные данные.
 function rubricTags(names){return uniq(categoryTags(norm((names||[]).filter(Boolean).join(" "))))}
 
@@ -321,10 +304,34 @@ export async function search2GIS(plan,key){
 
 const MOSCOW_BBOX = "55.49,37.30,55.96,37.99";
 const OVERPASS_TIMEOUT_S=12;
+// Версия формата карточки. Поднимайте её, когда меняется то, что кладут
+// normalize*-функции: это разом обесценивает файловый кеш.
+const ITEM_SCHEMA=2;
 // Центр — примерно кольцо радиусом 5 км вокруг Кремля: Садовое и ближние районы.
 const CENTER_BBOX = "55.71,37.55,55.80,37.69";
 export function wantsCenter(area){return /центр/.test(String(area||"").toLowerCase())}
-const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
+// Overpass — не один сервис, а несколько независимых зеркал одного API.
+// С единственным URL мы просто меняли зависимость от агрегатора на зависимость
+// от overpass-api.de: он регулярно перегружен и отвечает 429/504.
+export const OVERPASS_MIRRORS=String(process.env.OVERPASS_URLS||
+  "https://overpass-api.de/api/interpreter,https://overpass.kumi.systems/api/interpreter,https://overpass.private.coffee/api/interpreter")
+  .split(",").map(x=>x.trim()).filter(Boolean);
+// Зеркало, ответившее последним успешно, пробуем первым: не гоняем по кругу зря.
+let overpassPreferred=0;
+export async function overpassQuery(query,{timeoutMs,fetchJsonImpl=fetchJson}={}){
+  const order=OVERPASS_MIRRORS.map((_,i)=>OVERPASS_MIRRORS[(overpassPreferred+i)%OVERPASS_MIRRORS.length]);
+  const body=new URLSearchParams({data:query}).toString();
+  let last=null;
+  for(const url of order){
+    try{
+      const d=await fetchJsonImpl(url,{method:"POST",
+        headers:{"Content-Type":"application/x-www-form-urlencoded;charset=UTF-8"},body,timeoutMs});
+      overpassPreferred=OVERPASS_MIRRORS.indexOf(url);
+      return d;
+    }catch(e){last=e}
+  }
+  throw last||new Error("нет доступных зеркал Overpass");
+}
 
 // Фильтры OpenStreetMap — из того же справочника.
 const OSM_RULES = CATEGORIES.filter(c=>c.osm&&c.osm.length).map(c=>({re:c.re,filters:c.osm,tag:c.tag}));
@@ -368,7 +375,9 @@ function normalizeOsmItem(x,plan){
   };
   return {
     id:`osm:${x.type}:${x.id}`,provider:"OpenStreetMap",live:true,kind:"venue",name,organizer:t.brand||name,
-    cat:cats[amenity]||(/караоке|karaoke/i.test(text)?"Караоке":"Заведение"),
+    // Раньше всё, кроме десятка знакомых значений, называлось «Заведение».
+    // Теперь название берётся из справочника по структурному тегу места.
+    cat:cats[amenity]||(/караоке|karaoke/i.test(text)?"Караоке":placeTitle(t))||"Заведение",
     tags:inferTags(text),cat_tags:structuralTags(t),area:osmAddress(t),metro:"",
     // Эти теги приходят в том же ответе и раньше терялись: из них берётся
     // фотография места без обращения к агрегатору.
@@ -396,7 +405,42 @@ export function osmFilters(plan){
   }
   return plan.placeIntent?uniq(filters):[];
 }
-export async function searchOSM(plan){
+// Локальный снимок города: если он есть, поиск мест идёт из него, а Overpass
+// остаётся запасным путём. Файл подменяется целиком при пересборке, поэтому
+// следим за временем изменения и переоткрываем — иначе сервер продолжал бы
+// читать удалённый файл по старому дескриптору до перезапуска.
+const SNAPSHOT_FILE=process.env.OSM_SNAPSHOT||join(fileURLToPath(new URL(".",import.meta.url)),"data","osm_moscow.db");
+let snapCache={handle:null,mtime:0,checked:0};
+export function getSnapshot({now=Date.now,file=SNAPSHOT_FILE}={}){
+  const t=now();
+  if(t-snapCache.checked<60_000)return snapCache.handle;
+  snapCache.checked=t;
+  let mtime=0;
+  try{mtime=statSync(file).mtimeMs}catch{mtime=0}
+  if(mtime===snapCache.mtime)return snapCache.handle;
+  if(snapCache.handle)try{snapCache.handle.close()}catch{}
+  snapCache={handle:mtime?openSnapshot(file):null,mtime,checked:t};
+  return snapCache.handle;
+}
+export function snapshotStatus(){
+  const h=getSnapshot();
+  if(!h)return {ready:false};
+  return {ready:true,places:h.places,built_at:new Date(h.builtAt).toISOString(),
+    age_hours:Math.round(h.ageMs()/36e5),stale:h.stale()};
+}
+
+export async function searchOSM(plan,opts={}){
+  // opts.snapshot === null отключает снимок (тесты живого пути).
+  const snap=opts.snapshot!==undefined?opts.snapshot:getSnapshot();
+  if(snap){
+    try{
+      const els=snap.search(plan,{center:wantsCenter(plan.area),limit:80});
+      const items=els.map(x=>normalizeOsmItem(x,plan)).filter(x=>x.name!=="Заведение");
+      // Снимок ответил — в сеть не идём вовсе. Пусто в снимке ещё не значит
+      // «пусто в городе», поэтому на этот случай ниже остаётся Overpass.
+      if(items.length)return {items,errors:[],disabled:false,from_snapshot:true};
+    }catch(e){/* повреждённый снимок не должен мешать живому поиску */}
+  }
   const filters=osmFilters(plan);
   if(!filters.length) return {items:[],errors:[],disabled:false};
   // Просят центр — сужаем область поиска, иначе Overpass отдаёт всю Москву.
@@ -405,13 +449,7 @@ export async function searchOSM(plan){
   // всегда падали по таймауту и накручивали предохранителю отказы. Сводим вместе.
   const query=`[out:json][timeout:${OVERPASS_TIMEOUT_S}];(${filters.map(s=>s.replaceAll("{{bbox}}",bbox)).join("")});out center tags 80;`;
   try{
-    const body=new URLSearchParams({data:query}).toString();
-    const d=await fetchJson(OVERPASS_URL,{
-      method:"POST",
-      headers:{"Content-Type":"application/x-www-form-urlencoded;charset=UTF-8"},
-      body,
-      timeoutMs:(OVERPASS_TIMEOUT_S+2)*1000
-    });
+    const d=await overpassQuery(query,{timeoutMs:(OVERPASS_TIMEOUT_S+2)*1000});
     const items=(d.elements||[]).map(x=>normalizeOsmItem(x,plan)).filter(x=>x.name!=="Заведение");
     return {items,errors:[],disabled:false};
   }catch(e){
@@ -453,7 +491,9 @@ export function getLiveCache(){return liveCache||(liveCache=createCache({ttlMs:L
 // Ключ кеша — только то, что реально влияет на запрос к провайдеру (и plan.tags, которые попадают в карточки).
 function cacheKeyFor(name,plan,hasKey){
   // Область входит в ключ: у центра и всей Москвы результаты разные.
-  const base={t:plan.tags,c:wantsCenter(plan.area)};
+  // Версия формата — тоже: файловый кеш переживает перезапуск, и после обновления
+  // сервер иначе продолжал бы отдавать карточки, собранные прежним кодом.
+  const base={v:ITEM_SCHEMA,t:plan.tags,c:wantsCenter(plan.area)};
   const part={
     kudago:{e:plan.eventQueries.slice(0,3),p:plan.placeQueries.slice(0,3),f:plan.freeOnly,d:plan.targetDate},
     timepad:{e:plan.eventQueries.length?plan.eventQueries.slice(0,3):[plan.coreQuery||""],d:plan.targetDate,f:plan.freeOnly,m:plan.maxPrice},
