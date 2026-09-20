@@ -28,7 +28,8 @@ const TG_BOT_TOKEN=process.env.TELEGRAM_BOT_TOKEN||"";
 const TG_REQUIRED=Boolean(TG_BOT_TOKEN);
 const dialogueLimiter=createRateLimiter({limit:Number(process.env.DIALOGUE_RATE_LIMIT||40),windowMs:10*60*1000});
 const shareLimiter=createRateLimiter({limit:Number(process.env.SHARE_RATE_LIMIT||20),windowMs:10*60*1000});
-setInterval(()=>{try{dialogueLimiter.sweep();shareLimiter.sweep()}catch(e){console.error("уборка лимитов:",e&&e.message||e)}},5*60*1000).unref();
+const imageLimiter=createRateLimiter({limit:Number(process.env.IMAGE_RATE_LIMIT||240),windowMs:10*60*1000});
+setInterval(()=>{try{dialogueLimiter.sweep();shareLimiter.sweep();imageLimiter.sweep()}catch(e){console.error("уборка лимитов:",e&&e.message||e)}},5*60*1000).unref();
 // X-Forwarded-For присылает клиент, и подделка заголовка обнуляла лимит запросов
 // вместе с защитой ключа Claude. Доверяем ему, только когда соединение пришло от
 // собственного обратного прокси (TRUST_PROXY, по умолчанию — петля).
@@ -704,6 +705,10 @@ const server=http.createServer(async(req,res)=>{
     }
 
     if(req.method==="GET"&&url.pathname==="/api/img"){
+      // Прокси ходит во внешнюю сеть по адресу из запроса, поэтому он ограничен
+      // так же, как остальные дорогие маршруты: иначе это бесплатный загрузчик.
+      const rl=imageLimiter.check(`ip:${clientKey(req)}`);
+      if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return send(res,429,"too many requests")}
       return proxyImage(res,url.searchParams.get("u")||"");
     }
 

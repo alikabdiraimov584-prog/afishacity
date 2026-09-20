@@ -29,39 +29,66 @@ function toMin(h,m){const v=+h*60+ +m;return v>1440?null:v}
 function fmt(min){const v=((min%1440)+1440)%1440;return `${String(Math.floor(v/60)).padStart(2,"0")}:${String(v%60).padStart(2,"0")}`}
 
 // Правило: {days:Set<0..6>, ranges:[{start,end}], off:boolean}; end>start всегда, ночь — end>1440.
+const HOLIDAY_RE=/(?<![a-z])(ph|sh|easter)(?![a-z])|(?<![a-z])(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)(?![a-z])|(?<![а-я])(праздничн|нерабочи)/;
 function parseRule(text){
   let s=text;for(const [re,abbr] of RU_DAYS)s=s.replace(re,abbr);
-  s=s.replace(/\b(ph|sh)\b\s*(off)?/g," ");
+  // «PH 12:00-18:00» и «Dec 25 off» — про праздники и конкретные даты, а не про
+  // обычную неделю. Без дней недели такое правило раньше применялось ко всем семи
+  // дням: «Dec 25 off» закрывал заведение навсегда.
+  const holiday=HOLIDAY_RE.test(s);
+  s=s.replace(/(?<![a-z])(ph|sh)(?![a-z])\s*(off)?/g," ");
   const days=new Set();
   s=s.replace(DAY_RANGE_RE,(_,a,b)=>{let i=DAY_INDEX[a];const j=DAY_INDEX[b];for(let k=0;k<7;k++){days.add(i);if(i===j)break;i=(i+1)%7}return " "});
   s=s.replace(DAY_RE,(_,a)=>{days.add(DAY_INDEX[a]);return " "});
+  if(!days.size&&holiday)return null;                       // правило о праздниках без дней недели
   const all=days.size?days:new Set([0,1,2,3,4,5,6]);
-  if(/24\/7/.test(s))return {days:all,ranges:[{start:0,end:1440}],off:false};
+  const explicitDays=days.size>0;
   const ranges=[];
   for(const m of s.matchAll(TIME_RANGE_RE)){
     const a=toMin(m[1],m[2]),b=toMin(m[3],m[4]);if(a===null||b===null)continue;
     ranges.push({start:a,end:b<=a?b+1440:b});
   }
   if(!ranges.length){
-    if(/\boff\b/.test(s))return {days:all,ranges:[],off:true};
+    // Круглосуточно — только если конкретных часов в правиле нет: иначе фраза
+    // «без перерыва и выходных» рядом с интервалом затирала сам интервал.
+    if(/24\/7/.test(s))return {days:all,ranges:[{start:0,end:1440}],off:false,explicitDays};
+    if(/(?<![a-z])off(?![a-z])/.test(s))return {days:all,ranges:[],off:true,explicitDays};
     return null;
   }
-  return {days:all,ranges,off:false};
+  return {days:all,ranges,off:false,explicitDays};
 }
 
+// Запятая в расписании значит два разных вещи: «Sa,Su 11:00-23:00» — перечисление
+// дней внутри одного правила, «пн-чт 12:00-00:00, пт-сб 12:00-06:00» — граница
+// между правилами. Отличить их по регэкспу нельзя, поэтому идём слева направо:
+// правило закончилось, только когда в нём уже есть время или «off».
+const RULE_DONE=/\d{1,2}[:.]\d{2}\s*-\s*\d{1,2}[:.]\d{2}|24\/7|(?<![a-z])off(?![a-z])/;
 function splitRules(text){
-  // Разделители правил: «;» либо запятая перед днём недели («пн-чт 12:00-00:00, пт-сб 12:00-06:00»).
-  return text.split(/;|,(?=\s*(?:mo|tu|we|th|fr|sa|su|пн|вт|ср|чт|пт|сб|вс|понедельник|вторник|сред|четверг|пятниц|суббот|воскресень)\b)/).map(x=>x.trim()).filter(Boolean);
+  const out=[];
+  for(const chunk of String(text).split(";")){
+    let buf="";
+    for(const part of chunk.split(",")){
+      if(RULE_DONE.test(buf)){out.push(buf.trim());buf=part}
+      else buf=buf?buf+","+part:part;
+    }
+    if(buf.trim())out.push(buf.trim());
+  }
+  return out.filter(Boolean);
 }
 
 export function parseSchedule(text){
   const n=normalizeText(text);if(!n)return null;
-  const week=Array.from({length:7},()=>null);let any=false;
+  const week=Array.from({length:7},()=>null);let any=false,explicit=false;
   for(const part of splitRules(n)){
     const rule=parseRule(part);if(!rule)continue;any=true;
+    if(rule.explicitDays)explicit=true;
     for(const d of rule.days)week[d]=rule.off?[]:rule.ranges;
   }
   if(!any)return null;
+  // В opening_hours не упомянутый день означает «закрыто». Раньше он оставался
+  // «неизвестно», и заведение, работающее только по будням, в субботу выглядело
+  // как место с неизвестными часами.
+  if(explicit)for(let d=0;d<7;d++)if(week[d]===null)week[d]=[];
   return week; // week[d] = массив интервалов, [] = выходной, null = неизвестно
 }
 
