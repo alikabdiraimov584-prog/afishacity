@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FREE — предпросмотр приложения</title>
+<script>
+// На телефоне рамка не нужна: открываем само приложение.
+if(matchMedia("(max-width:700px)").matches){location.replace((new URLSearchParams(location.search).get("src")||"index.html"))}
+</script>
+<style>
+:root{--bg:#e6e7ea;--ink:#111214;--muted:#727780;--phone:#101114;--screen:#f6f6f4}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1b1c20;--ink:#f2f2f2;--muted:#9a9ea6}}
+:root[data-theme="dark"]{--bg:#1b1c20;--ink:#f2f2f2;--muted:#9a9ea6}
+html,body{height:100%}
+body{margin:0;background:radial-gradient(900px 600px at 50% 0%,rgba(255,255,255,.5),transparent),var(--bg);color:var(--ink);font-family:-apple-system,Inter,"Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:16px;box-sizing:border-box}
+.phone{width:430px;max-width:100%;height:min(932px,calc(100vh - 80px));background:var(--phone);border-radius:58px;padding:13px;box-shadow:0 40px 90px rgba(0,0,0,.35),inset 0 0 0 2px #2a2b30;position:relative;box-sizing:border-box}
+.phone::before,.phone::after{content:"";position:absolute;background:#2a2b30;border-radius:3px}
+.phone::before{left:-3px;top:150px;width:3px;height:34px;box-shadow:0 52px 0 #2a2b30,0 108px 0 #2a2b30}
+.phone::after{right:-3px;top:210px;width:3px;height:70px}
+.screen{height:100%;border-radius:46px;overflow:hidden;background:var(--screen);display:flex;flex-direction:column;position:relative}
+.status{height:52px;display:flex;align-items:center;justify-content:space-between;padding:12px 30px 0;font-size:15px;font-weight:600;color:#111;position:relative;flex:0 0 auto}
+.island{position:absolute;left:50%;top:11px;transform:translateX(-50%);width:122px;height:36px;background:#101114;border-radius:20px}
+.status .icons{display:flex;gap:6px;align-items:center;font-size:12px}
+.status .icons i{display:inline-block;width:25px;height:12px;border:1.5px solid #111;border-radius:4px;position:relative;opacity:.9}
+.status .icons i::after{content:"";position:absolute;left:2px;top:2px;bottom:2px;width:16px;background:#111;border-radius:2px}
+iframe{border:0;flex:1 1 auto;width:100%;display:block;background:var(--screen)}
+.home{flex:0 0 auto;height:26px;display:flex;align-items:center;justify-content:center}
+.home i{width:134px;height:5px;border-radius:3px;background:#111;opacity:.85}
+.caption{font-size:12px;color:var(--muted);text-align:center;max-width:430px;line-height:1.5}
+.caption a{color:inherit}
+</style>
+</head>
+<body>
+<div class="phone"><div class="screen">
+  <div class="status"><span>9:41</span><div class="island"></div><div class="icons">●●●● <i></i></div></div>
+  <iframe id="app" title="FREE" allow="geolocation; clipboard-write; microphone"></iframe>
+  <div class="home"><i></i></div>
+</div></div>
+<div class="caption">Предпросмотр интерфейса в размере iPhone. Голос, геолокация и системный шаринг в рамке работают ограниченно: полный набор доступен только в нативной сборке. <a id="direct" href="index.html">Открыть без рамки</a></div>
+<script>
+const src=new URLSearchParams(location.search).get("src")||"index.html";
+document.getElementById("app").src=src;document.getElementById("direct").href=src;
+</script>
+</body>
+</html>
