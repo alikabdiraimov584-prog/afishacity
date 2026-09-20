@@ -85,3 +85,20 @@ test("имя агрегатора не подставляется месту к�
   assert.equal(card.provider,"KudaGo");
   assert.equal(card.aggregator_name,"KudaGo");
 });
+
+test("образ контейнера копирует все модули, которые импортирует код", async () => {
+  const {readFileSync,readdirSync}=await import("node:fs");
+  const root=new URL("../",import.meta.url);
+  const modules=readdirSync(root).filter(f=>f.endsWith(".mjs"));
+  const docker=readFileSync(new URL("Dockerfile",root),"utf8");
+  // Перечисление файлов в COPY уже однажды разошлось с кодом, и контейнер
+  // падал при старте. Либо копируем шаблоном, либо перечисляем всё.
+  const copiesAll=/^COPY \*\.mjs /m.test(docker);
+  if(!copiesAll){
+    const missing=modules.filter(m=>!docker.includes(m));
+    assert.deepEqual(missing,[],`в образ не попадут: ${missing.join(", ")}`);
+  }
+  assert.ok(/VOLUME .*\/app\/data/.test(docker),"каталог данных должен быть томом");
+  const compose=readFileSync(new URL("docker-compose.yml",root),"utf8");
+  assert.ok(/\/app\/data/.test(compose),"том с данными не подключён");
+});

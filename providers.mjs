@@ -48,6 +48,14 @@ const ROCK_RE=/(?<![а-я])рок(?![а-я])|(?<![a-z])rock/;
 const ART_RE=/выстав|искусств|галере|(?<![а-я])арт(?![а-я])/;
 const STOP=new Set(["куда","сходить","пойти","хочу","хочется","сегодня","завтра","вечером","после","москва","москве","москву","очень","сильно","много","какой","какое","какие","что","чтобы","можно","найди","найти","место","места","нибудь","что-нибудь","есть","нужно","надо","давай","давайте","посоветуй","подскажи","рядом","около","недалеко","меня","нас","мне","мы","нам","компанией","человек"]);
 
+// Пустая выдача при наличии ошибок — это отказ источника, а не «ничего не нашлось».
+// Предохранитель считает только брошенные исключения, поэтому такой случай надо
+// бросать: иначе провайдер молча отдаёт ноль карточек и никогда не отключается.
+function providerResult(items,errors,extra={}){
+  if(!items.length&&errors.length)throw new Error(errors[0]);
+  return {items,errors,...extra};
+}
+
 async function fetchJson(url,opts={}){
   const ctrl=new AbortController();const t=setTimeout(()=>ctrl.abort(),opts.timeoutMs||TIMEOUT_MS);
   try{
@@ -198,8 +206,14 @@ export async function searchKudago(plan){
       try{const d=await fetchJson(u);for(const x of (d.results||[]))ids.push(x.id)}catch(e){errors.push(`KudaGo events: ${e.message}`)}
     }
     const unique=uniq(ids).slice(0,18);
-    const details=await Promise.all(unique.map(id=>kudagoEventDetail(id).catch(e=>null)));
-    for(const e of details)if(e){const x=normalizeKudagoEvent(e,plan);if(x.date_start||x.times.length)out.push(x)}
+    const details=await Promise.all(unique.map(id=>kudagoEventDetail(id).catch(e=>({__error:e.message}))));
+    // Отказ каждой детали раньше проглатывался: провайдер отдавал ноль карточек
+    // без единой ошибки, поэтому предохранитель не срабатывал и деградация
+    // источника выглядела как «ничего не нашлось».
+    const failed=details.filter(x=>x&&x.__error);
+    if(unique.length&&failed.length===unique.length)throw new Error(`детали недоступны (${failed[0].__error})`);
+    if(failed.length)errors.push(`KudaGo events: ${failed.length} из ${unique.length} не загрузились`);
+    for(const e of details)if(e&&!e.__error){const x=normalizeKudagoEvent(e,plan);if(x.date_start||x.times.length)out.push(x)}
   }catch(e){errors.push(`KudaGo events: ${e.message}`)}
   try{
     const ids=[];
@@ -207,10 +221,14 @@ export async function searchKudago(plan){
       const u=new URL("https://kudago.com/public-api/v1.4/search/");u.searchParams.set("q",q);u.searchParams.set("location","msk");u.searchParams.set("ctype","place");u.searchParams.set("page_size","25");
       try{const d=await fetchJson(u);for(const x of (d.results||[]))if(!x.is_closed)ids.push(x.id)}catch(e){errors.push(`KudaGo places: ${e.message}`)}
     }
-    const details=await Promise.all(uniq(ids).slice(0,22).map(id=>kudagoPlaceDetail(id).catch(e=>null)));
-    for(const p of details)if(p&&!p.is_closed)out.push(normalizeKudagoPlace(p,plan));
+    const wanted=uniq(ids).slice(0,22);
+    const details=await Promise.all(wanted.map(id=>kudagoPlaceDetail(id).catch(e=>({__error:e.message}))));
+    const failed=details.filter(x=>x&&x.__error);
+    if(wanted.length&&failed.length===wanted.length)throw new Error(`детали недоступны (${failed[0].__error})`);
+    if(failed.length)errors.push(`KudaGo places: ${failed.length} из ${wanted.length} не загрузились`);
+    for(const p of details)if(p&&!p.__error&&!p.is_closed)out.push(normalizeKudagoPlace(p,plan));
   }catch(e){errors.push(`KudaGo places: ${e.message}`)}
-  return {items:out,errors};
+  return providerResult(out,errors);
 }
 
 function timepadBounds(plan){
@@ -248,7 +266,7 @@ export async function searchTimepad(plan){
       for(const e of (d.values||[]))out.push(normalizeTimepadEvent(e,plan));
     }catch(e){errors.push(`Timepad: ${e.message}`)}
   }
-  return {items:out,errors};
+  return providerResult(out,errors);
 }
 
 
@@ -397,7 +415,7 @@ export async function searchOSM(plan){
     const items=(d.elements||[]).map(x=>normalizeOsmItem(x,plan)).filter(x=>x.name!=="Заведение");
     return {items,errors:[],disabled:false};
   }catch(e){
-    return {items:[],errors:[`OpenStreetMap/Overpass: ${e.message}`],disabled:false};
+    return providerResult([],[`OpenStreetMap/Overpass: ${e.message}`],{disabled:false});
   }
 }
 

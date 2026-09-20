@@ -30,7 +30,8 @@ const TG_REQUIRED=Boolean(TG_BOT_TOKEN);
 const dialogueLimiter=createRateLimiter({limit:Number(process.env.DIALOGUE_RATE_LIMIT||40),windowMs:10*60*1000});
 const shareLimiter=createRateLimiter({limit:Number(process.env.SHARE_RATE_LIMIT||20),windowMs:10*60*1000});
 const imageLimiter=createRateLimiter({limit:Number(process.env.IMAGE_RATE_LIMIT||240),windowMs:10*60*1000});
-setInterval(()=>{try{dialogueLimiter.sweep();shareLimiter.sweep();imageLimiter.sweep()}catch(e){console.error("уборка лимитов:",e&&e.message||e)}},5*60*1000).unref();
+const profileLimiter=createRateLimiter({limit:Number(process.env.PROFILE_RATE_LIMIT||120),windowMs:10*60*1000});
+setInterval(()=>{try{dialogueLimiter.sweep();shareLimiter.sweep();imageLimiter.sweep();profileLimiter.sweep()}catch(e){console.error("уборка лимитов:",e&&e.message||e)}},5*60*1000).unref();
 // X-Forwarded-For присылает клиент, и подделка заголовка обнуляла лимит запросов
 // вместе с защитой ключа Claude. Доверяем ему, только когда соединение пришло от
 // собственного обратного прокси (TRUST_PROXY, по умолчанию — петля).
@@ -76,12 +77,39 @@ function send(res,status,body,type="text/plain; charset=utf-8"){
   res.end(body);
 }
 function json(res,status,obj){send(res,status,JSON.stringify(obj),"application/json; charset=utf-8")}
+class BodyTooLarge extends Error{constructor(max){super(`body too large (>${max})`);this.max=max}}
 async function readBody(req,max=160000){
   const chunks=[];let size=0;
-  for await(const c of req){size+=c.length;if(size>max)throw new Error("body too large");chunks.push(c)}
+  for await(const c of req){
+    size+=c.length;
+    // Соединение закрывает bodyError после ответа: рвать его здесь означало бы
+    // оборвать клиента раньше, чем он увидит код 413.
+    if(size>max)throw new BodyTooLarge(max);
+    chunks.push(c);
+  }
   return Buffer.concat(chunks).toString("utf8");
 }
+// Отличаем «слишком большое тело» от «неверный JSON»: коды разные и причина разная.
+function bodyError(res,e){
+  if(e instanceof BodyTooLarge){
+    // Остаток тела остался непрочитанным, поэтому соединение переиспользовать
+    // нельзя — закрываем его ПОСЛЕ отправки ответа, иначе клиент увидит обрыв
+    // вместо кода 413.
+    res.setHeader("Connection","close");
+    json(res,413,{error:"body_too_large",limit:e.max});
+    res.on("finish",()=>{try{res.socket&&res.socket.destroy()}catch(_){}});
+    return;
+  }
+  return json(res,400,{error:"invalid_json"});
+}
 function cacheKey(args){return JSON.stringify(args)}
+// Кеш ответов был обычным Map без вытеснения: память росла со скоростью
+// уникальных запросов и не возвращалась никогда.
+const CACHE_MAX=400;
+function cacheSet(key,value){
+  if(CACHE.size>=CACHE_MAX){const oldest=CACHE.keys().next().value;CACHE.delete(oldest)}
+  CACHE.set(key,value);
+}
 
 const PAGE_META_CACHE=new Map();
 function absUrl(base,raw){try{return new URL(raw,base).href}catch{return null}}
@@ -171,7 +199,7 @@ async function recommend(args){
   const ranked=rankLive(live.items,args,live.plan);
   const base={...resultPayload(ranked,live),errors:live.errors,plan:{placeQueries:live.plan.placeQueries,eventQueries:live.plan.eventQueries},fresh_at:new Date().toISOString()};
   const value=await enrichResults(base);
-  CACHE.set(key,{at:Date.now(),value});
+  cacheSet(key,{at:Date.now(),value});
   return value;
 }
 
@@ -441,8 +469,8 @@ function claudeParams(system,messages){
   };
 }
 // Один ход модели. С onText — стриминг: текст уходит клиенту по мере генерации.
-async function claudeTurn(system,messages,onText){
-  const params=claudeParams(system,messages);
+async function claudeTurn(system,messages,onText,signal=null){
+  const params={...claudeParams(system,messages),...(signal?{signal}:{})};
   if(onText&&typeof anthropic.beta.messages.stream==="function"){
     const stream=anthropic.beta.messages.stream(params);
     stream.on("text",delta=>{try{onText(delta)}catch{}});
@@ -457,7 +485,7 @@ function toolStatus(call){
   return {stage:"searching",text:a.query?`Ищу: ${a.query}`:"Ищу варианты"};
 }
 
-async function runDialogue(message,conversationId,context={},emit=null){
+async function runDialogue(message,conversationId,context={},emit=null,signal=null){
   const send=(type,data)=>{if(emit){try{emit(type,data)}catch{}}};
   const stored=conversationGet(conversationId);
   // Идентификатор диалога возвращается клиенту. Без проверки владельца по нему
@@ -481,7 +509,8 @@ async function runDialogue(message,conversationId,context={},emit=null){
   let streamedText="";
   for(let loops=0;loops<4;loops++){
     streamedText="";
-    response=await claudeTurn(system,messages,emit?(d)=>{streamedText+=d;send("delta",{text:d})}:null);
+    if(signal&&signal.aborted)throw Object.assign(new Error("клиент отключился"),{name:"AbortError"});
+    response=await claudeTurn(system,messages,emit?(d)=>{streamedText+=d;send("delta",{text:d})}:null,signal);
     messages.push({role:"assistant",content:response.content});
 
     if(response.stop_reason==="refusal"||response.stop_reason==="max_tokens")break;
@@ -599,7 +628,7 @@ const server=http.createServer(async(req,res)=>{
       const rl=dialogueLimiter.check(auth.user?.id?`tg:${auth.user.id}`:`ip:${clientKey(req)}`);
       if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return json(res,429,{error:"rate_limited",message:"Слишком много сообщений, подождите немного",retry_after:rl.retryAfterSec})}
       let body={};
-      try{body=JSON.parse(await readBody(req,240000))}catch{return json(res,400,{error:"invalid_json"})}
+      try{body=JSON.parse(await readBody(req,240000))}catch(e){return bodyError(res,e)}
       const message=String(body.message||"").trim();
       if(!message)return json(res,400,{error:"message_required"});
       const me=identify(req,auth);
@@ -614,6 +643,10 @@ const server=http.createServer(async(req,res)=>{
 
     // ---- Профиль и память ----
     if(url.pathname==="/api/me"||url.pathname.startsWith("/api/me/")){
+      // Каждый новый X-Free-Client создаёт пользователя и профиль. Без лимита
+      // база растёт ровно со скоростью запросов.
+      const rlMe=profileLimiter.check(`ip:${clientKey(req)}`);
+      if(!rlMe.ok){res.setHeader("Retry-After",String(rlMe.retryAfterSec));return json(res,429,{error:"rate_limited",retry_after:rlMe.retryAfterSec})}
       const auth=authorize(req);if(auth.error)return json(res,auth.error.status,auth.error);
       const me=identify(req,auth);
       if(!me)return json(res,400,{error:"client_required",message:"Нужен заголовок X-Free-Client или вход через Telegram"});
@@ -621,17 +654,17 @@ const server=http.createServer(async(req,res)=>{
         return json(res,200,{user:{id:me.id,first_name:me.first_name,telegram:Boolean(me.tg_id)},profile:store.getProfile(me.id),evenings:store.evenings(me.id,10),stats:store.stats(me.id),conversation_id:store.lastConversationId(me.id)});
       }
       if(req.method==="PUT"&&url.pathname==="/api/me"){
-        let body={};try{body=JSON.parse(await readBody(req,400000))}catch{return json(res,400,{error:"invalid_json"})}
+        let body={};try{body=JSON.parse(await readBody(req,400000))}catch(e){return bodyError(res,e)}
         return json(res,200,{profile:store.updateProfile(me.id,{taste:body.taste,saved:body.saved,plan:body.plan})});
       }
       if(req.method==="POST"&&url.pathname==="/api/me/event"){
-        let body={};try{body=JSON.parse(await readBody(req))}catch{return json(res,400,{error:"invalid_json"})}
+        let body={};try{body=JSON.parse(await readBody(req))}catch(e){return bodyError(res,e)}
         const type=String(body.type||"").slice(0,20);if(!type)return json(res,400,{error:"type_required"});
         const taste=store.learn(me.id,type,body.dna&&typeof body.dna==="object"?body.dna:{},{place_id:body.place_id||null,name:String(body.name||"").slice(0,120)});
         return json(res,200,{taste});
       }
       if(req.method==="POST"&&url.pathname==="/api/me/evenings"){
-        let body={};try{body=JSON.parse(await readBody(req,240000))}catch{return json(res,400,{error:"invalid_json"})}
+        let body={};try{body=JSON.parse(await readBody(req,240000))}catch(e){return bodyError(res,e)}
         if(!body.plan||!Array.isArray(body.plan.stops)||!body.plan.stops.length)return json(res,400,{error:"plan_required"});
         const id=store.addEvening(me.id,body.plan,{title:String(body.title||"").slice(0,80)||null,date:String(body.date||"").slice(0,10)||null});
         return json(res,201,{id,evenings:store.evenings(me.id,10)});
@@ -643,7 +676,7 @@ const server=http.createServer(async(req,res)=>{
 
     if(req.method==="POST"&&url.pathname==="/api/plan"){
       let body={};
-      try{body=JSON.parse(await readBody(req))}catch{return json(res,400,{error:"invalid_json"})}
+      try{body=JSON.parse(await readBody(req))}catch(e){return bodyError(res,e)}
       if(!Array.isArray(body.stops)||!body.stops.length)return json(res,400,{error:"stops_required"});
       const auth=authorize(req);if(auth.error)return json(res,auth.error.status,auth.error);
       try{return json(res,200,await planEvening(body,body.context||{}))}
@@ -654,7 +687,7 @@ const server=http.createServer(async(req,res)=>{
       const rl=shareLimiter.check(`ip:${clientKey(req)}`);
       if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return json(res,429,{error:"rate_limited",message:"Слишком много планов подряд, подождите немного"})}
       let body={};
-      try{body=JSON.parse(await readBody(req,2500000))}catch{return json(res,400,{error:"invalid_json"})} // план + PNG-карточка до ~1 МБ
+      try{body=JSON.parse(await readBody(req,2500000))}catch(e){return bodyError(res,e)} // план + PNG-карточка до ~1 МБ
       if(!body.plan||!Array.isArray(body.plan.stops)||!body.plan.stops.length)return json(res,400,{error:"plan_required"});
       const {id,has_card}=sharePlan(body.plan,{title:String(body.title||"").slice(0,80),date:String(body.date||"").slice(0,10)||null,image:typeof body.image==="string"&&body.image.length<1400000?body.image:null});
       const origin=publicOrigin(req);
@@ -684,27 +717,33 @@ const server=http.createServer(async(req,res)=>{
       const rl=dialogueLimiter.check(auth.user?.id?`tg:${auth.user.id}`:`ip:${clientKey(req)}`);
       if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return json(res,429,{error:"rate_limited",message:"Слишком много сообщений, подождите немного",retry_after:rl.retryAfterSec})}
       let body={};
-      try{body=JSON.parse(await readBody(req,240000))}catch{return json(res,400,{error:"invalid_json"})}
+      try{body=JSON.parse(await readBody(req,240000))}catch(e){return bodyError(res,e)}
       const message=String(body.message||"").trim();
       if(!message)return json(res,400,{error:"message_required"});
       res.writeHead(200,{"Content-Type":"text/event-stream; charset=utf-8","Cache-Control":"no-store","Connection":"keep-alive","X-Accel-Buffering":"no",...corsHeaders(req)});
       const emit=(type,data)=>{if(!res.writableEnded)res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`)};
       const ping=setInterval(()=>{if(!res.writableEnded)res.write(": ping\n\n")},15000);
+      // Клиент ушёл — продолжать разговор с моделью бессмысленно: ответ уже некому
+      // читать, а ключ тратится. Сообщаем об отмене внутрь диалога.
+      const abort=new AbortController();
+      const onClose=()=>{abort.abort();clearInterval(ping)};
+      req.on("close",onClose);
       const me=identify(req,auth);
       try{
-        const result=await runDialogue(message,body.previous_response_id||null,{...(body.context||{}),user_id:me?.id||null},emit);
+        const result=await runDialogue(message,body.previous_response_id||null,
+          {...(body.context||{}),user_id:me?.id||null},emit,abort.signal);
         emit("done",result);
       }catch(e){
         console.error("dialogue/stream:",e);
         const err=dialogueError(e);
         emit("error",{error:err.error,message:err.message,fallback:true});
-      }finally{clearInterval(ping);res.end()}
+      }finally{req.off("close",onClose);clearInterval(ping);if(!res.writableEnded)res.end()}
       return;
     }
 
     if(req.method==="POST"&&url.pathname==="/api/recommend"){
       let args={};
-      try{args=JSON.parse(await readBody(req))}catch{return json(res,400,{error:"invalid_json"})}
+      try{args=JSON.parse(await readBody(req))}catch(e){return bodyError(res,e)}
       if(!String(args.query||"").trim())return json(res,400,{error:"query_required"});
       const auth=authorize(req);if(auth.error)return json(res,auth.error.status,auth.error);
       try{return json(res,200,await recommend(args))}

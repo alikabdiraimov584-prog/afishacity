@@ -5,5 +5,10 @@ services:
     env_file: .env
     environment:
       HOST: 0.0.0.0
+    volumes:
+      # Без тома база пользователей и карточки общих планов пропадают при пересборке.
+      - free-data:/app/data
     ports:
       - "127.0.0.1:3000:3000"
+volumes:
+  free-data:
