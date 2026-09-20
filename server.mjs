@@ -92,6 +92,21 @@ async function pageMeta(raw){
     PAGE_META_CACHE.set(u.href,{at:Date.now(),value});return value;
   }catch{return {}}finally{clearTimeout(timer)}
 }
+// Прокси картинок: многие сайты блокируют хотлинки и отдают http, а страница у нас https.
+const IMG_MAX=3*1024*1024;
+async function proxyImage(res,raw){
+  const u=safeRemoteUrl(raw);if(!u)return send(res,400,"bad url");
+  const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),6000);
+  try{
+    const r=await fetch(u,{signal:ctrl.signal,redirect:"follow",headers:{"User-Agent":"Mozilla/5.0 (compatible; FREE-Moscow/1.0)","Accept":"image/avif,image/webp,image/*,*/*;q=0.5","Referer":u.origin+"/"}});
+    const type=(r.headers.get("content-type")||"").split(";")[0].trim().toLowerCase();
+    if(!r.ok||!/^image\//.test(type))return send(res,415,"not an image");
+    const len=Number(r.headers.get("content-length")||0);if(len>IMG_MAX)return send(res,413,"too large");
+    const buf=Buffer.from(await r.arrayBuffer());if(buf.length>IMG_MAX)return send(res,413,"too large");
+    res.writeHead(200,{"Content-Type":type,"Cache-Control":"public, max-age=86400","Content-Length":String(buf.length),"X-Content-Type-Options":"nosniff"});
+    return res.end(buf);
+  }catch(e){return send(res,502,"image unavailable")}finally{clearTimeout(timer)}
+}
 async function enrichResults(payload){
   const results=payload.results||[];
   const enriched=await Promise.all(results.map(async (x,i)=>{
@@ -463,6 +478,10 @@ const server=http.createServer(async(req,res)=>{
       const auth=authorize(req);if(auth.error)return json(res,auth.error.status,auth.error);
       try{return json(res,200,await recommend(args))}
       catch(e){console.error(e);return json(res,502,{error:"providers_unavailable",message:e.message})}
+    }
+
+    if(req.method==="GET"&&url.pathname==="/api/img"){
+      return proxyImage(res,url.searchParams.get("u")||"");
     }
 
     if(req.method==="GET"&&url.pathname==="/api/weather"){

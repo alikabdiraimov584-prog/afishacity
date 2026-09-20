@@ -67,7 +67,11 @@ button,input{font:inherit}button{cursor:pointer}
 
 .placeMedia{height:170px;margin:-16px -16px 14px;border-radius:23px 23px 15px 15px;overflow:hidden;background:linear-gradient(135deg,#e2e4e7,#cfd3d9);position:relative}
 .placeMedia img{width:100%;height:100%;display:block;object-fit:cover}
-.placeMedia.noimg{display:flex;align-items:flex-end;padding:14px;color:#747a83;font-size:10px}
+.placeMedia.noimg{display:flex;align-items:flex-end;padding:14px;color:#747a83;font-size:10px;position:relative}
+.placeMedia.noimg::before{content:attr(data-emoji);position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);font-size:54px;opacity:.9;filter:saturate(.85)}
+.placeMedia.noimg.c-bar{background:linear-gradient(135deg,#f3e7d3,#e6c9a8)}.placeMedia.noimg.c-food{background:linear-gradient(135deg,#f6e3dc,#eebfb0)}.placeMedia.noimg.c-hookah{background:linear-gradient(135deg,#e2e4ef,#c5c9de)}
+.placeMedia.noimg.c-club{background:linear-gradient(135deg,#e9dcf3,#cbb6e4)}.placeMedia.noimg.c-culture{background:linear-gradient(135deg,#dfeee6,#b9d9c8)}.placeMedia.noimg.c-event{background:linear-gradient(135deg,#dde9f6,#b7cfea)}
+.placeMedia.noimg.c-coffee{background:linear-gradient(135deg,#efe6dc,#d9c4ad)}.placeMedia.noimg.c-active{background:linear-gradient(135deg,#e2f0ea,#bcdccb)}.placeMedia.noimg.c-karaoke{background:linear-gradient(135deg,#f6e2ee,#ebbcd6)}
 .placeMedia .photoSource{position:absolute;right:8px;bottom:8px;padding:5px 7px;border-radius:999px;background:rgba(0,0,0,.52);color:#fff;font-size:8px;backdrop-filter:blur(8px)}
 .bookingBtn{background:#111!important;color:#fff!important}
 .newRequestDivider{align-self:center;font-size:9px;text-transform:uppercase;letter-spacing:.13em;color:#9a9fa6;padding:7px 0}
@@ -290,9 +294,16 @@ async function recommend(){
   return fallbackSearch(args);
 }
 function reason(r){const a=[...(r.reasons||[])],d=r.dna||{};if(d.quiet>=68)a.push("можно разговаривать");if(d.romantic>=70)a.push("подходит вдвоём");if(d.late>=70)a.push("работает поздно");return [...new Set(a)].slice(0,3).join(" · ")||"лучшее совпадение с вашим контекстом"}
+// Картинки идут через серверный прокси (защита от хотлинков и смешанного контента); в демо без сервера — напрямую.
+function imgSrc(url){if(!url)return "";return chatState.serverOk?"/api/img?u="+encodeURIComponent(url):url}
+function placeEmoji(r){const c=(window.FreePlanner?FreePlanner.guessCategory([r.category,r.name,(r.tags||[]).join(" ")].join(" ")):"other");
+  const map={bar:"🍸",food:"🍽️",hookah:"💨",club:"🪩",karaoke:"🎤",coffee:"☕",culture:"🖼️",active:"🎳",spa:"🧖",walk:"🌳",other:r.kind==="event"?"🎟️":"📍"};
+  return {cls:r.kind==="event"&&c==="other"?"c-event":"c-"+c,emoji:map[c]||"📍"}}
+function noImg(el){const box=el.parentNode;if(!box)return;box.classList.add("noimg");el.remove();const src=box.querySelector(".photoSource");if(src)src.remove();box.textContent="Фото недоступно"}
 function imageBlock(r){
-  if(r.image_url)return `<div class="placeMedia"><img src="${esc(r.image_url)}" alt="${esc(r.name)}" loading="lazy" referrerpolicy="no-referrer"><span class="photoSource">${esc(r.provider||"источник")}</span></div>`;
-  return `<div class="placeMedia noimg">Фото в источнике не найдено</div>`;
+  const {cls,emoji}=placeEmoji(r);
+  if(r.image_url)return `<div class="placeMedia ${cls}" data-emoji="${emoji}"><img src="${esc(imgSrc(r.image_url))}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="noImg(this)"><span class="photoSource">${esc(r.provider||"источник")}</span></div>`;
+  return `<div class="placeMedia noimg ${cls}" data-emoji="${emoji}">Фото в источнике не найдено</div>`;
 }
 function bookingLabel(r){
   if(r.kind==="event")return "Билеты";
@@ -524,7 +535,7 @@ function planCard(p,{compact=false}={}){
   if(!p||!p.stops?.length)return "";
   const stops=p.stops.map((s,i)=>{
     const pl=s.place;
-    const alts=(s.alternatives||[]).length&&!compact?`<div class="planAlt">${s.alternatives.map(a=>`<button data-swap="${i}" data-alt="${esc(a.id)}">↺ ${esc(a.name)}</button>`).join("")}</div>`:"";
+    const alts=!compact?`<div class="planAlt">${(s.alternatives||[]).map(a=>`<button data-swap="${i}" data-alt="${esc(a.id)}">↺ ${esc(a.name)}</button>`).join("")}<button data-refind="${i}">🔍 найти другое</button></div>`:"";
     const btns=pl&&!compact?`<div class="stopBtns"><button data-book="${esc(pl.id)}">${bookingLabel(pl)}</button><button data-detail="${esc(pl.id)}">Подробнее</button></div>`:"";
     return `<div class="planStop ${pl?"":"missing"} ${s.conflict?"conflict":""}"><div class="t">${esc(s.slot_start)}–${esc(s.slot_end)}<small>${s.duration_min} мин${s.conflict?" · сеанс раньше":""}</small></div><div>
       <h5>${pl?esc(pl.name):esc(s.query)+" — не нашёл"}</h5>
@@ -540,6 +551,7 @@ function bindPlanCard(root){
   root.querySelectorAll("[data-plan-route]").forEach(b=>b.onclick=()=>{if(!evening)return;routeItems(evening.stops.filter(s=>s.place).map(s=>s.place))});
   root.querySelectorAll("[data-plan-share]").forEach(b=>b.onclick=sharePlanLink);
   root.querySelectorAll("[data-swap]").forEach(b=>b.onclick=()=>swapStop(+b.dataset.swap,b.dataset.alt));
+  root.querySelectorAll("[data-refind]").forEach(b=>b.onclick=()=>refindStop(+b.dataset.refind));
   bindCards();
 }
 function eveningPlaces(p){const out=[];for(const s of (p?.stops||[])){if(s.place)out.push(s.place);for(const a of (s.alternatives||[]))out.push(a)}return out}
@@ -558,6 +570,29 @@ async function swapStop(i,altId){
   });
   const rebuilt=await FreePlanner.buildPlan({stops,start_time:evening.stops[0].slot_start},async()=>({results:[]}));
   rebuilt.stops.forEach((s,j)=>{s.alternatives=stops[j].alternatives});
+  const last=[...$("#chat").querySelectorAll(".planCard")].at(-1);
+  evening=rebuilt;saveEvening();currentResults=eveningPlaces(rebuilt);
+  if(last){const wrap=document.createElement("div");wrap.innerHTML=planCard(rebuilt);last.replaceWith(wrap.firstElementChild);bindPlanCard($("#chat"))}
+  if($("#view-plan").classList.contains("on"))renderPlan();
+}
+// Новый поиск для одной точки рядом с предыдущей, исключая уже показанные места.
+async function refindStop(i){
+  if(!evening)return;
+  const s=evening.stops[i];if(!s)return;
+  const prev=evening.stops.slice(0,i).reverse().find(x=>x.place&&coords(x.place));
+  const used=new Set(eveningPlaces(evening).map(x=>x.id));
+  const args={query:s.query.replace(/\s*рядом$/,"")+(prev?" рядом":""),taste_weights:{...taste},after_time:s.slot_start};
+  if(prev)args.user_location=coords(prev.place);
+  const btn=[...$("#chat").querySelectorAll(`[data-refind="${i}"]`)].at(-1);if(btn){btn.disabled=true;btn.textContent="ищу…"}
+  let results=[];
+  try{const r=await apiFetch("/api/recommend",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(args)});if(r.ok)results=(await r.json()).results||[]}catch(_){}
+  if(!results.length)results=fallbackSearch(args);
+  results=results.filter(x=>!used.has(x.id));
+  if(!results.length){toast("Других вариантов рядом не нашёл");if(btn){btn.disabled=false;btn.textContent="🔍 найти другое"}return}
+  const [place,...rest]=results;
+  const stops=evening.stops.map((x,j)=>({query:x.query,duration_min:x.duration_min,place:j===i?place:x.place,alternatives:j===i?[...(x.place?[x.place]:[]),...rest.slice(0,2)]:(x.alternatives||[])}));
+  const rebuilt=await FreePlanner.buildPlan({stops,start_time:evening.stops[0].slot_start},async()=>({results:[]}));
+  rebuilt.stops.forEach((x,j)=>{x.alternatives=stops[j].alternatives});
   const last=[...$("#chat").querySelectorAll(".planCard")].at(-1);
   evening=rebuilt;saveEvening();currentResults=eveningPlaces(rebuilt);
   if(last){const wrap=document.createElement("div");wrap.innerHTML=planCard(rebuilt);last.replaceWith(wrap.firstElementChild);bindPlanCard($("#chat"))}
@@ -604,7 +639,7 @@ function toggleSave(id){const r=currentResults.find(x=>x.id===id)||saved.find(x=
 function openDetail(id){
   const r=currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id)||plan.find(x=>x.id===id);if(!r)return;
   $("#detail").innerHTML=`<div class="sheet"><button class="close">×</button>
-    ${r.image_url?`<div class="placeMedia" style="margin:0 0 15px"><img src="${esc(r.image_url)}" alt="${esc(r.name)}" referrerpolicy="no-referrer"></div>`:""}
+    ${r.image_url?`<div class="placeMedia ${placeEmoji(r).cls}" data-emoji="${placeEmoji(r).emoji}" style="margin:0 0 15px"><img src="${esc(imgSrc(r.image_url))}" alt="" referrerpolicy="no-referrer" onerror="noImg(this)"></div>`:""}
     <div class="eyebrow">${esc(r.provider||"PLACE")}</div><h2>${esc(r.name)}</h2><p>${esc(r.category||"")} · ${esc(r.area||"")}</p>
     <div class="detailGrid"><div class="detail"><b>Цена</b><br>${esc(r.price||"на сайте")}</div><div class="detail"><b>Время</b><br>${esc(r.time||"по расписанию")}</div><div class="detail"><b>Почему вам</b><br>${esc(reason(r))}</div><div class="detail"><b>Бронирование</b><br>${esc(r.booking_provider||"через страницу места")}</div></div>
     <div class="sheetActions"><button class="primary" data-book-detail>${bookingLabel(r)}</button><button data-select>В план</button><button data-r>Маршрут</button><a target="_blank" rel="noopener" href="${esc(r.point_source||r.source||"#")}">${r.kind==="event"?"Страница события":"Страница точки"} ↗</a><button data-save-detail>${saved.some(x=>x.id===r.id)?"Убрать из Saved":"Сохранить"}</button></div></div>`;
@@ -637,6 +672,7 @@ async function detectCapabilities(){
   try{
     const r=await apiFetch("/api/health",{cache:"no-store"});
     const d=await r.json();
+    chatState.serverOk=Boolean(d&&d.ok);
     chatState.aiReady=Boolean(d.text_ai_ready);
     if(d.telegram_auth&&!TG){chatState.aiReady=false;$("#hint").textContent="Полный AI-режим доступен внутри Telegram-бота. Здесь работает демо-сценарий."}
     if(d.voice_ready)voice.mode="live";
