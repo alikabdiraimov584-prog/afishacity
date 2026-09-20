@@ -2,11 +2,10 @@
 // они превращаются в неверную цену и неверную дату на карточке.
 import test from "node:test";
 import assert from "node:assert/strict";
-import {readFileSync} from "node:fs";
-
-const src=readFileSync(new URL("../providers.mjs",import.meta.url),"utf8");
-const parseMoney=new Function(src.slice(src.indexOf("const MONEY_UNIT"),src.indexOf("function isoDate"))+"; return parseMoney")();
-const isoDate=new Function(src.slice(src.indexOf("const MSK_DATE"),src.indexOf("function hhmm"))+"; return isoDate")();
+// Раньше исходник этих функций вырезался из файла и выполнялся через
+// new Function в пустом окружении. Такой тест ломался от любой ссылки на
+// соседний помощник и проверял копию, а не то, что работает в сервисе.
+import {parseMoney,isoDate} from "../providers.mjs";
 
 test("ценой считается только сумма рядом с денежным признаком", () => {
   const cases=[["от 500 рублей",500],["1500 р",1500],["от 1 000 ₽",1000],["Стоимость: 1 200 руб.",1200],
@@ -29,7 +28,11 @@ test("дата события считается по московскому в�
   assert.equal(isoDate("мусор"),null);
 });
 
-test("клиентский таймаут не меньше того, что мы просим у Overpass", () => {
+test("клиентский таймаут не меньше того, что мы просим у Overpass", async () => {
+  // Здесь проверяется соотношение двух констант в исходнике, а не поведение:
+  // наружу они не видны, а разъехаться могут незаметно.
+  const {readFileSync}=await import("node:fs");
+  const src=readFileSync(new URL("../providers.mjs",import.meta.url),"utf8");
   const asked=Number(/const OVERPASS_TIMEOUT_S=(\d+)/.exec(src)[1]);
   const passed=Number(/timeoutMs:\(OVERPASS_TIMEOUT_S\+(\d+)\)\*1000/.exec(src)[1]);
   assert.ok(passed>0,"клиент обрывал запрос раньше, чем Overpass обязан ответить");

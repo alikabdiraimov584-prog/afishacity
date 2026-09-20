@@ -46,11 +46,7 @@ test("ссылка с опасной схемой не попадает на с�
 });
 
 test("ссылка из тегов OpenStreetMap проверяется по схеме", async () => {
-  const {readFileSync}=await import("node:fs");
-  const src=readFileSync(new URL("../providers.mjs",import.meta.url),"utf8");
-  const m=src.match(/function safeLink\(raw\)\{[\s\S]*?\n\}/);
-  assert.ok(m,"safeLink не найдена");
-  const safeLink=new Function("return "+m[0])();
+  const {safeLink}=await import("../providers.mjs");
   for(const bad of ["javascript:alert(1)","data:text/html,x","ftp://a/b","мусор",""])
     assert.equal(safeLink(bad),null,String(bad));
   assert.equal(safeLink("https://rovesnik.bar/"),"https://rovesnik.bar/");
@@ -73,4 +69,22 @@ test("тело запроса обязано быть объектом", async (
   assert.deepEqual(await readJsonObject({},1000),{query:"бар"});
   globalThis.__body="";
   assert.deepEqual(await readJsonObject({},1000),{},"пустое тело — пустой объект");
+});
+
+test("поле-объект вместо строки отвергается, а не роняет запрос", async () => {
+  const {rankLive}=await import("../live_ranker.mjs");
+  const {buildSearchPlan,parseMoney,safeLink,wantsCenter}=await import("../providers.mjs");
+  // {"toString":1} — валидный JSON, и String() на нём бросает
+  // «Cannot convert object to primitive value». Одного такого поля хватало,
+  // чтобы запрос завершился пятисоткой с внутренним текстом ошибки наружу.
+  const poison=[{toString:1},{valueOf:{}},Object.create(null),[{},{}],{toString(){throw new Error("бах")}}];
+  for(const bad of poison){
+    const args={query:bad,area:bad,after_time:bad,target_date:bad,taste_weights:bad};
+    assert.doesNotThrow(()=>rankLive([],args,buildSearchPlan(args)),`ранкер на ${JSON.stringify(bad)}`);
+    assert.doesNotThrow(()=>parseMoney(bad));
+    assert.doesNotThrow(()=>safeLink(bad));
+    assert.doesNotThrow(()=>wantsCenter(bad));
+    assert.equal(safeLink(bad),null,"нестрока ссылкой быть не может");
+    assert.equal(parseMoney(bad),null,"нестрока ценой быть не может");
+  }
 });

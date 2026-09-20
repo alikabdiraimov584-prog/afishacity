@@ -3,7 +3,17 @@ import {parseHours,moscowNow} from "./hours.mjs";
 import {CATEGORIES,SERVICE_TAGS} from "./categories.mjs";
 import {tagTitle as tagRu} from "./osm_tags.mjs";
 
-function norm(s=""){return String(s).toLowerCase().replace(/ё/g,"е").replace(/<[^>]*>/g," ").replace(/[^a-zа-я0-9\s]/gi," ").replace(/\s+/g," ").trim()}
+// String() на значении из сети может бросить исключение: объект вида
+// {"toString":1} — валидный JSON, и приведение его к строке падает с
+// «Cannot convert object to primitive value». Одного такого поля хватало,
+// чтобы запрос завершился пятисоткой с внутренним текстом ошибки наружу.
+function text(v){
+  if(typeof v==="string")return v;
+  if(v===null||v===undefined)return "";
+  if(typeof v==="number"||typeof v==="boolean")return Number.isFinite(v)||typeof v==="boolean"?String(v):"";
+  return "";                                   // массивы и объекты текстом не являются
+}
+function norm(s=""){return text(s).toLowerCase().replace(/ё/g,"е").replace(/<[^>]*>/g," ").replace(/[^a-zа-я0-9\s]/gi," ").replace(/\s+/g," ").trim()}
 function words(s){const stop=new Set(["куда","сходить","пойти","хочу","хочется","сегодня","завтра","вечером","после","москва","москве","очень","сильно","много","какой","какое","что","для","чтобы","можно","найди","место"]);return norm(s).split(" ").filter(w=>w.length>3&&!stop.has(w))}
 // Короткие корни (бар, рок, спа, арт, еда, семь) задаём регэкспами с границами слов:
 // \b в JS не работает для кириллицы, а includes() ловит «барбершоп», «Крокус», «спать», «восемь».
@@ -44,7 +54,7 @@ const CENTER={lat:55.7539,lon:37.6208};
 function requestedTags(query,plan){const n=norm(query),out=[...(plan.tags||[])];for(const [tag,terms] of Object.entries(SYN))if(terms.some(t=>hasTerm(n,t)))out.push(tag);return [...new Set(out)]}
 function moscowDate(){return new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Moscow",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date())}
 function itemText(x){return norm([x.name,x.organizer,x.cat,x.area,x.metro,x.desc,x.keywords,(x.tags||[]).join(" ")].filter(Boolean).join(" "))}
-function toMin(t){const m=String(t||"").match(/^(\d{1,2}):(\d{2})/);return m?+m[1]*60 + +m[2]:null}
+function toMin(t){const m=text(t).match(/^(\d{1,2}):(\d{2})/);return m?+m[1]*60 + +m[2]:null}
 function dateOkay(x,args){
   if(x.kind==="venue")return true;
   if(!args.target_date){const last=x.date_end||x.date_start;return !last||last>=moscowDate()}
@@ -54,7 +64,7 @@ function timeOkay(x,args){if(!args.after_time||!x.times?.length)return true;cons
 // Момент, для которого проверяем часы работы: after_time на целевую дату, иначе «сейчас» (args.now — для тестов).
 // Если просят другой день без времени, часы не проверяем — «открыто сейчас» ничего не значит.
 function hoursMoment(args){
-  const m=String(args.after_time||"").match(/^(\d{1,2}):(\d{2})/);
+  const m=text(args.after_time).match(/^(\d{1,2}):(\d{2})/);
   if(m)return new Date(`${args.target_date||moscowDate()}T${m[1].padStart(2,"0")}:${m[2]}:00+03:00`);
   if(args.target_date&&args.target_date!==moscowDate())return null;
   return args.now?new Date(args.now):new Date();

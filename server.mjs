@@ -121,6 +121,16 @@ function bodyError(res,e){
   }
   return json(res,400,{error:"invalid_json"});
 }
+// Поля запроса приводим к строке безопасно. String() на объекте без
+// пригодного toString бросает исключение: {"message":{"toString":1}} —
+// валидный JSON, и такой запрос завершался пятисоткой, отдавая наружу
+// внутренний текст ошибки. Строка — значит строка; всё прочее не текст.
+function text(v){
+  if(typeof v==="string")return v;
+  if(typeof v==="number")return Number.isFinite(v)?String(v):"";
+  if(typeof v==="boolean")return String(v);
+  return "";
+}
 function cacheKey(args){return JSON.stringify(args)}
 // Кеш ответов был обычным Map без вытеснения: память росла со скоростью
 // уникальных запросов и не возвращалась никогда.
@@ -704,11 +714,11 @@ const server=http.createServer(async(req,res)=>{
       if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return json(res,429,{error:"rate_limited",retry_after:rl.retryAfterSec})}
       let body={};
       try{body=await readJsonObject(req,20000)}catch(e){return bodyError(res,e)}
-      const text=String(body.text||"").trim();
-      if(!text)return json(res,400,{error:"text_required"});
+      const speech=text(body.text).trim();
+      if(!speech)return json(res,400,{error:"text_required"});
       try{
-        const mp3=await yandexTts(text,{cfg:YANDEX,voice:body.voice||YANDEX.voice,
-          role:body.role||YANDEX.role||CONCIERGE.voiceRole});
+        const mp3=await yandexTts(speech,{cfg:YANDEX,voice:text(body.voice)||YANDEX.voice,
+          role:text(body.role)||YANDEX.role||CONCIERGE.voiceRole});
         res.writeHead(200,{"Content-Type":"audio/mpeg","Cache-Control":"no-store",
           "Content-Length":String(mp3.length),...corsHeaders(req)});
         return res.end(mp3);
@@ -758,7 +768,7 @@ const server=http.createServer(async(req,res)=>{
       if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return json(res,429,{error:"rate_limited",message:"Слишком много сообщений, подождите немного",retry_after:rl.retryAfterSec})}
       let body={};
       try{body=await readJsonObject(req,240000)}catch(e){return bodyError(res,e)}
-      const message=String(body.message||"").trim();
+      const message=text(body.message).trim();
       if(!message)return json(res,400,{error:"message_required"});
       const me=identify(req,auth);
       try{
@@ -788,14 +798,14 @@ const server=http.createServer(async(req,res)=>{
       }
       if(req.method==="POST"&&url.pathname==="/api/me/event"){
         let body={};try{body=await readJsonObject(req)}catch(e){return bodyError(res,e)}
-        const type=String(body.type||"").slice(0,20);if(!type)return json(res,400,{error:"type_required"});
-        const taste=store.learn(me.id,type,body.dna&&typeof body.dna==="object"?body.dna:{},{place_id:body.place_id||null,name:String(body.name||"").slice(0,120)});
+        const type=text(body.type).slice(0,20);if(!type)return json(res,400,{error:"type_required"});
+        const taste=store.learn(me.id,type,body.dna&&typeof body.dna==="object"?body.dna:{},{place_id:body.place_id||null,name:text(body.name).slice(0,120)});
         return json(res,200,{taste});
       }
       if(req.method==="POST"&&url.pathname==="/api/me/evenings"){
         let body={};try{body=await readJsonObject(req,240000)}catch(e){return bodyError(res,e)}
         if(!body.plan||!Array.isArray(body.plan.stops)||!body.plan.stops.length)return json(res,400,{error:"plan_required"});
-        const id=store.addEvening(me.id,body.plan,{title:String(body.title||"").slice(0,80)||null,date:String(body.date||"").slice(0,10)||null});
+        const id=store.addEvening(me.id,body.plan,{title:text(body.title).slice(0,80)||null,date:text(body.date).slice(0,10)||null});
         return json(res,201,{id,evenings:store.evenings(me.id,10)});
       }
       const del=url.pathname.match(/^\/api\/me\/evenings\/([a-f0-9]{6,16})$/);
@@ -818,7 +828,7 @@ const server=http.createServer(async(req,res)=>{
       let body={};
       try{body=await readJsonObject(req,2500000)}catch(e){return bodyError(res,e)} // план + PNG-карточка до ~1 МБ
       if(!body.plan||!Array.isArray(body.plan.stops)||!body.plan.stops.length)return json(res,400,{error:"plan_required"});
-      const {id,has_card}=sharePlan(body.plan,{title:String(body.title||"").slice(0,80),date:String(body.date||"").slice(0,10)||null,image:typeof body.image==="string"&&body.image.length<1400000?body.image:null});
+      const {id,has_card}=sharePlan(body.plan,{title:text(body.title).slice(0,80),date:text(body.date).slice(0,10)||null,image:typeof body.image==="string"&&body.image.length<1400000?body.image:null});
       const origin=publicOrigin(req);
       return json(res,201,{id,url:`${origin}/p/${id}`,card_url:has_card?`${origin}/p/${id}/card.png`:null});
     }
@@ -847,7 +857,7 @@ const server=http.createServer(async(req,res)=>{
       if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return json(res,429,{error:"rate_limited",message:"Слишком много сообщений, подождите немного",retry_after:rl.retryAfterSec})}
       let body={};
       try{body=await readJsonObject(req,240000)}catch(e){return bodyError(res,e)}
-      const message=String(body.message||"").trim();
+      const message=text(body.message).trim();
       if(!message)return json(res,400,{error:"message_required"});
       res.writeHead(200,{"Content-Type":"text/event-stream; charset=utf-8","Cache-Control":"no-store","Connection":"keep-alive","X-Accel-Buffering":"no",...corsHeaders(req)});
       const emit=(type,data)=>{if(!res.writableEnded)res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`)};
@@ -873,7 +883,7 @@ const server=http.createServer(async(req,res)=>{
     if(req.method==="POST"&&url.pathname==="/api/recommend"){
       let args={};
       try{args=await readJsonObject(req)}catch(e){return bodyError(res,e)}
-      if(!String(args.query||"").trim())return json(res,400,{error:"query_required"});
+      if(!text(args.query).trim())return json(res,400,{error:"query_required"});
       const auth=authorize(req);if(auth.error)return json(res,auth.error.status,auth.error);
       try{return json(res,200,await recommend(args))}
       catch(e){console.error(e);return json(res,502,{error:"providers_unavailable",message:e.message})}

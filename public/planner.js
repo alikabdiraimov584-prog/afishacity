@@ -3,12 +3,35 @@
    через import("./public/planner.js") и читается из globalThis.FreePlanner. */
 (function(root){
 "use strict";
-const DEFAULT_DURATION={food:90,dinner:90,bar:90,hookah:120,coffee:45,club:150,karaoke:120,spa:120,event:120,culture:90,active:90,walk:60,other:75};
+const DEFAULT_DURATION={food:90,dinner:90,bar:90,hookah:120,coffee:45,club:150,karaoke:120,spa:120,event:120,culture:90,cinema:150,show:120,active:90,walk:60,other:75};
+// Словарь узнаваемых занятий. Он же решает, считать ли фразу планом вечера,
+// поэтому дыры в нём стоили дорого: «выпить, а после кальян» не опознавалось
+// вовсе, потому что глагола «выпить» здесь не было — и план не собирался.
 const CAT_RULES=[
-  ["hookah",/кальян|hookah|lounge|лаунж/i],["bar",/бар|паб|pub|коктейл|пив|вин/i],["food",/ресторан|кафе|ужин|еда|кухн|бранч|завтрак|поесть/i],
-  ["coffee",/кофе|coffee/i],["club",/клуб|танц|вечерин/i],["karaoke",/караоке/i],["spa",/спа|баня|саун|массаж/i],
-  ["culture",/музей|выстав|галере|театр|спектак|лекц/i],["active",/боулинг|бильярд|квест|vr|каток/i],["walk",/прогул|парк|набереж/i]
+  ["hookah",/кальян|hookah|lounge|лаунж/i],
+  ["bar",/бар|паб|pub|коктейл|пив|вин|выпить|выпива|бухн|накатит|рюмочн|наливк/i],
+  ["food",/ресторан|кафе|ужин|обед|еда|кухн|бранч|завтрак|поесть|поед|покушат|перекус|пожрат|столов|бургер|пицц|суши|шаурм/i],
+  ["coffee",/кофе|coffee|капучино|раф|латте/i],
+  ["club",/клуб|танц|вечерин|дискотек|рейв|потусит|тусовк|тусит/i],
+  ["karaoke",/караоке|спеть|попет/i],
+  ["spa",/спа|баня|саун|массаж|хамам|термы/i],
+  ["cinema",/кино|фильм|киношк/i],
+  ["show",/концерт|стендап|комеди|спектак|театр/i],
+  ["culture",/музей|выстав|галере|лекц/i],
+  ["active",/боулинг|бильярд|квест|vr|каток|картинг|скалодром|батут|пейнтбол|тир/i],
+  ["walk",/прогул|погулят|пройтись|парк|набереж|бульвар|сквер/i]
 ];
+// Не занятия, а окончание вечера. Раньше такое слово обнуляло весь план:
+// в «бар, потом клуб, потом домой» не оставалось ни одной точки.
+const NOT_A_STOP=/^(домой|спать|дом|такси|метро|на работу|работать|баиньки|отдыхать)$/i;
+// «Стендап» и «театр» — не «концерт»: поиск по слову «концерт» приведёт
+// человека совсем не туда, куда он собирался.
+function showQuery(p){
+  const t=String(p||"");
+  if(/стендап|комеди/i.test(t))return "стендап";
+  if(/театр|спектак/i.test(t))return "театр спектакль";
+  return "концерт";
+}
 function guessCategory(text){for(const [c,re] of CAT_RULES)if(re.test(String(text||"")))return c;return "other"}
 function toMin(t){const m=String(t||"").match(/^(\d{1,2}):(\d{2})/);return m?+m[1]*60 + +m[2]:null}
 function hhmm(min){min=((Math.round(min)%1440)+1440)%1440;return String(Math.floor(min/60)).padStart(2,"0")+":"+String(min%60).padStart(2,"0")}
@@ -102,13 +125,17 @@ function parseStops(text){
   const n=String(text||"").toLowerCase().replace(/ё/g,"е");
   const parts=n.split(/\s*,?\s*(?:а\s+|и\s+)?(?:потом|затем|дальше|после)(?=\s|$)\s*/)
     .map(s=>s.replace(/^(?:этого|него|нее|этой|ужина|бара|концерта|выставки|кино|фильма)\s*/,"").replace(/^(?:в|на|к|и|а)\s+/,"").trim()).filter(Boolean);
-  if(parts.length<2)return [];
-  // План только когда каждая часть — узнаваемая активность; «поесть и потом домой» — не план.
-  if(parts.some(p=>guessCategory(p)==="other"))return [];
+  // Концовки вроде «потом домой» — это не точка маршрута, а конец вечера:
+  // отбрасываем их, а не выбрасываем из-за них весь план.
+  const useful=parts.filter(p=>!NOT_A_STOP.test(p.trim()));
+  if(useful.length<2)return [];
+  // План собираем, только если каждая оставшаяся часть — узнаваемое занятие.
+  // Иначе «поесть, а потом к маме» превратилось бы в поиск мамы по городу.
+  if(useful.some(p=>guessCategory(p)==="other"))return [];
   const stops=[];
-  for(const p of parts){
+  for(const p of useful){
     const cat=guessCategory(p);
-    const q=cat==="food"?"ужин ресторан":cat==="bar"?"бар":cat==="hookah"?"кальянная":cat==="coffee"?"кофейня":cat==="club"?"ночной клуб":cat==="karaoke"?"караоке":cat==="spa"?"спа":cat==="culture"?"выставка":cat==="active"?"активный отдых":cat==="walk"?"прогулка парк":p.replace(/^(хочу|давай|сначала|потом|можно|нужно|надо)\s+/,"");
+    const q=cat==="food"?"ужин ресторан":cat==="bar"?"бар":cat==="hookah"?"кальянная":cat==="coffee"?"кофейня":cat==="club"?"ночной клуб":cat==="karaoke"?"караоке":cat==="spa"?"спа":cat==="cinema"?"кинотеатр":cat==="show"?showQuery(p):cat==="culture"?"выставка":cat==="active"?"активный отдых":cat==="walk"?"прогулка парк":p.replace(/^(хочу|давай|сначала|потом|можно|нужно|надо)\s+/,"");
     stops.push({query:q});
   }
   return stops;

@@ -11,7 +11,17 @@ export {structuralTags};
 const MOSCOW_POINT = "37.6173,55.7558";
 const TIMEOUT_MS = 6500;
 
-function norm(s=""){return String(s).toLowerCase().replace(/ё/g,"е").replace(/<[^>]*>/g," ").replace(/[^a-zа-я0-9+\-\s]/gi," ").replace(/\s+/g," ").trim()}
+// String() на значении из сети может бросить исключение: объект вида
+// {"toString":1} — валидный JSON, и приведение его к строке падает с
+// «Cannot convert object to primitive value». Одного такого поля хватало,
+// чтобы запрос завершился пятисоткой с внутренним текстом ошибки наружу.
+function text(v){
+  if(typeof v==="string")return v;
+  if(v===null||v===undefined)return "";
+  if(typeof v==="number"||typeof v==="boolean")return Number.isFinite(v)||typeof v==="boolean"?String(v):"";
+  return "";                                   // массивы и объекты текстом не являются
+}
+function norm(s=""){return text(s).toLowerCase().replace(/ё/g,"е").replace(/<[^>]*>/g," ").replace(/[^a-zа-я0-9+\-\s]/gi," ").replace(/\s+/g," ").trim()}
 function stripHtml(s=""){return String(s).replace(/<[^>]*>/g," ").replace(/&nbsp;/g," ").replace(/&amp;/g,"&").replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/\s+/g," ").trim()}
 function uniq(a){return [...new Set(a.filter(Boolean))]}
 function clampText(s,n=440){s=stripHtml(s);return s.length>n?s.slice(0,n-1)+"…":s}
@@ -22,20 +32,23 @@ const MONEY_UNIT="(?:₽|руб[а-я]*(?![а-я])|р(?![а-я])|rub)";
 const MONEY_RANGE=new RegExp(`(\\d[\\d\\s]{0,7}\\d|\\d)\\s*[-–—]\\s*(?:\\d[\\d\\s]{0,7}\\d|\\d)\\s*${MONEY_UNIT}`);
 const MONEY_PLAIN=new RegExp(`(\\d[\\d\\s]{0,7}\\d|\\d)\\s*${MONEY_UNIT}`);
 const MONEY_CTX=/(?:от|до|цена|стоимость|билет[а-я]*)\s*(\d[\d\s]{0,7}\d|\d)(?![\d:+])/;
-function parseMoney(s=""){
-  const t=String(s).toLowerCase().replace(/\u00a0/g," ");
+export function parseMoney(s=""){
+  const t=text(s).toLowerCase().replace(/\u00a0/g," ");
   // Возраст, время и год — не цена.
   const cleaned=t.replace(/\d+\s*\+/g," ").replace(/\d{1,2}[:.]\d{2}/g," ").replace(/(?<!\d)(19|20)\d{2}(?![\d])/g," ");
   const m=MONEY_RANGE.exec(cleaned)||MONEY_PLAIN.exec(cleaned)||MONEY_CTX.exec(cleaned);
   if(!m)return null;
-  const n=Number(String(m[1]).replace(/\s/g,""));
+  const n=Number(text(m[1]).replace(/\s/g,""));
   return Number.isFinite(n)&&n>=0&&n<=1000000?n:null;
 }
 // Дата берётся по Москве, а не по UTC: событие, начинающееся в 00:30 МСК,
 // иначе получало вчерашнюю дату и не находилось по фильтру «сегодня».
 const MSK_DATE=new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Moscow",year:"numeric",month:"2-digit",day:"2-digit"});
-function isoDate(x){if(!x)return null;const d=new Date(x);return Number.isFinite(d.valueOf())?MSK_DATE.format(d):null}
-function hhmm(x){if(!x)return null;const d=new Date(x);if(!Number.isFinite(d.valueOf()))return null;return new Intl.DateTimeFormat("ru-RU",{timeZone:"Europe/Moscow",hour:"2-digit",minute:"2-digit",hour12:false}).format(d)}
+// new Date(x) на объекте тоже приводит его к примитиву и падает на ядовитом
+// toString, поэтому датой считаем только строку или число.
+function dateish(x){return typeof x==="string"||typeof x==="number"?new Date(x):new Date(NaN)}
+export function isoDate(x){if(!x)return null;const d=dateish(x);return Number.isFinite(d.valueOf())?MSK_DATE.format(d):null}
+function hhmm(x){if(!x)return null;const d=dateish(x);if(!Number.isFinite(d.valueOf()))return null;return new Intl.DateTimeFormat("ru-RU",{timeZone:"Europe/Moscow",hour:"2-digit",minute:"2-digit",hour12:false}).format(d)}
 function moscowDate(){return new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Moscow",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date())}
 function addDays(dateStr,n){const d=new Date(dateStr+"T12:00:00Z");d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10)}
 function dateBounds(targetDate){const start=targetDate||moscowDate();const end=targetDate||addDays(start,30);return {start,end}}
@@ -130,7 +143,7 @@ function inferTags(text){
 function priceInfo(label,isFree=false){
   if(isFree)return {price_label:"Бесплатно",price_min:0,free:true};
   const p=parseMoney(label);
-  return {price_label:label&&String(label).trim()?stripHtml(label):"цена на сайте",price_min:p,free:false};
+  return {price_label:label&&text(label).trim()?stripHtml(label):"цена на сайте",price_min:p,free:false};
 }
 
 async function kudagoEventDetail(id){
@@ -230,7 +243,7 @@ function normalizeTimepadEvent(e,plan){
     price_label:priceLabel,price_min:pmin,free,availability:reg.is_registration_open===false?"регистрация закрыта":"регистрация на Timepad",
     source:e.url||e.organization?.url||"https://timepad.ru/",point_source:e.url||e.organization?.url||"https://timepad.ru/",
     official_source:e.organization?.url||null,
-    aggregator_name:"Timepad",aggregator_image:e.poster_image?.uploadcare_url?`${String(e.poster_image.uploadcare_url).startsWith("//")?"https:":""}${e.poster_image.uploadcare_url}-/preview/900x600/`:e.poster_image?.default_url||null,
+    aggregator_name:"Timepad",aggregator_image:e.poster_image?.uploadcare_url?`${text(e.poster_image.uploadcare_url).startsWith("//")?"https:":""}${e.poster_image.uploadcare_url}-/preview/900x600/`:e.poster_image?.default_url||null,
     booking_url:e.url||null,booking_kind:"tickets",booking_provider:"Timepad",phone:null,desc:clampText(e.description_short||e.description_html||""),keywords:norm(text),coords:e.location?.coordinates||null
   };
 }
@@ -259,14 +272,14 @@ function contactList2gis(x){
   return out;
 }
 function bookingFromContacts(contacts=[]){
-  const normUrl=v=>{if(!v)return null;v=String(v).trim();if(/^https?:\/\//i.test(v)||/^tel:/i.test(v))return v;return null};
+  const normUrl=v=>{if(!v)return null;v=text(v).trim();if(/^https?:\/\//i.test(v)||/^tel:/i.test(v))return v;return null};
   for(const c of contacts){
-    const t=String(c.type||"").toLowerCase(),u=normUrl(c.url);
+    const t=text(c.type).toLowerCase(),u=normUrl(c.url);
     if((/telegram|whatsapp|messenger/.test(t)||/t\.me|wa\.me|whatsapp/i.test(u||""))&&u)
       return {url:u,kind:/whatsapp|wa\.me/i.test(u)?"whatsapp":"telegram",provider:c.print_text||c.text||"мессенджер"};
   }
   for(const c of contacts){
-    const t=String(c.type||"").toLowerCase(),u=normUrl(c.url),v=String(c.value||"");
+    const t=text(c.type).toLowerCase(),u=normUrl(c.url),v=text(c.value);
     if(t==="phone"||/phone/.test(t)){const ph=v.replace(/[^\d+]/g,"");if(ph)return {url:`tel:${ph}`,kind:"phone",provider:"телефон"}}
     if((t==="website"||t==="url")&&u)return {url:u,kind:"site",provider:"сайт"};
   }
@@ -285,7 +298,7 @@ function normalize2gisItem(x,plan){
     availability:"действующая организация по данным 2GIS",source:`https://2gis.ru/moscow/firm/${encodeURIComponent(x.id)}`,
     point_source:`https://2gis.ru/moscow/firm/${encodeURIComponent(x.id)}`,official_source:null,
     image_url:null,booking_url:book.url,booking_kind:book.kind,booking_provider:book.provider,
-    phone:contacts.find(c=>String(c.type||"").toLowerCase()==="phone")?.value||null,
+    phone:contacts.find(c=>text(c.type).toLowerCase()==="phone")?.value||null,
     desc:rubrics.length?rubrics.join(" · "):"Карточка действующей организации из 2GIS",keywords:norm(text),coords:x.point||null
   };
 }
@@ -309,7 +322,7 @@ const OVERPASS_TIMEOUT_S=12;
 const ITEM_SCHEMA=2;
 // Центр — примерно кольцо радиусом 5 км вокруг Кремля: Садовое и ближние районы.
 const CENTER_BBOX = "55.71,37.55,55.80,37.69";
-export function wantsCenter(area){return /центр/.test(String(area||"").toLowerCase())}
+export function wantsCenter(area){return /центр/.test(text(area).toLowerCase())}
 // Overpass — не один сервис, а несколько независимых зеркал одного API.
 // С единственным URL мы просто меняли зависимость от агрегатора на зависимость
 // от overpass-api.de: он регулярно перегружен и отвечает 429/504.
@@ -345,7 +358,7 @@ function osmAddress(t={}){
 }
 function osmSource(x){return `https://www.openstreetmap.org/${x.type}/${x.id}`}
 function messagingUrl(v,type){
-  if(!v)return null;v=String(v).trim();
+  if(!v)return null;v=text(v).trim();
   if(/^https?:\/\//i.test(v))return v;
   if(type==="telegram")return `https://t.me/${v.replace(/^@/,"")}`;
   if(type==="whatsapp"){const ph=v.replace(/[^\d]/g,"");return ph?`https://wa.me/${ph}`:null}
@@ -353,8 +366,8 @@ function messagingUrl(v,type){
 }
 // Теги OSM правит кто угодно. Ссылка оттуда доезжает до href в интерфейсе,
 // поэтому схему проверяем на входе, а не на выходе.
-function safeLink(raw){
-  const v=String(raw||"").trim();
+export function safeLink(raw){
+  const v=text(raw).trim();
   if(!/^https?:\/\//i.test(v))return null;
   try{const u=new URL(v);return /^https?:$/.test(u.protocol)?u.href:null}catch{return null}
 }
@@ -364,7 +377,7 @@ function normalizeOsmItem(x,plan){
   const reservation=safeLink(t.reservation);
   const telegram=messagingUrl(t["contact:telegram"]||t.telegram,"telegram");
   const whatsapp=messagingUrl(t["contact:whatsapp"]||t.whatsapp,"whatsapp");
-  const directBook=telegram||whatsapp||reservation||(phone?`tel:${String(phone).replace(/[^\d+]/g,"")}`:null);
+  const directBook=telegram||whatsapp||reservation||(phone?`tel:${text(phone).replace(/[^\d+]/g,"")}`:null);
   const name=t.name||t["name:ru"]||t.brand||"Заведение";
   const amenity=t.amenity||t.leisure||t.sport||"place";
   const text=[name,t.brand,t.cuisine,amenity,t.description,t["description:ru"],t["smoking"],t["opening_hours"]].filter(Boolean).join(" ");
