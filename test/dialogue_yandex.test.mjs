@@ -192,3 +192,36 @@ test("агент умеет попросить о близости отдель�
   assert.match(rec.args.area,/только если человек прямо назвал центр/);
   assert.match(agentSystem({}),/Центр города тут ни при чём/);
 });
+
+// ---- Манера речи ----
+// «Нужен слог молодёжный, но не прямо чтобы пиздюк»: две границы сразу,
+// и обе легко потерять при следующей правке подсказки.
+
+test("агент говорит на «ты» и не языком поддержки", async () => {
+  const {agentSystem}=await import("../agent.mjs");
+  const t=agentSystem({voice:true});
+  assert.match(t,/На «ты»/);
+  for(const canceler of ["рекомендую обратить внимание","данное заведение","локация"]){
+    assert.ok(t.toLowerCase().includes(canceler),`канцелярит «${canceler}» должен быть назван запрещённым`);
+  }
+  assert.match(t,/Отличный выбор!/,"образец языка поддержки показан как антипример");
+});
+
+test("вторая граница: свой — не значит наглый", async () => {
+  const {CONCIERGE,agentSystem}=await import("../agent.mjs");
+  const never=CONCIERGE.never.join(" ").toLowerCase();
+  assert.match(never,/не дерзит/);
+  assert.match(never,/не матерится/);
+  assert.match(never,/свой — не значит наглый/);
+  // Перебор со сленгом показан примером: описания «не злоупотребляй» мало,
+  // модели нужен образец того, чего делать нельзя.
+  assert.match(agentSystem({voice:true}),/Бро, зацени/);
+  assert.match(agentSystem({voice:true}),/это перебор/);
+});
+
+test("сленг дозирован, а не запрещён и не насыпан", async () => {
+  const {agentSystem}=await import("../agent.mjs");
+  const t=agentSystem({});
+  assert.match(t,/одно на реплику/);
+  assert.match(t,/понятно любому/,"речь должна оставаться понятной не только своим");
+});

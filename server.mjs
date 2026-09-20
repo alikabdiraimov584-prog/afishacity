@@ -12,7 +12,7 @@ import {searchLiveInventory,providerHealth,snapshotStatus} from "./providers.mjs
 import {renderCover} from "./cover.mjs";
 import {safeRemoteUrl,guardedFetch,USER_AGENT} from "./net_guard.mjs";
 import {resolvePhoto,ownSiteUrl} from "./photos.mjs";
-import {yandexConfig,yandexStatus,yandexStt,yandexTts,YandexError,STT_MAX_BYTES} from "./yandex.mjs";
+import {yandexConfig,yandexStatus,yandexStt,yandexTts,YandexError,STT_MAX_BYTES,ttsEngineState} from "./yandex.mjs";
 import {runYandexDialogue} from "./dialogue_yandex.mjs";
 import {CONCIERGE} from "./agent.mjs";
 import {rankLive,resultPayload} from "./live_ranker.mjs";
@@ -707,7 +707,8 @@ const server=http.createServer(async(req,res)=>{
       const text=String(body.text||"").trim();
       if(!text)return json(res,400,{error:"text_required"});
       try{
-        const mp3=await yandexTts(text,{cfg:YANDEX,voice:body.voice||YANDEX.voice});
+        const mp3=await yandexTts(text,{cfg:YANDEX,voice:body.voice||YANDEX.voice,
+          role:body.role||YANDEX.role||CONCIERGE.voiceRole});
         res.writeHead(200,{"Content-Type":"audio/mpeg","Cache-Control":"no-store",
           "Content-Length":String(mp3.length),...corsHeaders(req)});
         return res.end(mp3);
@@ -735,6 +736,10 @@ const server=http.createServer(async(req,res)=>{
         agent:CONCIERGE.name,
         yandex:yandexStatus(),
         voice_provider:YANDEX.ready?"yandex-speechkit":null,
+        // Видно, на какой версии синтеза мы в итоге работаем: откат на первую
+        // происходит молча, и без этого поля «почему голос другой» не понять.
+        voice_engine:{...ttsEngineState(),voice:YANDEX.voice,role:YANDEX.role||CONCIERGE.voiceRole,
+          version:YANDEX.ttsVersion},
         text_ai_model:TEXT_MODEL,
         telegram_auth:TG_REQUIRED,
         env_skipped_lines:ENV_SKIPPED,

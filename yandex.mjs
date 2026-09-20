@@ -14,6 +14,11 @@
 const LLM_URL="https://llm.api.cloud.yandex.net/foundationModels/v1/completion";
 const STT_URL="https://stt.api.cloud.yandex.net/speech/v1/stt:recognize";
 const TTS_URL="https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize";
+const TTS_V3_URL="https://tts.api.cloud.yandex.net/tts/v3/utteranceSynthesis";
+
+// Голоса, которых в первой версии API нет вовсе. Именно они звучат моложе и
+// естественнее — старые голоса первой версии слышно как «робот читает».
+export const V3_ONLY_VOICES=new Set(["dasha","julia","lera","masha","alexander","kirill","anton"]);
 
 export const STT_MAX_BYTES=1024*1024;        // предел короткого распознавания
 export const TTS_MAX_CHARS=5000;
@@ -29,8 +34,16 @@ export function yandexConfig(env=process.env){
     // два предложения, а лишняя секунда молчания в живом диалоге заметнее, чем
     // разница в формулировке. Для переписки остаётся старшая модель.
     voiceModel:env.YANDEX_VOICE_MODEL||"yandexgpt-lite/latest",
-    voice:env.YANDEX_VOICE||"filipp",
+    voice:env.YANDEX_VOICE||"anton",
     emotion:env.YANDEX_EMOTION||"neutral",
+    // Подъём интонационного контура: голос звучит живее и моложе. Только v3.
+    pitchShift:Number(env.YANDEX_PITCH_SHIFT||0),
+    // Роль (амплуа) — это про манеру, а не про тембр: один и тот же голос
+    // в neutral и friendly звучит на разный возраст. Есть только в v3.
+    role:env.YANDEX_ROLE||"good",
+    // auto — пробуем третью версию, при отказе один раз откатываемся на первую
+    // и дальше работаем на ней. v1/v3 — жёстко выбранная версия.
+    ttsVersion:env.YANDEX_TTS_VERSION||"auto",
     speed:Number(env.YANDEX_SPEED||1.08),
     temperature:Number(env.YANDEX_TEMPERATURE||0.3),
     maxTokens:Number(env.YANDEX_MAX_TOKENS||1500),
@@ -71,7 +84,7 @@ function describeError(status,body){
   return new YandexError(human,{status,code,retryable});
 }
 
-async function call(url,{method="POST",headers={},body,cfg,timeoutMs=20000,fetchImpl=fetch,raw=false,signal=null}){
+async function call(url,{method="POST",headers={},body,cfg,timeoutMs=20000,fetchImpl=fetch,raw=false,text=false,signal=null}){
   if(!cfg.ready)throw new YandexError("Yandex Cloud не настроен: нужны YANDEX_API_KEY и YANDEX_FOLDER_ID",{status:0});
   const ctrl=new AbortController();
   const timer=setTimeout(()=>ctrl.abort(),timeoutMs);
@@ -85,7 +98,9 @@ async function call(url,{method="POST",headers={},body,cfg,timeoutMs=20000,fetch
       try{parsed=await r.json()}catch{try{parsed=await r.text()}catch{parsed=null}}
       throw describeError(r.status,parsed);
     }
-    return raw?Buffer.from(await r.arrayBuffer()):await r.json();
+    if(raw)return Buffer.from(await r.arrayBuffer());
+    if(text)return await r.text();
+    return await r.json();
   }catch(e){
     if(e instanceof YandexError)throw e;
     if(e&&e.name==="AbortError")throw new YandexError("Yandex Cloud не ответил вовремя",{status:0,retryable:true});
@@ -139,14 +154,84 @@ export async function yandexStt(audio,{cfg=yandexConfig(),fetchImpl=fetch,lang="
   return String(d&&d.result||"").trim();
 }
 
+/**
+ * Разбор ответа третьей версии синтеза.
+ *
+ * В gRPC это поток сообщений, и REST-обёртка отдаёт его построчно: по объекту
+ * JSON на строку, звук внутри base64. Шлюзы заворачивают такой поток
+ * по-разному — кто в {result:…}, кто без обёртки, кто одним массивом, —
+ * поэтому разбираем терпимо: ищем куски звука, а не конкретную форму.
+ */
+export function parseV3Audio(raw){
+  const text=typeof raw==="string"?raw:String(raw||"");
+  const chunks=[];
+  const take=(node)=>{
+    if(!node||typeof node!=="object")return;
+    if(Array.isArray(node)){for(const n of node)take(n);return}
+    const data=node.audioChunk&&node.audioChunk.data;
+    if(typeof data==="string"&&data)chunks.push(Buffer.from(data,"base64"));
+    if(node.result)take(node.result);
+  };
+  // Сначала пробуем как единое целое: некоторые шлюзы отдают массив.
+  try{take(JSON.parse(text))}
+  catch{
+    for(const line of text.split("\n")){
+      const s=line.trim();
+      if(!s)continue;
+      try{take(JSON.parse(s))}catch{/* обрывок строки — пропускаем */}
+    }
+  }
+  return chunks.length?Buffer.concat(chunks):null;
+}
+
+/** Синтез третьей версией: молодые голоса и роли живут только здесь. */
+async function ttsV3(t,{cfg,fetchImpl,voice,role,speed,timeoutMs,signal}){
+  const hints=[{voice}];
+  const r=role||cfg.role;
+  if(r)hints.push({role:r});
+  const sp=Number.isFinite(speed)?speed:cfg.speed;
+  if(Number.isFinite(sp))hints.push({speed:String(sp)});
+  if(Number.isFinite(cfg.pitchShift)&&cfg.pitchShift)hints.push({pitchShift:String(cfg.pitchShift)});
+  const body=JSON.stringify({
+    text:t,hints,
+    outputAudioSpec:{containerAudio:{containerAudioType:"MP3"}},
+    loudnessNormalizationType:"LUFS"
+  });
+  const out=await call(TTS_V3_URL,{body,cfg,fetchImpl,timeoutMs,signal,text:true,
+    headers:{"Content-Type":"application/json","x-folder-id":cfg.folder}});
+  const mp3=parseV3Audio(out);
+  if(!mp3||!mp3.length)throw new YandexError("Синтез вернул пустой звук",{status:0,retryable:true});
+  return mp3;
+}
+
+// Откат на первую версию делается один раз на весь процесс: если шлюз третью
+// не отдаёт, незачем ходить туда на каждой реплике и тратить по секунде.
+let v3Broken=false;
+export function ttsEngineState(){return {v3_disabled:v3Broken}}
+export function resetTtsEngine(){v3Broken=false}
+
 /** Синтез речи. Возвращает Buffer с MP3. */
 export async function yandexTts(text,{cfg=yandexConfig(),fetchImpl=fetch,lang="ru-RU",
-  voice,emotion,speed,format="mp3",timeoutMs=15000,signal=null}={}){
+  voice,emotion,role,speed,format="mp3",timeoutMs=15000,signal=null}={}){
   const t=String(text||"").trim();
   if(!t)throw new YandexError("Нечего произносить",{status:0});
+  const name=voice||cfg.voice;
+  const wantV3=cfg.ttsVersion==="v3"||
+    (cfg.ttsVersion!=="v1"&&!v3Broken&&(V3_ONLY_VOICES.has(name)||Boolean(role||cfg.role)||format==="mp3"));
+  if(wantV3){
+    try{
+      return await ttsV3(t.slice(0,TTS_MAX_CHARS),{cfg,fetchImpl,voice:name,role,speed,timeoutMs,signal});
+    }catch(e){
+      // Голоса, которых в первой версии нет, отката не имеют: молча подменять
+      // выбранный голос другим — хуже, чем честно сказать, что не вышло.
+      if(cfg.ttsVersion==="v3"||V3_ONLY_VOICES.has(name))throw e;
+      v3Broken=true;
+      console.error("SpeechKit v3 недоступен, перехожу на v1:",e&&e.message||e);
+    }
+  }
   const form=new URLSearchParams({
     text:t.slice(0,TTS_MAX_CHARS),lang,
-    voice:voice||cfg.voice,
+    voice:name,
     speed:String(Number.isFinite(speed)?speed:cfg.speed),
     format,
     folderId:cfg.folder

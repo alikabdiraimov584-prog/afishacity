@@ -2,10 +2,11 @@
 // разбор ответа и — главное — что ошибки не проглатываются, а называются.
 import test from "node:test";
 import assert from "node:assert/strict";
-import {yandexComplete,yandexStt,yandexTts,yandexConfig,modelUri,yandexStatus,YandexError,STT_MAX_BYTES} from "../yandex.mjs";
+import {yandexComplete,yandexStt,yandexTts,yandexConfig,modelUri,yandexStatus,YandexError,STT_MAX_BYTES,
+  parseV3Audio,V3_ONLY_VOICES,resetTtsEngine,ttsEngineState} from "../yandex.mjs";
 
 const CFG={key:"test-key",folder:"b1gfolder",ready:true,model:"yandexgpt/latest",
-  voice:"alena",emotion:"good",temperature:0.3,maxTokens:1500};
+  voice:"alena",emotion:"good",temperature:0.3,maxTokens:1500,ttsVersion:"v1"};
 const ok=(body)=>({ok:true,status:200,json:async()=>body,arrayBuffer:async()=>new TextEncoder().encode("audio").buffer});
 const fail=(status,body)=>({ok:false,status,json:async()=>body,text:async()=>JSON.stringify(body)});
 const reply=(text)=>({result:{alternatives:[{message:{role:"assistant",text},status:"ALTERNATIVE_STATUS_FINAL"}],
@@ -90,13 +91,13 @@ test("синтез речи отдаёт mp3 и обрезает слишком 
 });
 
 test("состояние настроек видно до первого разговора", () => {
-  assert.deepEqual(yandexStatus({}),{ready:false,has_key:false,has_folder:false,model:null,voice:"filipp"});
+  assert.deepEqual(yandexStatus({}),{ready:false,has_key:false,has_folder:false,model:null,voice:"anton"});
   const s=yandexStatus({YANDEX_API_KEY:"k",YANDEX_FOLDER_ID:"f",YANDEX_VOICE:"zahar"});
   assert.equal(s.ready,true);
   assert.equal(s.model,"gpt://f/yandexgpt/latest");
   assert.equal(s.voice,"zahar","настройка голоса перебивает умолчание");
   assert.deepEqual(yandexStatus({YANDEX_API_KEY:"k"}),
-    {ready:false,has_key:true,has_folder:false,model:null,voice:"filipp"},"видно, чего именно не хватает");
+    {ready:false,has_key:true,has_folder:false,model:null,voice:"anton"},"видно, чего именно не хватает");
 });
 
 test("обрыв по таймауту сообщается как повторяемая ошибка", async () => {
@@ -143,8 +144,78 @@ test("обе модели настраиваются отдельно", () => {
 test("скорость речи берётся из настроек, а не прибита единицей", async () => {
   let body=null;
   const fetchImpl=async(u,init)=>{body=new URLSearchParams(init.body);return {ok:true,status:200,arrayBuffer:async()=>new ArrayBuffer(8)}};
-  await yandexTts("привет",{cfg:yandexConfig({YANDEX_API_KEY:"k",YANDEX_FOLDER_ID:"f"}),fetchImpl});
+  await yandexTts("привет",{cfg:yandexConfig({YANDEX_API_KEY:"k",YANDEX_FOLDER_ID:"f",YANDEX_TTS_VERSION:"v1"}),fetchImpl});
   assert.equal(body.get("speed"),"1.08","чуть быстрее обычного: медленная речь слушается как задумчивость");
-  await yandexTts("привет",{cfg:yandexConfig({YANDEX_API_KEY:"k",YANDEX_FOLDER_ID:"f",YANDEX_SPEED:"1.3"}),fetchImpl});
+  await yandexTts("привет",{cfg:yandexConfig({YANDEX_API_KEY:"k",YANDEX_FOLDER_ID:"f",YANDEX_TTS_VERSION:"v1",YANDEX_SPEED:"1.3"}),fetchImpl});
   assert.equal(body.get("speed"),"1.3");
+});
+
+// ---- Третья версия синтеза ----
+// Молодые голоса (alexander, kirill, anton, masha…) существуют только в v3,
+// и там же есть роли — манера звучания, которая меняет возраст голоса сильнее
+// самого тембра.
+
+const V3CFG={...CFG,ttsVersion:"auto",voice:"alexander",speed:1.08,role:""};
+const v3line=(...b64)=>b64.map(d=>JSON.stringify({result:{audioChunk:{data:d}}})).join("\n");
+const okText=(body)=>({ok:true,status:200,text:async()=>body});
+
+test("синтез v3 просит голос, роль и скорость подсказками", async () => {
+  resetTtsEngine();
+  let seen=null;
+  const fetchImpl=async(url,init)=>{seen={url,init};return okText(v3line(Buffer.from("mp3").toString("base64")))};
+  const buf=await yandexTts("Ровесник в двух шагах",{cfg:V3CFG,fetchImpl,role:"friendly"});
+  assert.match(seen.url,/tts\/v3\/utteranceSynthesis/);
+  const body=JSON.parse(seen.init.body);
+  assert.deepEqual(body.hints,[{voice:"alexander"},{role:"friendly"},{speed:"1.08"}]);
+  assert.equal(body.outputAudioSpec.containerAudio.containerAudioType,"MP3");
+  assert.equal(buf.toString(),"mp3");
+});
+
+test("поток из нескольких кусков собирается в один файл", async () => {
+  resetTtsEngine();
+  const parts=["0J/RgA==","0LjQstC10YI="];                 // два куска звука
+  const whole=Buffer.concat(parts.map(p=>Buffer.from(p,"base64")));
+  const fetchImpl=async()=>okText(v3line(...parts));
+  const buf=await yandexTts("привет",{cfg:V3CFG,fetchImpl});
+  assert.deepEqual(buf,whole,"звук склеивается по порядку, а не берётся первый кусок");
+});
+
+test("разбор терпим к форме обёртки", () => {
+  const d=Buffer.from("зв").toString("base64");
+  const want=Buffer.from("зв");
+  assert.deepEqual(parseV3Audio(JSON.stringify({result:{audioChunk:{data:d}}})),want,"один объект");
+  assert.deepEqual(parseV3Audio(JSON.stringify([{result:{audioChunk:{data:d}}}])),want,"массив");
+  assert.deepEqual(parseV3Audio(JSON.stringify({audioChunk:{data:d}})),want,"без обёртки result");
+  assert.deepEqual(parseV3Audio('{"result":{"audioChunk":{"data":"'+d+'"}}}\n{"result":{}}\n'),want,"строки, часть без звука");
+  assert.equal(parseV3Audio("не json"),null);
+  assert.equal(parseV3Audio(""),null);
+});
+
+test("если v3 недоступен, разговор продолжается на v1 — но один раз", async () => {
+  resetTtsEngine();
+  let v3calls=0,v1calls=0;
+  const fetchImpl=async(url)=>{
+    if(String(url).includes("/v3/")){v3calls++;return fail(404,{message:"no such method"})}
+    v1calls++;return ok({});
+  };
+  const cfg={...CFG,ttsVersion:"auto",voice:"filipp",speed:1.0};
+  assert.ok((await yandexTts("раз",{cfg,fetchImpl})).length>0,"человек всё равно слышит ответ");
+  assert.equal(ttsEngineState().v3_disabled,true);
+  await yandexTts("два",{cfg,fetchImpl});
+  await yandexTts("три",{cfg,fetchImpl});
+  assert.equal(v3calls,1,"в недоступную версию не ходим на каждой реплике");
+  assert.equal(v1calls,3);
+  resetTtsEngine();
+});
+
+test("голос, которого нет в v1, молча не подменяется другим", async () => {
+  resetTtsEngine();
+  const fetchImpl=async(url)=>String(url).includes("/v3/")?fail(404,{message:"no such method"}):ok({});
+  // Выбранный голос — это лицо агента. Подставить вместо него чужой и сделать
+  // вид, что всё хорошо, хуже, чем сказать, что не вышло.
+  for(const v of V3_ONLY_VOICES){
+    await assert.rejects(()=>yandexTts("привет",{cfg:{...CFG,ttsVersion:"auto",voice:v},fetchImpl}));
+  }
+  assert.equal(ttsEngineState().v3_disabled,false,"чужая ошибка не выключает версию для всех");
+  resetTtsEngine();
 });
