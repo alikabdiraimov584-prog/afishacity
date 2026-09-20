@@ -246,6 +246,14 @@ export function resultPayload(results,meta={}){
     image_url:x.image_url||null,image_source:x.image_source||null,booking_url:x.booking_url||null,
     booking_kind:x.booking_kind||null,booking_provider:x.booking_provider||null,phone:x.phone||null,
     reasons:x._reasons||[],dna:x._dna||placeDna(x),distance_km:x._distance_km,match:x._match||null,kind:x.kind,
-    open_now:x._hours?.open_now??null,closes_at:x._hours?.closes_at??null
+    // Все сеансы, а не только первый: без этого планировщик ставил точку на
+    // начало дня, даже когда человек просил «после 20:00».
+    times:Array.isArray(x.times)?x.times.slice(0,8):[],
+    open_now:x._hours?.open_now??null,closes_at:x._hours?.closes_at??null,
+    // Поля, которые нужны для фотографии и честной подписи источника.
+    tags:Array.isArray(x.tags)?x.tags.slice(0,8):[],cat_tags:Array.isArray(x.cat_tags)?x.cat_tags:[],
+    hours_label:x.hours_label||null,wikidata:x.wikidata||null,brand_wikidata:x.brand_wikidata||null,
+    wikimedia_commons:x.wikimedia_commons||null,image_raw:x.image_raw||null,
+    aggregator_image:x.aggregator_image||null,aggregator_name:x.aggregator_name||null
   }))}
 }

@@ -134,6 +134,17 @@ export async function resolvePhoto(place,deps={}){
     }
   }
 
+  // T4 — кадр из агрегатора. Он ниже сайта заведения и подписывается своим
+  // именем: это источник картинки, а не владелец места. Если агрегатор завтра
+  // отключится, карточка не опустеет — ниже стоит своя обложка.
+  if(place.aggregator_image&&looksLikePhoto(place.aggregator_image)){
+    const who=place.aggregator_name||place.provider||"источник";
+    const r=out({url:place.aggregator_image,origin:"aggregator",confidence:"low",
+      credit:{text:who,url:place.point_source||place.source||null},
+      license:{code:`фото предоставлено ${who}`,url:place.point_source||place.source||null}});
+    if(r)return r;
+  }
+
   // T3 — офлайн-индекс Викисклада по wikidata/brand:wikidata.
   if(commonsIndex){
     for(const qid of [place.wikidata,place.brand_wikidata]){

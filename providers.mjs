@@ -169,7 +169,8 @@ function normalizeKudagoEvent(e,plan){
     times:uniq(relevant.map(x=>x.start_time?x.start_time.slice(0,5):null).filter(Boolean)).slice(0,8),hours_label:"",
     ...pi,availability:"актуальность из KudaGo",source:e.site_url||place.site_url||"https://kudago.com/msk/",
     point_source:e.site_url||place.site_url||"https://kudago.com/msk/",official_source:null,
-    image_url:e.images?.[0]?.image||null,image_source:e.images?.[0]?.source?.link||null,
+    // Кадр агрегатора — нижняя ступень каскада, а не опознавательный знак карточки.
+    aggregator_image:e.images?.[0]?.image||null,aggregator_name:"KudaGo",image_source:e.images?.[0]?.source?.link||null,
     booking_url:e.site_url||null,booking_kind:"tickets",booking_provider:"KudaGo",phone:null,
     desc:clampText(e.description||""),keywords:norm(text),coords:place.coords||null
   };
@@ -183,7 +184,7 @@ function normalizeKudagoPlace(p,plan){
     date_start:null,date_end:null,times:[],hours_label:p.timetable||"часы работы на сайте",price_label:"цены на сайте",price_min:null,free:false,
     availability:p.is_closed?"закрыто":"действующее место",source:p.site_url||p.foreign_url||"https://kudago.com/msk/",
     point_source:p.site_url||p.foreign_url||"https://kudago.com/msk/",official_source:p.foreign_url||null,
-    image_url:p.images?.[0]?.image||null,image_source:p.images?.[0]?.source?.link||null,
+    aggregator_image:p.images?.[0]?.image||null,aggregator_name:"KudaGo",image_source:p.images?.[0]?.source?.link||null,
     booking_url:p.foreign_url||p.site_url||null,booking_kind:"site",booking_provider:p.title||"официальный сайт",phone:p.phone||null,desc:clampText(p.description||""),keywords:norm(text),coords:p.coords||null
   };
 }
@@ -228,7 +229,7 @@ function normalizeTimepadEvent(e,plan){
     price_label:priceLabel,price_min:pmin,free,availability:reg.is_registration_open===false?"регистрация закрыта":"регистрация на Timepad",
     source:e.url||e.organization?.url||"https://timepad.ru/",point_source:e.url||e.organization?.url||"https://timepad.ru/",
     official_source:e.organization?.url||null,
-    image_url:e.poster_image?.uploadcare_url?`${String(e.poster_image.uploadcare_url).startsWith("//")?"https:":""}${e.poster_image.uploadcare_url}-/preview/900x600/`:e.poster_image?.default_url||null,
+    aggregator_name:"Timepad",aggregator_image:e.poster_image?.uploadcare_url?`${String(e.poster_image.uploadcare_url).startsWith("//")?"https:":""}${e.poster_image.uploadcare_url}-/preview/900x600/`:e.poster_image?.default_url||null,
     booking_url:e.url||null,booking_kind:"tickets",booking_provider:"Timepad",phone:null,desc:clampText(e.description_short||e.description_html||""),keywords:norm(text),coords:e.location?.coordinates||null
   };
 }
@@ -351,11 +352,15 @@ function normalizeOsmItem(x,plan){
     id:`osm:${x.type}:${x.id}`,provider:"OpenStreetMap",live:true,kind:"venue",name,organizer:t.brand||name,
     cat:cats[amenity]||(/караоке|karaoke/i.test(text)?"Караоке":"Заведение"),
     tags:inferTags(text),cat_tags:structuralTags(t),area:osmAddress(t),metro:"",
+    // Эти теги приходят в том же ответе и раньше терялись: из них берётся
+    // фотография места без обращения к агрегатору.
+    wikidata:t.wikidata||null,brand_wikidata:t["brand:wikidata"]||null,
+    wikimedia_commons:t.wikimedia_commons||null,image_raw:t.image||null,
     date_start:null,date_end:null,times:[],hours_label:t.opening_hours||"часы работы не указаны в OSM",
     price_label:"цены у заведения",price_min:null,free:false,
     availability:"объект из актуальной базы OpenStreetMap; часы лучше перепроверить",
     source:osmSource(x),point_source:osmSource(x),official_source:site!==osmSource(x)?site:null,
-    image_url:/^https?:\/\//i.test(String(t.image||""))?t.image:null,
+    image_url:null,
     booking_url:directBook||((site!==osmSource(x))?site:null),booking_kind:telegram?"telegram":whatsapp?"whatsapp":reservation?"site":phone?"phone":(site!==osmSource(x)?"site":null),
     booking_provider:telegram?"Telegram":whatsapp?"WhatsApp":phone?"телефон":(site!==osmSource(x)?"официальный сайт":null),phone,
     desc:clampText(t.description||t["description:ru"]||[t.cuisine,t["opening_hours"]].filter(Boolean).join(" · ")),

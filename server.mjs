@@ -11,6 +11,7 @@ import {mkdirSync,writeFileSync as writeFileSyncFs,readFileSync as readFileSyncF
 import {searchLiveInventory,providerHealth} from "./providers.mjs";
 import {renderCover} from "./cover.mjs";
 import {safeRemoteUrl,guardedFetch,USER_AGENT} from "./net_guard.mjs";
+import {resolvePhoto,ownSiteUrl} from "./photos.mjs";
 import {rankLive,resultPayload} from "./live_ranker.mjs";
 import {startWarmup} from "./warmup.mjs";
 import {loadDotenv} from "./env.mjs";
@@ -143,20 +144,26 @@ async function proxyImage(res,raw){
 async function enrichResults(payload){
   const results=payload.results||[];
   const enriched=await Promise.all(results.map(async (x,i)=>{
-    if(i>4)return x;
-    const target=x.official_source||x.point_source||x.source;
-    if(!target|| (x.image_url&&x.booking_url))return x;
-    const meta=await pageMeta(target);
+    // Сайт заведения опрашиваем только для первых карточек: это сетевой запрос.
+    // Раньше обогащение шло по x.source, а у карточек агрегатора это его же
+    // домен — код сам углублял зависимость, вытягивая превью с агрегатора.
+    const site=i<=4?ownSiteUrl(x):null;
+    const meta=site?await pageMeta(site).catch(()=>({})):{};
+    const photo=await resolvePhoto(x,{siteMeta:async()=>meta,coverUrl});
+    const booking=safeHref(x.booking_url)||safeHref(meta.booking_url)||null;
     return {...x,
-      image_url:x.image_url||meta.image_url||null,
-      booking_url:x.booking_url||meta.booking_url||null,
-      booking_kind:x.booking_kind||meta.booking_kind||null,
-      booking_provider:x.booking_provider||meta.booking_provider||null
+      photo,
+      image_url:photo.url,                                   // совместимость со старым полем
+      // Запасной кадр на случай, если внешняя картинка не загрузится в браузере.
+      cover_url:coverUrl(x),
+      booking_url:booking,
+      booking_kind:booking?(x.booking_url?x.booking_kind:meta.booking_kind)||null:null,
+      booking_provider:booking?(x.booking_url?x.booking_provider:meta.booking_provider)||null:null,
+      sources:{data:x.provider||null,photo:photo.origin,site:site||null}
     };
   }));
   return {...payload,results:enriched};
 }
-
 async function recommend(args){
   const key=cacheKey(args),hit=CACHE.get(key);
   if(hit&&Date.now()-hit.at<CACHE_MS)return {...hit.value,cached:true};
