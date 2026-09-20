@@ -1,3 +1,5 @@
+import {parseHours,moscowNow} from "./hours.mjs";
+
 function norm(s=""){return String(s).toLowerCase().replace(/ё/g,"е").replace(/<[^>]*>/g," ").replace(/[^a-zа-я0-9\s]/gi," ").replace(/\s+/g," ").trim()}
 function words(s){const stop=new Set(["куда","сходить","пойти","хочу","хочется","сегодня","завтра","вечером","после","москва","москве","очень","сильно","много","какой","какое","что","для","чтобы","можно","найди","место"]);return norm(s).split(" ").filter(w=>w.length>3&&!stop.has(w))}
 // Короткие корни (бар, рок, спа, арт, еда, семь) задаём регэкспами с границами слов:
@@ -24,6 +26,22 @@ function dateOkay(x,args){
   if(!x.date_start)return false;return args.target_date>=x.date_start&&args.target_date<=(x.date_end||x.date_start)
 }
 function timeOkay(x,args){if(!args.after_time||!x.times?.length)return true;const a=toMin(args.after_time);return x.times.some(t=>toMin(t)!==null&&toMin(t)>=a)}
+// Момент, для которого проверяем часы работы: after_time на целевую дату, иначе «сейчас» (args.now — для тестов).
+// Если просят другой день без времени, часы не проверяем — «открыто сейчас» ничего не значит.
+function hoursMoment(args){
+  const m=String(args.after_time||"").match(/^(\d{1,2}):(\d{2})/);
+  if(m)return new Date(`${args.target_date||moscowDate()}T${m[1].padStart(2,"0")}:${m[2]}:00+03:00`);
+  if(args.target_date&&args.target_date!==moscowDate())return null;
+  return args.now?new Date(args.now):new Date();
+}
+function venueHours(x,moment){
+  if(x.kind!=="venue"||!moment)return null;
+  const h=parseHours(x.hours_label,moment);
+  if(h.open_now===null)return null;
+  let closes_in=null;
+  if(h.open_now&&h.closes_at){const t=moscowNow(moment);closes_in=(toMin(h.closes_at)-t.minute+1440)%1440}
+  return {...h,closes_in};
+}
 function priceOkay(x,args){if(args.max_price_rub===undefined||args.max_price_rub===null)return true;if(x.price_min===null||x.price_min===undefined)return true;return x.price_min<=+args.max_price_rub}
 function clamp(v,a=0,b=100){return Math.max(a,Math.min(b,v))}
 function has(text,re){return re.test(text)}
@@ -97,12 +115,19 @@ export function rankLive(items,args={},plan={}){
   const q=args.query||"",qwords=words(q),tags=requestedTags(q,plan),
     strong=new Set(tags.filter(t=>Object.keys(SYN).includes(t))),
     taste=args.taste_weights||{}, user=coordsPair(args.user_location), near=/рядом|недалеко|от меня|пешком/.test(norm(q)),
-    rain=args.weather_context?.rain===true;
+    rain=args.weather_context?.rain===true,moment=hoursMoment(args);
   const scored=[];
   for(const x of items){
     if(!dateOkay(x,args)||!timeOkay(x,args)||!priceOkay(x,args))continue;
     if(x.availability&&/закрыт/.test(norm(x.availability)))continue;
+    const hours=venueHours(x,moment);
+    // Известно, что к нужному времени заведение закрыто — не показываем.
+    if(hours&&hours.open_now===false&&args.after_time)continue;
     const text=itemText(x),xtags=new Set(x.tags||[]),dna=placeDna(x);let s=0,reasons=[],strongHit=0;
+    if(hours&&hours.open_now){
+      s+=7;reasons.push(args.after_time?`открыто в ${args.after_time}`:"открыто сейчас");
+      if(hours.closes_in!==null&&hours.closes_in<=60){s-=24;reasons.push(`закрывается в ${hours.closes_at}`)}
+    }
     for(const t of tags){if(xtags.has(t)||SYN[t]?.some(k=>hasTerm(text,k))){s+=strong.has(t)?58:22;strongHit++;reasons.push(t)}}
     let lex=0;for(const w of qwords){if(text.includes(w)){lex+=9;reasons.push(w)}}s+=Math.min(54,lex);
     if(strong.size&&strongHit===0&&lex<18)continue;
@@ -118,7 +143,7 @@ export function rankLive(items,args={},plan={}){
     if(rain&&dna.outdoors>=55)s-=42;
     if(rain&&dna.outdoors<40)s+=8;
     if(x.live)s+=8;if(x.provider==="2GIS")s+=5;
-    scored.push({...x,_score:s,_reasons:[...new Set(reasons)].slice(0,5),_dna:dna,_distance_km:distance_km});
+    scored.push({...x,_score:s,_reasons:[...new Set(reasons)].slice(0,5),_dna:dna,_distance_km:distance_km,_hours:hours});
   }
   scored.sort((a,b)=>b._score-a._score);
   if(!scored.length)return [];
@@ -140,12 +165,13 @@ export function rankLive(items,args={},plan={}){
   return out;
 }
 export function resultPayload(results,meta={}){
-  return {status:results.length?"ok":"no_match",count:results.length,providers:meta.providers||{},note:meta.note||null,results:results.map(x=>({
+  return {status:results.length?"ok":"no_match",count:results.length,providers:meta.providers||{},degraded:meta.degraded||{},from_cache:meta.from_cache||{},note:meta.note||null,results:results.map(x=>({
     id:x.id,name:x.name,organizer:x.organizer,category:x.cat,date:x.date_start||"постоянно",time:x.times?.[0]||x.hours_label||"",
     price:x.price_label,price_min:x.price_min,availability:x.availability,area:x.area,metro:x.metro,source:x.source,
     point_source:x.point_source||x.source,official_source:x.official_source||null,coords:x.coords||null,provider:x.provider,
     image_url:x.image_url||null,image_source:x.image_source||null,booking_url:x.booking_url||null,
     booking_kind:x.booking_kind||null,booking_provider:x.booking_provider||null,phone:x.phone||null,
-    reasons:x._reasons||[],dna:x._dna||placeDna(x),distance_km:x._distance_km,match:x._match||null,kind:x.kind
+    reasons:x._reasons||[],dna:x._dna||placeDna(x),distance_km:x._distance_km,match:x._match||null,kind:x.kind,
+    open_now:x._hours?.open_now??null,closes_at:x._hours?.closes_at??null
   }))}
 }

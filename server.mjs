@@ -9,6 +9,7 @@ import {buildPlan,planSummary} from "./planner.mjs";
 import {openStore} from "./store.mjs";
 import {searchLiveInventory} from "./providers.mjs";
 import {rankLive,resultPayload} from "./live_ranker.mjs";
+import {startWarmup} from "./warmup.mjs";
 
 const __dirname=fileURLToPath(new URL(".",import.meta.url));
 const PUBLIC=join(__dirname,"public");
@@ -604,4 +605,5 @@ if(process.env.NODE_ENV!=="test"){
     console.log("Text AI: "+(AI_READY?`Claude ${TEXT_MODEL} ready`:"scripted fallback (ANTHROPIC_API_KEY not set)"));
     console.log("Voice: browser speech recognition → text dialogue");
   });
+  startWarmup();
 }
