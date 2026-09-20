@@ -10,7 +10,10 @@
   },
   "scripts": {
     "start": "node server.mjs",
-    "check": "node --check server.mjs && node --check providers.mjs && node --check live_ranker.mjs && node --test",
-    "test": "node --test"
+    "check": "node --check server.mjs && node --check providers.mjs && node --check live_ranker.mjs && NODE_ENV=test node --test",
+    "test": "NODE_ENV=test node --test"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.127.0"
   }
 }

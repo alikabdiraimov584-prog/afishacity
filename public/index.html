@@ -453,12 +453,12 @@ async function submitNeuralUser(text){
       addMsg("ai",plainTextHtml(data.reply));
     }
 
-    $("#hint").textContent=`Нейросеть ведёт диалог · ${data.model||"OpenAI"} · поиск вызывается только когда он нужен`;
+    $("#hint").textContent=`Нейросеть ведёт диалог · ${data.model||"Claude"} · поиск вызывается только когда он нужен`;
   }catch(e){
     t.remove();
     chatState.aiReady=false;
     $("#aiStatus").textContent="AI fallback · Москва";
-    $("#hint").textContent="OpenAI API сейчас недоступен — включён локальный fallback.";
+    $("#hint").textContent="Claude API сейчас недоступен — включён локальный fallback.";
     toast("Нейросеть недоступна, включаю резервный режим.");
     await submitScriptedUser(text,true);
   }
@@ -536,7 +536,7 @@ async function detectCapabilities(){
     const d=await r.json();
     chatState.aiReady=Boolean(d.text_ai_ready);
     if(d.voice_ready)voice.mode="live";
-    $("#aiStatus").textContent=chatState.aiReady?`Neural chat · ${d.text_ai_model||"OpenAI"}`:"AI fallback · Москва";
+    $("#aiStatus").textContent=chatState.aiReady?`Neural chat · ${d.text_ai_model||"Claude"}`:"AI fallback · Москва";
     $("#hint").textContent=chatState.aiReady
       ?"Свободный нейросетевой диалог: FREE сам решает, что уточнить и когда искать."
       :"Preview / backend без API key: работает резервный сценарий.";

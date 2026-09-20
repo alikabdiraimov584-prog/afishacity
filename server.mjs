@@ -2,6 +2,8 @@ import http from "node:http";
 import {readFile} from "node:fs/promises";
 import {extname,join,normalize} from "node:path";
 import {fileURLToPath} from "node:url";
+import {randomUUID} from "node:crypto";
+import Anthropic from "@anthropic-ai/sdk";
 import {searchLiveInventory} from "./providers.mjs";
 import {rankLive,resultPayload} from "./live_ranker.mjs";
 
@@ -99,10 +101,9 @@ async function recommend(args){
 }
 
 const recommendTool={
-  type:"function",
   name:"recommend_free",
-  description:"Ищет реальные заведения и мероприятия Москвы в live-источниках FREE. Вызывай перед любой рекомендацией, куда пойти, где поесть, выпить, покурить кальян, послушать музыку, посмотреть событие и т.п.",
-  parameters:{
+  description:"Ищет реальные заведения и мероприятия Москвы в live-источниках FREE (KudaGo, Timepad, OpenStreetMap, 2GIS). Вызывай перед любой рекомендацией, куда пойти, где поесть, выпить, покурить кальян, послушать музыку, посмотреть событие и т.п. Возвращает только факты из источников.",
+  input_schema:{
     type:"object",
     properties:{
       query:{type:"string",description:"Полный смысл запроса пользователя по-русски."},
@@ -113,16 +114,43 @@ const recommendTool={
       interests:{type:"array",items:{type:"string"}},
       exclusions:{type:"array",items:{type:"string"}},
       area:{type:"string",description:"Район, метро или часть Москвы."},
-      taste_weights:{type:"object",description:"Taste Graph пользователя: romantic, quiet, trendy, luxury, hidden, late, family, work, active, culture, music, nightlife."},
-      user_location:{type:"object",properties:{lat:{type:"number"},lon:{type:"number"}},description:"Координаты пользователя, если он дал разрешение."},
       weather_context:{type:"object",properties:{rain:{type:"boolean"},temperature_c:{type:"number"}},description:"Контекст погоды, если он нужен запросу."}
     },
     required:["query"]
   }
 };
 
+const TEXT_MODEL=process.env.CLAUDE_MODEL||"claude-opus-5";
+const TEXT_EFFORT=process.env.CLAUDE_EFFORT||"medium";
+const AI_READY=Boolean(process.env.ANTHROPIC_API_KEY);
+let anthropic=AI_READY?new Anthropic():null;
+export function setDialogueClient(client){anthropic=client}
 
-const TEXT_MODEL=process.env.OPENAI_TEXT_MODEL||"gpt-5.6-sol";
+// История диалога хранится на сервере: Messages API не имеет состояния, а интерфейс
+// передаёт только идентификатор (поле previous_response_id / response_id).
+const CONVERSATIONS=new Map();
+const CONVERSATION_TTL_MS=2*60*60*1000;
+const CONVERSATION_MAX_MESSAGES=40;
+function conversationGet(id){
+  const c=id&&CONVERSATIONS.get(id);
+  if(c&&Date.now()-c.at<CONVERSATION_TTL_MS)return c;
+  if(c)CONVERSATIONS.delete(id);
+  return null;
+}
+function conversationTrim(messages){
+  // Режем историю только по границе обычной реплики пользователя, чтобы не разорвать пару tool_use / tool_result.
+  while(messages.length>CONVERSATION_MAX_MESSAGES){
+    const cut=messages.findIndex((m,i)=>i>0&&m.role==="user"&&typeof m.content==="string");
+    if(cut<=0)break;
+    messages.splice(0,cut);
+  }
+  return messages;
+}
+function conversationSweep(){
+  const now=Date.now();
+  for(const [id,c] of CONVERSATIONS)if(now-c.at>=CONVERSATION_TTL_MS)CONVERSATIONS.delete(id);
+}
+setInterval(conversationSweep,10*60*1000).unref();
 
 function dialogueContextSummary(context={}){
   const selected=context.selected_place?{
@@ -143,179 +171,126 @@ function dialogueContextSummary(context={}){
   });
 }
 
-function dialogueInstructions(context={}){
+// Стабильная часть системного промпта кешируется; изменчивый UI-контекст идёт отдельным блоком после неё.
+const DIALOGUE_SYSTEM=[
+  "Ты FREE — разговорный AI-агент для выбора реальных мест, заведений и мероприятий в Москве.",
+  "Главный интерфейс — свободный диалог, а не анкета и не фиксированный сценарий.",
+  "Понимай обычную человеческую речь, в том числе короткие, разговорные и неидеальные формулировки.",
+  "Не прогоняй пользователя через обязательный чек-лист вопросов.",
+  "Задавай максимум ОДИН короткий вопрос за один ход и только если ответ реально изменит выбор.",
+  "Если контекста уже достаточно — не спрашивай лишнего, сразу вызывай recommend_free.",
+  "Если пользователь говорит «хочу выпить», можно уточнить один действительно важный параметр, например атмосферу или компанию. После ответа обычно переходи к поиску; не заставляй пользователя отдельно сообщать бюджет, район и время.",
+  "Если пользователь меняет тему — например после кальяна пишет «теперь хочу потанцевать» — это новое намерение. Не переноси старый intent автоматически.",
+  "Используй выбранное место как контекст только если пользователь явно связывает следующий запрос с ним словами вроде «после этого», «рядом», «а потом», «продолжить вечер».",
+  "Когда пользователь просит куда пойти, где поесть, выпить, покурить кальян, потанцевать, сходить на событие или провести время — вызывай recommend_free, когда информации уже достаточно.",
+  "После recommend_free используй только факты из результата инструмента. Не придумывай заведения, цены, часы, доступность, фотографии или каналы бронирования.",
+  "Карточки результатов интерфейс покажет сам. В тексте после поиска достаточно коротко объяснить, почему эти варианты подходят и какой из них чем отличается.",
+  "Если хороших совпадений мало — покажи мало. Не добивай список нерелевантными местами.",
+  "Веди разговор к целевому действию: выбрать вариант, открыть бронь/билеты, построить маршрут или добавить следующую точку.",
+  "Если пользователь говорит про чрезмерное количество алкоголя, можно подобрать подходящий бар по атмосфере, но не оптимизируй рекомендации по опасному объёму алкоголя.",
+  "Отвечай по-русски, естественно, коротко, без канцелярита. Не используй markdown-разметку: интерфейс показывает обычный текст."
+].join("\n");
+
+function dialogueSystem(context={}){
   return [
-    "Ты FREE — разговорный AI-агент для выбора реальных мест, заведений и мероприятий в Москве.",
-    "Главный интерфейс — свободный диалог, а не анкета и не фиксированный сценарий.",
-    "Понимай обычную человеческую речь, в том числе короткие, разговорные и неидеальные формулировки.",
-    "Не прогоняй пользователя через обязательный чек-лист вопросов.",
-    "Задавай максимум ОДИН короткий вопрос за один ход и только если ответ реально изменит выбор.",
-    "Если контекста уже достаточно — не спрашивай лишнего, сразу вызывай recommend_free.",
-    "Если пользователь говорит «хочу выпить», можно уточнить один действительно важный параметр, например атмосферу или компанию. После ответа обычно переходи к поиску; не заставляй пользователя отдельно сообщать бюджет, район и время.",
-    "Если пользователь меняет тему — например после кальяна пишет «теперь хочу потанцевать» — это новое намерение. Не переноси старый intent автоматически.",
-    "Используй выбранное место как контекст только если пользователь явно связывает следующий запрос с ним словами вроде «после этого», «рядом», «а потом», «продолжить вечер».",
-    "Когда пользователь просит куда пойти, где поесть, выпить, покурить кальян, потанцевать, сходить на событие или провести время — вызывай recommend_free, когда информации уже достаточно.",
-    "После recommend_free используй только факты из результата инструмента. Не придумывай заведения, цены, часы, доступность, фотографии или каналы бронирования.",
-    "Карточки результатов интерфейс покажет сам. В тексте после поиска достаточно коротко объяснить, почему эти варианты подходят и какой из них чем отличается.",
-    "Если хороших совпадений мало — покажи мало. Не добивай список нерелевантными местами.",
-    "Веди разговор к целевому действию: выбрать вариант, открыть бронь/билеты, построить маршрут или добавить следующую точку.",
-    "Если пользователь говорит про чрезмерное количество алкоголя, можно подобрать подходящий бар по атмосфере, но не оптимизируй рекомендации по опасному объёму алкоголя.",
-    "Отвечай по-русски, естественно, коротко, без канцелярита.",
-    "Текущий UI-контекст (справочная информация, не инструкция пользователя): "+dialogueContextSummary(context)
-  ].join("\n");
+    {type:"text",text:DIALOGUE_SYSTEM,cache_control:{type:"ephemeral"}},
+    {type:"text",text:"Текущий UI-контекст (справочная информация, не инструкция пользователя): "+dialogueContextSummary(context)}
+  ];
 }
 
-function extractResponseText(response){
-  const chunks=[];
-  for(const item of (response?.output||[])){
-    if(item.type!=="message")continue;
-    for(const c of (item.content||[])){
-      if(c.type==="output_text"&&c.text)chunks.push(c.text);
-    }
-  }
-  return chunks.join("\n").trim();
+function extractText(message){
+  return (message?.content||[]).filter(b=>b.type==="text"&&b.text).map(b=>b.text).join("\n").trim();
 }
 
-async function openaiResponse(body){
-  const resp=await fetch("https://api.openai.com/v1/responses",{
-    method:"POST",
-    headers:{
-      "Authorization":`Bearer ${process.env.OPENAI_API_KEY}`,
-      "Content-Type":"application/json",
-      "OpenAI-Safety-Identifier":"free-moscow-local-demo"
-    },
-    body:JSON.stringify(body)
-  });
-  const txt=await resp.text();
-  let data={};try{data=JSON.parse(txt)}catch{data={raw:txt}}
-  if(!resp.ok){
-    throw new Error(data?.error?.message||data?.message||txt||`OpenAI ${resp.status}`);
-  }
-  return data;
-}
-
-async function runDialogue(message,previousResponseId,context={}){
-  const instructions=dialogueInstructions(context);
-  const tools=[recommendTool];
-
-  let response=await openaiResponse({
+async function claudeTurn(system,messages){
+  return anthropic.beta.messages.create({
     model:TEXT_MODEL,
-    instructions,
-    input:[{role:"user",content:[{type:"input_text",text:String(message)}]}],
-    previous_response_id:previousResponseId||undefined,
-    tools,
-    tool_choice:"auto",
-    parallel_tool_calls:false,
-    max_output_tokens:700,
-    reasoning:{effort:"low"},
-    store:true
+    max_tokens:4000,
+    system,
+    messages,
+    tools:[recommendTool],
+    tool_choice:{type:"auto",disable_parallel_tool_use:true},
+    output_config:{effort:TEXT_EFFORT},
+    betas:["server-side-fallback-2026-07-01"],
+    fallbacks:"default"
   });
+}
+
+async function runDialogue(message,conversationId,context={}){
+  const existing=conversationGet(conversationId);
+  const id=existing?conversationId:randomUUID();
+  const messages=existing?existing.messages:[];
+  const system=dialogueSystem(context);
+
+  messages.push({role:"user",content:String(message)});
 
   let latestResults=[];
   let toolUsed=false;
+  let response=null;
 
-  for(let loops=0;loops<3;loops++){
-    const calls=(response.output||[]).filter(x=>x.type==="function_call"&&x.name==="recommend_free");
+  for(let loops=0;loops<4;loops++){
+    response=await claudeTurn(system,messages);
+    messages.push({role:"assistant",content:response.content});
+
+    if(response.stop_reason==="refusal"||response.stop_reason==="max_tokens")break;
+    if(response.stop_reason==="pause_turn")continue;
+
+    const calls=response.content.filter(b=>b.type==="tool_use");
     if(!calls.length)break;
-    toolUsed=true;
 
-    const outputs=[];
+    const results=[];
     for(const call of calls){
-      let args={};
-      try{args=JSON.parse(call.arguments||"{}")}catch{}
-      if(!args.query)args.query=String(message);
-
-      if(context.taste_weights&&typeof context.taste_weights==="object"){
-        args.taste_weights=context.taste_weights;
+      if(call.name!=="recommend_free"){
+        results.push({type:"tool_result",tool_use_id:call.id,is_error:true,content:"unknown tool"});
+        continue;
       }
+      toolUsed=true;
+      const args=(call.input&&typeof call.input==="object")?{...call.input}:{};
+      if(!args.query)args.query=String(message);
+      if(context.taste_weights&&typeof context.taste_weights==="object")args.taste_weights=context.taste_weights;
       if(context.user_location&&Number.isFinite(+context.user_location.lat)&&Number.isFinite(+context.user_location.lon)){
         args.user_location={lat:+context.user_location.lat,lon:+context.user_location.lon};
       }
-
-      const result=await recommend(args);
-      latestResults=(result.results||[]).slice(0,5);
-
-      outputs.push({
-        type:"function_call_output",
-        call_id:call.call_id,
-        output:JSON.stringify({
-          status:result.status,
-          count:result.count,
-          note:result.note||null,
-          results:latestResults
-        })
-      });
+      try{
+        const result=await recommend(args);
+        latestResults=(result.results||[]).slice(0,5);
+        results.push({type:"tool_result",tool_use_id:call.id,content:JSON.stringify({
+          status:result.status,count:result.count,note:result.note||null,results:latestResults
+        })});
+      }catch(e){
+        results.push({type:"tool_result",tool_use_id:call.id,is_error:true,content:`providers_unavailable: ${e.message}`});
+      }
     }
-
-    response=await openaiResponse({
-      model:TEXT_MODEL,
-      instructions,
-      previous_response_id:response.id,
-      input:outputs,
-      tools,
-      tool_choice:"auto",
-      parallel_tool_calls:false,
-      max_output_tokens:700,
-      reasoning:{effort:"low"},
-      store:true
-    });
+    messages.push({role:"user",content:results});
   }
 
-  let reply=extractResponseText(response);
+  let reply=extractText(response);
+  if(response?.stop_reason==="refusal"){
+    reply="С этим запросом помочь не смогу. Давайте подберём что-то другое: место, событие или формат вечера.";
+  }
   if(!reply){
     reply=latestResults.length
       ?"Нашёл несколько подходящих вариантов. Посмотрите карточки ниже — помогу выбрать между ними."
       :"Расскажите чуть подробнее, что сейчас для вас важнее.";
   }
 
+  CONVERSATIONS.set(id,{messages:conversationTrim(messages),at:Date.now()});
+
   return {
     reply,
-    response_id:response.id,
+    response_id:id,
     results:latestResults,
     tool_used:toolUsed,
-    model:TEXT_MODEL
+    model:response?.model||TEXT_MODEL
   };
 }
 
-function liveSessionConfig(){
-  return {
-    model:"gpt-live-1",
-    instructions:[
-      "Ты FREE, спокойный голосовой AI-консьерж свободного времени в Москве.",
-      "Говори по-русски коротко и естественно.",
-      "Когда пользователь спрашивает куда пойти, где поесть, выпить, покурить кальян, потусоваться или о мероприятиях — делегируй поиск backend.",
-      "Не придумывай места, цены, часы работы или наличие.",
-      "Если пользователь говорит про очень много алкоголя, ищи подходящие бары, но не поощряй опасное употребление.",
-      "После backend-результата назови максимум три лучших варианта и коротко объясни различия."
-    ].join(" "),
-    audio:{
-      input:{
-        transcription:{
-          model:"gpt-live-transcribe",
-          languages:["ru"],
-          delay:"low",
-          keywords:["FREE","кальян","кальянная","стендап","караоке","Патриаршие","Москва"]
-        }
-      },
-      output:{voice:"marin"}
-    },
-    delegation:{
-      type:"responses",
-      responses:{
-        model:"gpt-5.6-luna",
-        reasoning:{effort:"low"},
-        instructions:[
-          "Ты backend FREE. Для любого запроса о досуге сначала вызови recommend_free.",
-          "Используй только результаты функции. Не придумывай факты.",
-          "Если совпадений мало, верни только их. Не добивай список нерелевантными вариантами."
-        ].join(" "),
-        tools:[recommendTool],
-        tool_choice:"required",
-        parallel_tool_calls:false,
-        max_output_tokens:500
-      }
-    }
-  };
+function dialogueError(e){
+  if(e instanceof Anthropic.AuthenticationError)return {status:502,error:"dialogue_auth",message:"Неверный ANTHROPIC_API_KEY"};
+  if(e instanceof Anthropic.RateLimitError)return {status:503,error:"dialogue_rate_limited",message:"Лимит запросов к Claude, попробуйте чуть позже"};
+  if(e instanceof Anthropic.BadRequestError)return {status:502,error:"dialogue_bad_request",message:e.message};
+  if(e instanceof Anthropic.APIError)return {status:502,error:"dialogue_failed",message:`Claude API ${e.status}: ${e.message}`};
+  return {status:502,error:"dialogue_failed",message:e.message};
 }
 
 const server=http.createServer(async(req,res)=>{
@@ -325,17 +300,16 @@ const server=http.createServer(async(req,res)=>{
     if(req.method==="GET"&&url.pathname==="/api/health"){
       return json(res,200,{
         ok:true,
-        text_ai_ready:Boolean(process.env.OPENAI_API_KEY),
+        text_ai_ready:AI_READY,
         text_ai_model:TEXT_MODEL,
-        voice_ready:Boolean(process.env.OPENAI_API_KEY),
-        voice_model:"gpt-live-1",
+        voice_ready:false,
+        voice_model:null,
         providers:{kudago:true,timepad:true,osm:true,dgis:Boolean(process.env.DGIS_API_KEY||process.env.TWOGIS_API_KEY)}
       });
     }
 
-
     if(req.method==="POST"&&url.pathname==="/api/dialogue"){
-      if(!process.env.OPENAI_API_KEY)return json(res,503,{error:"OPENAI_API_KEY not set",fallback:true});
+      if(!AI_READY)return json(res,503,{error:"ANTHROPIC_API_KEY not set",fallback:true});
       let body={};
       try{body=JSON.parse(await readBody(req,240000))}catch{return json(res,400,{error:"invalid_json"})}
       const message=String(body.message||"").trim();
@@ -344,7 +318,8 @@ const server=http.createServer(async(req,res)=>{
         return json(res,200,await runDialogue(message,body.previous_response_id||null,body.context||{}));
       }catch(e){
         console.error("dialogue:",e);
-        return json(res,502,{error:"dialogue_failed",message:e.message,fallback:true});
+        const err=dialogueError(e);
+        return json(res,err.status,{error:err.error,message:err.message,fallback:true});
       }
     }
 
@@ -372,29 +347,10 @@ const server=http.createServer(async(req,res)=>{
       }catch(e){return json(res,502,{error:"weather_unavailable",message:e.message})}
     }
 
+    // Голосовой WebRTC-режим был привязан к OpenAI Realtime; у Claude такого канала нет.
+    // Интерфейс использует распознавание речи браузера и отправляет текст в /api/dialogue.
     if(req.method==="POST"&&url.pathname==="/api/live-session"){
-      if(!process.env.OPENAI_API_KEY)return json(res,503,{error:"OPENAI_API_KEY not set"});
-      const origin=req.headers.origin||"";
-      const allowed=origin===""||origin===`http://localhost:${PORT}`||origin===`http://127.0.0.1:${PORT}`;
-      if(!allowed)return json(res,403,{error:"unexpected_origin"});
-      let body={};
-      try{body=JSON.parse(await readBody(req))}catch{return json(res,400,{error:"invalid_json"})}
-      if(!String(body.sdp||"").trim())return json(res,400,{error:"sdp_required"});
-      const upstream=await fetch("https://api.openai.com/v1/live/sessions",{
-        method:"POST",
-        headers:{
-          "Authorization":`Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type":"application/json",
-          "OpenAI-Safety-Identifier":"free-moscow-local-demo"
-        },
-        body:JSON.stringify({
-          session:liveSessionConfig(),
-          transport:{type:"webrtc",sdp:body.sdp}
-        })
-      });
-      const txt=await upstream.text();
-      if(!upstream.ok)return send(res,upstream.status,txt,upstream.headers.get("content-type")||"text/plain");
-      return send(res,201,txt,"application/json; charset=utf-8");
+      return json(res,501,{error:"voice_not_supported",message:"Голосовой режим работает через распознавание речи в браузере"});
     }
 
     if(req.method!=="GET")return send(res,405,"Method not allowed");
@@ -414,9 +370,13 @@ const server=http.createServer(async(req,res)=>{
   }
 });
 
-server.listen(PORT,"127.0.0.1",()=>{
-  console.log(`FREE v17: http://localhost:${PORT}`);
-  console.log("Live providers: KudaGo + Timepad + OpenStreetMap/Overpass" + (process.env.DGIS_API_KEY||process.env.TWOGIS_API_KEY?" + 2GIS":""));
-  console.log("Text AI: "+(process.env.OPENAI_API_KEY?`${TEXT_MODEL} ready`:"scripted fallback"));
-  console.log("Voice: "+(process.env.OPENAI_API_KEY?"GPT-Live ready":"browser voice fallback"));
-});
+export {runDialogue,conversationTrim,recommendTool,dialogueSystem};
+
+if(process.env.NODE_ENV!=="test"){
+  server.listen(PORT,"127.0.0.1",()=>{
+    console.log(`FREE v18: http://localhost:${PORT}`);
+    console.log("Live providers: KudaGo + Timepad + OpenStreetMap/Overpass" + (process.env.DGIS_API_KEY||process.env.TWOGIS_API_KEY?" + 2GIS":""));
+    console.log("Text AI: "+(AI_READY?`Claude ${TEXT_MODEL} ready`:"scripted fallback (ANTHROPIC_API_KEY not set)"));
+    console.log("Voice: browser speech recognition → text dialogue");
+  });
+}
