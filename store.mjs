@@ -67,10 +67,24 @@ export function openStore(file=":memory:"){
     user({tg_id=null,anon_id=null,first_name=null}={}){
       const ts=now();
       let u=tg_id?q.userByTg.get(tg_id):null;
-      if(!u&&anon_id){u=q.userByAnon.get(anon_id);if(u&&tg_id){q.linkAnon.run(tg_id,u.id);u=q.userById.get(u.id)}}
+      let claimedByOther=false;
+      if(!u&&anon_id){
+        const a=q.userByAnon.get(anon_id);
+        claimedByOther=Boolean(a&&a.tg_id!==null&&a.tg_id!==tg_id);
+        // Анонимный идентификатор приходит обычным заголовком, поэтому он даёт
+        // доступ только к ещё ничьей записи. Раньше первого входа с чужим
+        // X-Free-Client хватало, чтобы попасть в аккаунт другого пользователя
+        // Telegram и читать его профиль. Уже привязанную запись не отдаём:
+        // для этого tg_id заводится своя.
+        if(a&&!tg_id)u=a;
+        else if(a&&a.tg_id===null){q.linkAnon.run(tg_id,a.id);u=q.userById.get(a.id)}
+      }
       if(!u){
         if(!tg_id&&!anon_id)return null;
-        const r=q.insUser.run(tg_id,anon_id,first_name,ts,ts);u=q.userById.get(r.lastInsertRowid);
+        // Идентификатор занят другим Telegram — себе его не присваиваем,
+        // иначе вставка падает на уникальном индексе и запрос завершается ошибкой.
+        const r=q.insUser.run(tg_id,claimedByOther?null:anon_id,first_name,ts,ts);
+        u=q.userById.get(r.lastInsertRowid);
       }else q.touch.run(ts,first_name,u.id);
       return {id:u.id,tg_id:u.tg_id,anon_id:u.anon_id,first_name:first_name||u.first_name,created_at:u.created_at};
     },

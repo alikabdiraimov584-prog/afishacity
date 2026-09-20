@@ -216,8 +216,17 @@ function haptic(kind="light"){if(!NATIVE||!NATIVE.Haptics)return;try{if(kind==="
 // Анонимный идентификатор клиента: профиль живёт на сервере и переживает переустановку веб-части.
 let CLIENT_ID=null;try{CLIENT_ID=localStorage.getItem("free_client_id");if(!CLIENT_ID){CLIENT_ID=(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2));localStorage.setItem("free_client_id",CLIENT_ID)}}catch(_){CLIENT_ID=null}
 function apiFetch(path,opts={}){const headers={...(opts.headers||{})};if(CLIENT_ID)headers["X-Free-Client"]=CLIENT_ID;if(TG&&TG.initData)headers["X-Telegram-Init-Data"]=TG.initData;return fetch(API_BASE+path,{...opts,headers})}
-function openExternal(url){
-  if(!url)return;
+// Ссылки приходят из данных провайдеров, а теги OSM правит кто угодно.
+// javascript:-ссылка, открытая через location.href, выполняется в нашем origin.
+function safeUrl(raw){
+  const v=String(raw||"").trim();
+  if(!v)return "";
+  if(/^(https?:|mailto:|tel:)/i.test(v)){try{new URL(v);return v}catch(_){return ""}}
+  return "";
+}
+function openExternal(raw){
+  const url=safeUrl(raw);
+  if(!url){if(raw)toast("Ссылка выглядит небезопасно, не открываю");return}
   if(NATIVE){if(/^https?:/i.test(url)&&NATIVE.Browser){NATIVE.Browser.open({url,presentationStyle:"popover"}).catch(()=>{window.location.href=url});return}window.location.href=url;return}
   if(TG){try{if(/^https?:\/\/t\.me\//i.test(url))TG.openTelegramLink(url);else if(/^https?:/i.test(url))TG.openLink(url);else window.location.href=url;return}catch(_){}}
   const w=window.open(url,"_blank","noopener");
@@ -236,7 +245,10 @@ function deferredOpen(){
 function linkFallback(url,label="Открыть ссылку вручную"){return url?`<div class="small" style="margin-top:8px"><a href="${esc(url)}" target="_blank" rel="noopener" style="color:#315fff;font-weight:600">${esc(label)} ↗</a></div>`:""}
 function esc(s=""){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 function norm(s=""){return String(s).toLowerCase().replace(/ё/g,"е").replace(/<[^>]*>/g," ").replace(/[^a-zа-я0-9+\-\s]/gi," ").replace(/\s+/g," ").trim()}
-function save(){localStorage.setItem("free_v14_taste",JSON.stringify(taste));localStorage.setItem("free_v14_saved",JSON.stringify(saved));localStorage.setItem("free_v14_plan",JSON.stringify(plan));renderSaved();renderPlan();renderTaste();pushProfile()}
+// В приватном окне и при переполнении квоты setItem бросает исключение.
+// Раньше оно обрывало весь обработчик: место не сохранялось и интерфейс замирал.
+function persist(key,value){try{localStorage.setItem(key,JSON.stringify(value))}catch(_){}}
+function save(){persist("free_v14_taste",taste);persist("free_v14_saved",saved);persist("free_v14_plan",plan);renderSaved();renderPlan();renderTaste();pushProfile()}
 // ---- Профиль на сервере ----
 let profileState={ready:false,evenings:[],stats:{},user:null},pushTimer=null;
 function pushProfile(){
@@ -253,7 +265,7 @@ async function loadProfile(){
     const localHas=saved.length||plan.length||Object.values(taste).some(v=>v);
     if(serverHas){ // сервер — источник правды между устройствами
       taste={...taste,...(p.taste||{})};saved=p.saved||[];plan=p.plan||[];
-      localStorage.setItem("free_v14_taste",JSON.stringify(taste));localStorage.setItem("free_v14_saved",JSON.stringify(saved));localStorage.setItem("free_v14_plan",JSON.stringify(plan));
+      persist("free_v14_taste",taste);persist("free_v14_saved",saved);persist("free_v14_plan",plan);
       renderSaved();renderPlan();renderTaste();
     }
     profileState.ready=true;
@@ -268,7 +280,7 @@ function learn(type,r){
   if(!r)return;
   if(!chatState.serverOk||!profileState.ready)return;
   apiFetch("/api/me/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type,dna:r.dna||null,place_id:r.id,name:r.name})})
-    .then(x=>x.ok?x.json():null).then(d=>{if(d&&d.taste){taste={...taste,...d.taste};localStorage.setItem("free_v14_taste",JSON.stringify(taste));profileState.stats[type]=(profileState.stats[type]||0)+1;renderProfileMeta();if($("#view-profile").classList.contains("on"))renderTaste()}}).catch(()=>{});
+    .then(x=>x.ok?x.json():null).then(d=>{if(d&&d.taste){taste={...taste,...d.taste};persist("free_v14_taste",taste);profileState.stats[type]=(profileState.stats[type]||0)+1;renderProfileMeta();if($("#view-profile").classList.contains("on"))renderTaste()}}).catch(()=>{});
 }
 async function rememberEvening(p,title){
   if(!p||!chatState.serverOk||!profileState.ready)return;
@@ -335,7 +347,7 @@ function extractSlots(t){
   m=n.match(/(?:до|бюджет)\s*(\d{2,6})/);if(m)s.max_price_rub=+m[1];
   m=n.match(/после\s*(\d{1,2})(?::(\d{2}))?/);if(m)s.after_time=String(+m[1]).padStart(2,"0")+":"+String(+(m[2]||0)).padStart(2,"0");
   if(/вечер/.test(n)&&!s.after_time)s.after_time="18:00";
-  if(/сегодня/.test(n))s.date_word="today";if(/завтра/.test(n))s.date_word="tomorrow";
+  if(/сегодня/.test(n))s.date_word="today";if(/(?<![а-я])завтра(?![а-я])/.test(n))s.date_word="tomorrow";
   if(/коктейл/.test(n))s.style="cocktail";if(/пиво|паб/.test(n))s.style="pub";if(/вино/.test(n))s.style="wine";
   if(/спокой|тихо|разговар/.test(n))s.vibe="quiet";if(/шумно|весело|тусов/.test(n))s.vibe="social";if(/красив/.test(n))s.vibe="beautiful";
   if(/(?<![а-я])рок(?![а-я])/.test(n))s.genre="rock";if(/джаз/.test(n))s.genre="jazz";if(/стендап/.test(n))s.genre="standup";

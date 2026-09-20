@@ -306,17 +306,24 @@ function messagingUrl(v,type){
   if(type==="whatsapp"){const ph=v.replace(/[^\d]/g,"");return ph?`https://wa.me/${ph}`:null}
   return null;
 }
+// Теги OSM правит кто угодно. Ссылка оттуда доезжает до href в интерфейсе,
+// поэтому схему проверяем на входе, а не на выходе.
+function safeLink(raw){
+  const v=String(raw||"").trim();
+  if(!/^https?:\/\//i.test(v))return null;
+  try{const u=new URL(v);return /^https?:$/.test(u.protocol)?u.href:null}catch{return null}
+}
 function normalizeOsmItem(x,plan){
   const t=x.tags||{};
   const phone=t["contact:phone"]||t.phone||null;
-  const reservation=/^https?:\/\//i.test(String(t.reservation||""))?t.reservation:null;
+  const reservation=safeLink(t.reservation);
   const telegram=messagingUrl(t["contact:telegram"]||t.telegram,"telegram");
   const whatsapp=messagingUrl(t["contact:whatsapp"]||t.whatsapp,"whatsapp");
   const directBook=telegram||whatsapp||reservation||(phone?`tel:${String(phone).replace(/[^\d+]/g,"")}`:null);
   const name=t.name||t["name:ru"]||t.brand||"Заведение";
   const amenity=t.amenity||t.leisure||t.sport||"place";
   const text=[name,t.brand,t.cuisine,amenity,t.description,t["description:ru"],t["smoking"],t["opening_hours"]].filter(Boolean).join(" ");
-  const site=t.website||t["contact:website"]||osmSource(x);
+  const site=safeLink(t.website)||safeLink(t["contact:website"])||osmSource(x);
   const cats={
     hookah_lounge:"Кальянная",bar:"Бар",pub:"Паб",biergarten:"Бар",nightclub:"Ночной клуб",
     restaurant:"Ресторан",cafe:"Кафе",sauna:"Сауна",spa:"Спа"

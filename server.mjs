@@ -10,6 +10,7 @@ import {openStore} from "./store.mjs";
 import {mkdirSync,writeFileSync as writeFileSyncFs,readFileSync as readFileSyncFs,existsSync,readdirSync,unlinkSync,statSync} from "node:fs";
 import {searchLiveInventory,providerHealth} from "./providers.mjs";
 import {renderCover} from "./cover.mjs";
+import {safeRemoteUrl,guardedFetch,USER_AGENT} from "./net_guard.mjs";
 import {rankLive,resultPayload} from "./live_ranker.mjs";
 import {startWarmup} from "./warmup.mjs";
 import {loadDotenv} from "./env.mjs";
@@ -27,10 +28,18 @@ const TG_BOT_TOKEN=process.env.TELEGRAM_BOT_TOKEN||"";
 const TG_REQUIRED=Boolean(TG_BOT_TOKEN);
 const dialogueLimiter=createRateLimiter({limit:Number(process.env.DIALOGUE_RATE_LIMIT||40),windowMs:10*60*1000});
 const shareLimiter=createRateLimiter({limit:Number(process.env.SHARE_RATE_LIMIT||20),windowMs:10*60*1000});
-setInterval(()=>{dialogueLimiter.sweep();shareLimiter.sweep()},5*60*1000).unref();
+setInterval(()=>{try{dialogueLimiter.sweep();shareLimiter.sweep()}catch(e){console.error("уборка лимитов:",e&&e.message||e)}},5*60*1000).unref();
+// X-Forwarded-For присылает клиент, и подделка заголовка обнуляла лимит запросов
+// вместе с защитой ключа Claude. Доверяем ему, только когда соединение пришло от
+// собственного обратного прокси (TRUST_PROXY, по умолчанию — петля).
+const TRUSTED_PROXIES=new Set(String(process.env.TRUST_PROXY||"127.0.0.1,::1,::ffff:127.0.0.1").split(",").map(x=>x.trim()).filter(Boolean));
 function clientKey(req){
-  const fwd=String(req.headers["x-forwarded-for"]||"").split(",")[0].trim();
-  return fwd||req.socket?.remoteAddress||"unknown";
+  const peer=req.socket?.remoteAddress||"unknown";
+  if(TRUSTED_PROXIES.has(peer)){
+    const fwd=String(req.headers["x-forwarded-for"]||"").split(",")[0].trim();
+    if(fwd)return fwd;
+  }
+  return peer;
 }
 // Возвращает {user} либо {error} для ответа. Без токена бота (локальная разработка) пропускает всех.
 function authorize(req){
@@ -73,15 +82,6 @@ async function readBody(req,max=160000){
 function cacheKey(args){return JSON.stringify(args)}
 
 const PAGE_META_CACHE=new Map();
-function safeRemoteUrl(raw){
-  try{
-    const u=new URL(raw);if(!/^https?:$/.test(u.protocol))return null;
-    const h=u.hostname.toLowerCase();
-    if(h==="localhost"||h==="127.0.0.1"||h==="0.0.0.0"||h.endsWith(".local"))return null;
-    if(/^(10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h))return null;
-    return u;
-  }catch{return null}
-}
 function absUrl(base,raw){try{return new URL(raw,base).href}catch{return null}}
 function htmlAttr(tag,name){
   const m=tag.match(new RegExp(`${name}\\s*=\\s*["']([^"']+)["']`,"i"));return m?m[1]:null;
@@ -89,48 +89,55 @@ function htmlAttr(tag,name){
 async function pageMeta(raw){
   const u=safeRemoteUrl(raw);if(!u)return {};
   const hit=PAGE_META_CACHE.get(u.href);if(hit&&Date.now()-hit.at<30*60*1000)return hit.value;
-  const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),2200);
-  try{
-    const resp=await fetch(u,{signal:ctrl.signal,headers:{"User-Agent":"FREE-Moscow/1.0 (+local prototype)","Accept":"text/html,application/xhtml+xml"}});
-    if(!resp.ok)return {};
-    if(!(resp.headers.get("content-type")||"").includes("text/html"))return {};
-    let html=await resp.text();if(html.length>900000)html=html.slice(0,900000);
-    let image=null;
-    for(const tag of html.match(/<meta\b[^>]*>/gi)||[]){
-      const prop=(htmlAttr(tag,"property")||htmlAttr(tag,"name")||"").toLowerCase();
-      if(prop==="og:image"||prop==="twitter:image"){image=absUrl(resp.url,htmlAttr(tag,"content"));if(image)break}
+  // 256 КБ хватает на <head> любой страницы; раньше тело читалось целиком.
+  const r=await guardedFetch(u.href,{maxBytes:256*1024,timeoutMs:2200,
+    accept:t=>t.includes("text/html")||t.includes("xhtml"),
+    headers:{"Accept":"text/html,application/xhtml+xml"}});
+  if(!r.ok)return {};
+  const html=r.body.toString("utf8");
+  let image=null,image_width=null,image_height=null;
+  for(const tag of html.match(/<meta\b[^>]*>/gi)||[]){
+    const prop=(htmlAttr(tag,"property")||htmlAttr(tag,"name")||"").toLowerCase();
+    if(prop==="og:image:width")image_width=Number(htmlAttr(tag,"content"))||null;
+    if(prop==="og:image:height")image_height=Number(htmlAttr(tag,"content"))||null;
+    if(!image&&(prop==="og:image"||prop==="og:image:secure_url"||prop==="twitter:image"))image=absUrl(r.url,htmlAttr(tag,"content"));
+  }
+  let booking_url=null,booking_kind=null,booking_provider=null;
+  for(const m of html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)){
+    const href=htmlAttr(m[1],"href");if(!href)continue;
+    const text=String(m[2]||"").replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim();
+    const full=absUrl(r.url,href);if(!full||!safeRemoteUrl(full))continue;
+    const hay=(text+" "+full).toLowerCase();
+    // «t.me» ищем только как хост, иначе срабатывало на любом домене со схожей подстрокой.
+    const tg=/(^|\/\/)(t\.me|telegram\.me)\//.test(full.toLowerCase())||/telegram/.test(text.toLowerCase());
+    const wa=/(^|\/\/)(wa\.me|api\.whatsapp\.com)\//.test(full.toLowerCase())||/whatsapp/.test(text.toLowerCase());
+    if(tg||wa||/заброни|брониров|booking|reserve|reservation|купить билет|билеты|tickets/.test(hay)){
+      booking_url=full;
+      booking_kind=tg?"telegram":wa?"whatsapp":/билет|ticket/.test(hay)?"tickets":"site";
+      booking_provider=booking_kind==="telegram"?"Telegram":booking_kind==="whatsapp"?"WhatsApp":booking_kind==="tickets"?"билетный сервис":"форма бронирования";
+      break;
     }
-    let booking_url=null,booking_kind=null,booking_provider=null;
-    for(const m of html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)){
-      const href=htmlAttr(m[1],"href");if(!href)continue;
-      const text=String(m[2]||"").replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim();
-      const full=absUrl(resp.url,href);if(!full)continue;
-      const hay=(text+" "+full).toLowerCase();
-      if(/заброни|брониров|booking|reserve|reservation|купить билет|билеты|tickets|telegram|whatsapp|t\.me|wa\.me/.test(hay)){
-        booking_url=full;
-        booking_kind=/t\.me|telegram/.test(hay)?"telegram":/wa\.me|whatsapp/.test(hay)?"whatsapp":/билет|ticket/.test(hay)?"tickets":"site";
-        booking_provider=booking_kind==="telegram"?"Telegram":booking_kind==="whatsapp"?"WhatsApp":booking_kind==="tickets"?"билетный сервис":"форма бронирования";
-        break;
-      }
-    }
-    const value={image_url:image,booking_url,booking_kind,booking_provider};
-    PAGE_META_CACHE.set(u.href,{at:Date.now(),value});return value;
-  }catch{return {}}finally{clearTimeout(timer)}
+  }
+  const value={image_url:image,image_width,image_height,booking_url,booking_kind,booking_provider};
+  // Кеш ограничен: раньше Map рос без предела на каждый новый домен.
+  if(PAGE_META_CACHE.size>2000)PAGE_META_CACHE.clear();
+  PAGE_META_CACHE.set(u.href,{at:Date.now(),value});return value;
 }
 // Прокси картинок: многие сайты блокируют хотлинки и отдают http, а страница у нас https.
 const IMG_MAX=3*1024*1024;
 async function proxyImage(res,raw){
-  const u=safeRemoteUrl(raw);if(!u)return send(res,400,"bad url");
-  const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),6000);
-  try{
-    const r=await fetch(u,{signal:ctrl.signal,redirect:"follow",headers:{"User-Agent":"Mozilla/5.0 (compatible; FREE-Moscow/1.0)","Accept":"image/avif,image/webp,image/*,*/*;q=0.5","Referer":u.origin+"/"}});
-    const type=(r.headers.get("content-type")||"").split(";")[0].trim().toLowerCase();
-    if(!r.ok||!/^image\//.test(type))return send(res,415,"not an image");
-    const len=Number(r.headers.get("content-length")||0);if(len>IMG_MAX)return send(res,413,"too large");
-    const buf=Buffer.from(await r.arrayBuffer());if(buf.length>IMG_MAX)return send(res,413,"too large");
-    res.writeHead(200,{"Content-Type":type,"Cache-Control":"public, max-age=86400","Content-Length":String(buf.length),"X-Content-Type-Options":"nosniff",...corsHeaders(res.req)});
-    return res.end(buf);
-  }catch(e){return send(res,502,"image unavailable")}finally{clearTimeout(timer)}
+  const r=await guardedFetch(raw,{maxBytes:IMG_MAX,timeoutMs:6000,
+    accept:t=>/^image\//.test(t),headers:{"Accept":"image/avif,image/webp,image/*,*/*;q=0.5"}});
+  if(!r.ok){
+    if(r.reason==="too_large")return send(res,413,"too large");
+    if(r.reason==="bad_type")return send(res,415,"not an image");
+    if(r.reason==="blocked_url"||r.reason==="private_address")return send(res,400,"bad url");
+    return send(res,502,"image unavailable");
+  }
+  if(r.truncated)return send(res,413,"too large");
+  res.writeHead(200,{"Content-Type":r.type,"Cache-Control":"public, max-age=86400",
+    "Content-Length":String(r.body.length),"X-Content-Type-Options":"nosniff",...corsHeaders(res.req)});
+  return res.end(r.body);
 }
 async function enrichResults(payload){
   const results=payload.results||[];
@@ -256,6 +263,15 @@ function sharePlan(plan,meta={}){
   return {id,has_card};
 }
 function cardPath(id){return join(CARD_DIR,id+".png")}
+// Экранирование HTML не спасает от javascript:-ссылки — в ней нет спецсимволов.
+// Схему проверяем отдельно, иначе план, присланный кем угодно, даёт XSS на /p/:id.
+function safeHref(raw){
+  const v=String(raw||"").trim();
+  if(!v)return "";
+  if(/^(https?:|mailto:|tel:)/i.test(v)){try{new URL(v);return v}catch{return ""}}
+  if(v.startsWith("/")&&!v.startsWith("//"))return v;
+  return "";
+}
 // Уборка: план мог быть вытеснен из базы, а файл карточки остаться. Чистим раз в сутки.
 function sweepCards(){
   try{
@@ -309,14 +325,14 @@ function sharedPlanPage(rec,origin=""){
   const rows=(p.stops||[]).map(s=>{
     const pl=s.place;
     const travel=s.travel_to_next?`<div class="travel">↓ ${s.travel_to_next.mode==="walk"?"пешком":s.travel_to_next.mode==="taxi"?"такси":"переход"} ~${s.travel_to_next.minutes} мин${s.travel_to_next.km?` · ${s.travel_to_next.km} км`:""}</div>`:"";
-    return `<div class="stop"><div class="time">${e(s.slot_start)}–${e(s.slot_end)}</div><div class="body"><h3>${pl?e(pl.name):e(s.query)+" — не найдено"}</h3>${pl?`<p>${e(pl.category||"")}${pl.area?" · "+e(pl.area):""}${pl.metro?" · м. "+e(pl.metro):""}</p><p class="muted">${e(pl.price||"")}${pl.availability?" · "+e(pl.availability):""}</p>${pl.booking_url||pl.source?`<a href="${e(pl.booking_url||pl.source)}" target="_blank" rel="noopener">${pl.booking_url?"Бронь / билеты":"Страница места"}</a>`:""}`:""}</div></div>${travel}`;
+    return `<div class="stop"><div class="time">${e(s.slot_start)}–${e(s.slot_end)}</div><div class="body"><h3>${pl?e(pl.name):e(s.query)+" — не найдено"}</h3>${pl?`<p>${e(pl.category||"")}${pl.area?" · "+e(pl.area):""}${pl.metro?" · м. "+e(pl.metro):""}</p><p class="muted">${e(pl.price||"")}${pl.availability?" · "+e(pl.availability):""}</p>${safeHref(pl.booking_url||pl.source)?`<a href="${e(safeHref(pl.booking_url||pl.source))}" target="_blank" rel="noopener noreferrer">${pl.booking_url?"Бронь / билеты":"Страница места"}</a>`:""}`:""}</div></div>${travel}`;
   }).join("");
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${e(rec.title)} · FREE</title>
 ${og}
 <style>body{margin:0;font-family:-apple-system,Inter,Segoe UI,Roboto,sans-serif;background:#f6f6f4;color:#111214}main{max-width:560px;margin:0 auto;padding:24px 16px 48px}.eyebrow{font-size:11px;letter-spacing:.14em;color:#727780;text-transform:uppercase}h1{font-size:28px;margin:6px 0 4px}.sub{color:#727780;margin:0 0 20px}.stop{display:flex;gap:14px;background:#fff;border:1px solid rgba(20,24,28,.08);border-radius:18px;padding:14px 16px;box-shadow:0 10px 30px rgba(31,36,46,.06)}.time{min-width:92px;font-weight:700;font-variant-numeric:tabular-nums}.body h3{margin:0 0 4px;font-size:17px}.body p{margin:2px 0;font-size:13px}.muted{color:#727780}.body a{display:inline-block;margin-top:8px;font-size:13px;color:#315fff;text-decoration:none;font-weight:600}.travel{padding:8px 0 8px 108px;color:#727780;font-size:12px}.cta{display:flex;gap:10px;margin-top:22px;flex-wrap:wrap}.cta a{flex:1;text-align:center;padding:13px 16px;border-radius:14px;text-decoration:none;font-weight:700;font-size:14px}.cta .dark{background:#111316;color:#fff}.cta .light{background:#fff;color:#111214;border:1px solid rgba(20,24,28,.12)}.foot{margin-top:28px;font-size:12px;color:#727780}.hero{width:100%;border-radius:22px;display:block;margin:0 0 18px;box-shadow:0 20px 50px rgba(31,36,46,.12)}</style></head>
 <body><main>${cardUrl?`<img class="hero" src="${e(cardUrl)}" alt="">`:""}<div class="eyebrow">План вечера</div><h1>${e(rec.title)}</h1><p class="sub">${e(p.total?.start||"")}–${e(p.total?.end||"")}${rec.date?" · "+e(rec.date):""}${p.total?.travel_km?" · переходы "+e(String(p.total.travel_km))+" км":""}</p>
 ${rows}
-<div class="cta">${p.route_url?`<a class="dark" href="${e(p.route_url)}" target="_blank" rel="noopener">Маршрут в Яндекс Картах</a>`:""}<a class="light" href="/">Собрать свой вечер в FREE</a></div>
+<div class="cta">${safeHref(p.route_url)?`<a class="dark" href="${e(safeHref(p.route_url))}" target="_blank" rel="noopener noreferrer">Маршрут в Яндекс Картах</a>`:""}<a class="light" href="/">Собрать свой вечер в FREE</a></div>
 <div class="foot">Составлено FREE по данным KudaGo, Timepad, OpenStreetMap и официальных сайтов. Часы и наличие мест стоит перепроверить у заведения.</div></main></body></html>`;
 }
 
@@ -340,8 +356,12 @@ function conversationTrim(messages){
   }
   return messages;
 }
-setInterval(()=>store.sweepConversations(CONVERSATION_TTL_MS),10*60*1000).unref();
-setInterval(sweepCards,24*60*60*1000).unref();
+// Исключение внутри таймера не перехватывается ничем и роняет процесс целиком.
+function everyMs(ms,fn,label){
+  setInterval(()=>{try{fn()}catch(e){console.error(`${label}:`,e&&e.message||e)}},ms).unref();
+}
+everyMs(10*60*1000,()=>store.sweepConversations(CONVERSATION_TTL_MS),"уборка диалогов");
+everyMs(24*60*60*1000,sweepCards,"уборка карточек");
 
 function dialogueContextSummary(context={}){
   const selected=context.selected_place?{
@@ -431,7 +451,11 @@ function toolStatus(call){
 
 async function runDialogue(message,conversationId,context={},emit=null){
   const send=(type,data)=>{if(emit){try{emit(type,data)}catch{}}};
-  const existing=conversationGet(conversationId);
+  const stored=conversationGet(conversationId);
+  // Идентификатор диалога возвращается клиенту. Без проверки владельца по нему
+  // читалась и дополнялась чужая переписка — достаточно было подставить чужой id.
+  const owner=context.user_id??null;
+  const existing=stored&&(stored.user_id===null||stored.user_id===owner)?stored:null;
   const id=existing?conversationId:randomUUID();
   const messages=existing?existing.messages:[];
   const system=dialogueSystem(context);
