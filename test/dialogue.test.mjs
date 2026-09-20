@@ -139,3 +139,26 @@ test("стриминг: дельты, статус инструмента и don
   assert.equal(done.reply,"Вот два бара.");assert.equal(done.reply_streamed,true);assert.ok(done.response_id);
   }finally{await new Promise(r=>server.close(r))}
 });
+
+test("после хода без поиска модель получает указание искать", async ()=>{
+  // Первый ход: только вопрос, без инструмента
+  setDialogueClient(mockClient([()=>({model:"m",stop_reason:"end_turn",content:[{type:"text",text:"Чего хочется?"}]})]));
+  const r=await runDialogue("хочу куда-нибудь",null,{});
+  assert.equal(r.tool_used,false);
+  // Второй ход: в сообщении появляется указание
+  let seen=null;
+  setDialogueClient(mockClient([(req)=>{seen=req.messages.at(-1).content;return {model:"m",stop_reason:"end_turn",content:[{type:"text",text:"ок"}]}}]));
+  await runDialogue("выпить",r.response_id,{});
+  assert.match(seen,/вызови recommend_free сейчас/);
+  // Третий ход после поиска — указания нет
+  setDialogueClient(mockClient([
+    ()=>({model:"m",stop_reason:"tool_use",content:[{type:"tool_use",id:"t1",name:"recommend_free",input:{query:"бар"}}]}),
+    ()=>({model:"m",stop_reason:"end_turn",content:[{type:"text",text:"Вот варианты."}]})
+  ]));
+  const r3=await runDialogue("бар",r.response_id,{});
+  assert.equal(r3.tool_used,true);
+  let seen2=null;
+  setDialogueClient(mockClient([(req)=>{seen2=req.messages.at(-1).content;return {model:"m",stop_reason:"end_turn",content:[{type:"text",text:"ок"}]}}]));
+  await runDialogue("а подешевле",r3.response_id,{});
+  assert.equal(seen2,"а подешевле");
+});

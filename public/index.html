@@ -454,7 +454,7 @@ function resetSearchContext({keepShared=false,announce=true}={}){
     max_price_rub:old.max_price_rub||undefined,after_time:old.after_time||undefined
   }:{};
   Object.keys(chatState.slots).forEach(k=>chatState.slots[k]===undefined&&delete chatState.slots[k]);
-  chatState.selected=null;chatState.phase="idle";chatState.awaitingContinuation=false;currentResults=[];
+  chatState.selected=null;chatState.phase="idle";chatState.awaitingContinuation=false;chatState.asked=0;currentResults=[];
   if(announce){const d=document.createElement("div");d.className="newRequestDivider";d.textContent="Новый запрос";$("#chat").appendChild(d)}
 }
 function shouldStartNewRequest(text,newIntent){
@@ -521,8 +521,9 @@ async function submitScriptedUser(text,alreadyAdded=false){
   if(/выстав/.test(n))chatState.slots.genre="выставка";
   if(/театр/.test(n))chatState.slots.genre="театр";
 
-  const q=requiredQuestion();
-  if(q){chatState.phase="collecting";const t=typing();setTimeout(()=>{t.remove();addMsg("ai",q.q+quick(q.o));bindQuick()},220);return}
+  // Одно уточнение максимум: дальше показываем варианты и сужаем уже по ним.
+  const q=(chatState.asked||0)>=1?null:requiredQuestion();
+  if(q){chatState.asked=(chatState.asked||0)+1;chatState.phase="collecting";const t=typing();setTimeout(()=>{t.remove();addMsg("ai",q.q+quick(q.o));bindQuick()},220);return}
   await showMatches();
 }
 
@@ -627,19 +628,23 @@ async function submitNeuralUser(text){
 }
 // ---- Демо-движок: Claude прямо со страницы (возможность sample у опубликованного артефакта). ----
 // Работает без бэкенда: диалог ведёт модель, инструменты поиска и плана исполняются на странице по встроенным данным.
-let demoSample=null,demoTurns=[],demoCtl=null;
+let demoSample=null,demoTurns=[],demoCtl=null,demoAskedWithoutSearch=0;
 const DEMO_RULES=[
-  "Ты FREE — разговорный AI-консьерж по местам и событиям Москвы. Это демо-версия: инструменты ищут по небольшому встроенному набору (около 30 реальных мест и событий), а не по всей Москве.",
-  "Понимай обычную речь, короткие и неидеальные формулировки. Не прогоняй пользователя через анкету.",
-  "Задавай максимум ОДИН короткий вопрос за ход и только если ответ реально изменит выбор. Если контекста достаточно — сразу вызывай recommend_free.",
-  "Основной режим — найти ОДНО место под задачу и дать несколько вариантов на выбор через recommend_free. Не собирай план вечера по своей инициативе и не предлагай его.",
+  "Ты FREE — разговорный AI-консьерж по местам и событиям Москвы. Это демо: инструменты ищут по небольшому встроенному набору (около 30 реальных мест), а не по всей Москве.",
+  "ГЛАВНОЕ ПРАВИЛО: сначала показывай варианты, потом уточняй. Как только понятно направление (выпить, поесть, кальян, событие, потанцевать) — сразу вызывай recommend_free. Не жди подробностей.",
+  "НИКОГДА не задавай два вопроса подряд в одном ответе и никогда не задавай вопрос, если в прошлый раз уже спрашивал. Лучше показать варианты и предложить сузить.",
+  "Не спрашивай бюджет, район, время и размер компании, если человек сам о них не сказал. Это фильтры, а не условия для начала поиска.",
+  "Уточняющий вопрос допустим только после показа карточек, одной короткой фразой, и только если он реально изменит подборку.",
+  "Если запрос совсем непонятен — задай ровно один вопрос: чего хочется. Дальше ищи по тому, что услышал.",
+  "Основной режим — найти место под задачу и дать несколько вариантов на выбор. Не собирай план вечера по своей инициативе и не предлагай его.",
   "plan_evening вызывай ТОЛЬКО если пользователь сам перечислил две и больше активности подряд («поужинать, а потом в бар») или прямо попросил план вечера.",
-  "После инструмента используй только его результат. Не придумывай места, цены, часы и каналы бронирования. Карточки интерфейс покажет сам: в тексте коротко объясни, почему подходят варианты и чем отличаются.",
-  "Если инструмент вернул мало или ничего — скажи честно и предложи другой формат. Не добивай список нерелевантным.",
+  "После инструмента используй только его результат. Не придумывай места, цены, часы и каналы бронирования. Карточки интерфейс покажет сам: в тексте коротко объясни, чем варианты отличаются.",
+  "Если инструмент вернул мало или ничего — скажи честно и предложи другой формат.",
   "Веди к действию: выбрать, забронировать, построить маршрут, продолжить вечер.",
-  "Отвечай по-русски, коротко, естественно, без markdown и без списков с символами — только обычный текст."
+  "Отвечай по-русски, коротко, естественно, без markdown и без списков с символами."
 ].join("\n");
 function demoCompact(r){return {id:r.id,name:r.name,category:r.category,area:r.area,metro:r.metro||"",time:r.time||"",price:r.price||"",availability:r.availability||"",kind:r.kind}}
+let demoUsedTool=false;
 function demoTools(){
   return [
     {name:"recommend_free",description:"Ищет места и события Москвы во встроенной базе FREE по смыслу запроса. Возвращает до 5 карточек (id, name, category, area, metro, time, price, availability). Вызывай перед любой рекомендацией куда пойти, где поесть, выпить, покурить кальян, что посмотреть.",
@@ -647,7 +652,7 @@ function demoTools(){
      execute:(input)=>{
        const args={query:String(input.query||""),party_size:input.party_size?Number(input.party_size):undefined,after_time:input.after_time?String(input.after_time):undefined,target_date:input.target_date?String(input.target_date):undefined,max_price_rub:input.max_price_rub!=null?Number(input.max_price_rub):undefined};
        if(!args.query)throw new Error("query required");
-       const rs=fallbackSearch(args);chatState.demoResults=rs;chatState.demoPlan=null;
+       const rs=fallbackSearch(args);chatState.demoResults=rs;chatState.demoPlan=null;demoUsedTool=true;
        return {count:rs.length,results:rs.slice(0,5).map(demoCompact)};
      }},
     {name:"plan_evening",description:"Собирает план вечера из 2–4 точек по порядку: для каждой находит место рядом с предыдущим, ставит время и переходы. Только когда пользователь САМ назвал несколько активностей подряд или попросил план вечера; для одиночного запроса используй recommend_free.",
@@ -656,7 +661,7 @@ function demoTools(){
        const stops=(Array.isArray(input.stops)?input.stops:[]).map(x=>({query:String((x&&x.query)||"")})).filter(x=>x.query).slice(0,4);
        if(!stops.length)throw new Error("stops required");
        const p=await FreePlanner.buildPlan({stops,start_time:input.start_time?String(input.start_time):undefined,party_size:input.party_size?Number(input.party_size):undefined,max_price_rub:input.max_price_rub!=null?Number(input.max_price_rub):undefined,taste_weights:{...taste}},async a=>({results:fallbackSearch(a)}));
-       chatState.demoPlan=p;chatState.demoResults=[];
+       chatState.demoPlan=p;chatState.demoResults=[];demoUsedTool=true;
        return {status:p.status,summary:FreePlanner.planSummary(p),stops:p.stops.map(x=>({slot:x.slot_start+"–"+x.slot_end,query:x.query,place:x.place?demoCompact(x.place):null,travel_in:x.travel_in}))};
      }}
   ];
@@ -674,8 +679,13 @@ async function initDemoSample(){
     const lim=await fn.limits().catch(()=>null);
     if(lim&&!lim.tools)return; // без инструментов демо-консьерж не имеет смысла
     demoSample=fn;
-    if(!chatState.aiReady){$("#aiStatus").textContent="Claude · демо";$("#hint").textContent="Диалог ведёт Claude прямо на этой странице. Поиск идёт по демо-набору из ~30 мест; полная версия ищет в живых источниках."}
+    if(!chatState.aiReady){setDemoLabel()}
   }catch(_){}
+}
+function setDemoLabel(){
+  if(chatState.aiReady||!demoSample)return;
+  $("#aiStatus").textContent="Claude · демо";
+  $("#hint").textContent="Диалог ведёт Claude прямо на этой странице. Поиск идёт по демо-набору из ~30 мест; полная версия ищет в живых источниках.";
 }
 const DEMO_ERRORS={rate_limited:"Слишком много запросов к Claude, подождите минуту.",session_expired:"Сессия claude.ai истекла — войдите заново.",refused:"Claude отказался отвечать на этот запрос. Попробуйте сформулировать иначе.",empty_completion:"Claude ничего не ответил. Попробуйте переформулировать.",upstream_error:"Связь с Claude прервалась. Попробуйте ещё раз.",prompt_too_large:"Диалог стал слишком длинным — начинаю новый."};
 async function submitDemoUser(text){
@@ -684,14 +694,18 @@ async function submitDemoUser(text){
   const bubble=typing();
   demoTurns.push({role:"user",content:text});
   chatState.demoResults=[];chatState.demoPlan=null;
+  let usedTool=false;
   const ctx=await neuralContextFor(text);
   const context={taste_weights:ctx.taste_weights,selected_place:ctx.selected_place,plan:ctx.plan,now:new Date().toLocaleString("ru-RU",{timeZone:"Europe/Moscow"})};
-  const input=[{role:"user",content:DEMO_RULES},...demoTurns.slice(-13,-1),{role:"user",content:"Контекст интерфейса (справочно, не реплика пользователя): "+JSON.stringify(context)},demoTurns[demoTurns.length-1]];
-  demoCtl=new AbortController();
+  // Если прошлый ход закончился вопросом без поиска — на этом ходу поиск обязателен.
+  const force=demoAskedWithoutSearch>=1?"\n\nВАЖНО: ты уже спрашивал. Больше вопросов не задавай — вызови recommend_free прямо сейчас с тем, что известно, и покажи варианты.":"";
+  const input=[{role:"user",content:DEMO_RULES},...demoTurns.slice(-13,-1),{role:"user",content:"Контекст интерфейса (справочно, не реплика пользователя): "+JSON.stringify(context)+force},demoTurns[demoTurns.length-1]];
+  demoCtl=new AbortController();demoUsedTool=false;
   try{
     const {text:reply}=await demoSample(input,{tools:demoTools(),modelTier:"quick",cache:false,signal:demoCtl.signal,onText:({text:t})=>{bubble.innerHTML=plainTextHtml(t)+'<span class="typing"><i></i><i></i><i></i></span>';scrollChatToLatest(bubble)}});
     demoTurns.push({role:"assistant",content:reply});
-    renderNeuralResult(bubble,{reply,results:chatState.demoResults,plan:chatState.demoPlan,model:"Claude · демо"});
+    demoAskedWithoutSearch=demoUsedTool?0:demoAskedWithoutSearch+1;
+    renderNeuralResult(bubble,{reply,results:chatState.demoResults,plan:chatState.demoPlan,model:"Claude · демо"});setDemoLabel();
   }catch(e){
     const code=(e&&e.code)||"upstream_error";
     if(["not_granted","sampling_disabled","not_declared","capability_disabled","capability_removed","tools_unavailable"].includes(code)){
