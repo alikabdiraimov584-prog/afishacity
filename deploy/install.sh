@@ -22,11 +22,18 @@ say "Пакеты: git, nginx, certbot"
 apt-get update -qq
 apt-get install -y -qq curl git nginx certbot python3-certbot-nginx >/dev/null
 
-if ! command -v node >/dev/null || [ "$(node -v | cut -c2-3)" -lt 20 ]; then
-  say "Node.js 22"
-  curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null
-  apt-get install -y -qq nodejs >/dev/null
+node_major(){ command -v node >/dev/null && node -v | sed 's/^v//' | cut -d. -f1 || echo 0; }
+if [ "$(node_major)" -lt 20 ]; then
+  say "Node.js"
+  # Сначала пробуем пакет из самой системы: на свежих Ubuntu там уже Node 22+.
+  apt-get install -y -qq nodejs npm >/dev/null 2>&1 || true
+  if [ "$(node_major)" -lt 20 ]; then
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null 2>&1 || die "репозиторий Node.js недоступен для этой версии системы"
+    apt-get install -y -qq nodejs >/dev/null || die "не удалось установить Node.js"
+  fi
 fi
+command -v npm >/dev/null || apt-get install -y -qq npm >/dev/null 2>&1 || true
+[ "$(node_major)" -ge 20 ] || die "нужен Node.js 20+, установлен $(node -v 2>/dev/null || echo 'нет')"
 say "Node $(node -v)"
 
 say "Код проекта → $DIR"
