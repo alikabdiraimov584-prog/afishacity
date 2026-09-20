@@ -91,13 +91,13 @@ test("синтез речи отдаёт mp3 и обрезает слишком 
 });
 
 test("состояние настроек видно до первого разговора", () => {
-  assert.deepEqual(yandexStatus({}),{ready:false,has_key:false,has_folder:false,model:null,voice:"anton"});
+  assert.deepEqual(yandexStatus({}),{ready:false,has_key:false,has_folder:false,model:null,voice:"masha"});
   const s=yandexStatus({YANDEX_API_KEY:"k",YANDEX_FOLDER_ID:"f",YANDEX_VOICE:"zahar"});
   assert.equal(s.ready,true);
   assert.equal(s.model,"gpt://f/yandexgpt/latest");
   assert.equal(s.voice,"zahar","настройка голоса перебивает умолчание");
   assert.deepEqual(yandexStatus({YANDEX_API_KEY:"k"}),
-    {ready:false,has_key:true,has_folder:false,model:null,voice:"anton"},"видно, чего именно не хватает");
+    {ready:false,has_key:true,has_folder:false,model:null,voice:"masha"},"видно, чего именно не хватает");
 });
 
 test("обрыв по таймауту сообщается как повторяемая ошибка", async () => {

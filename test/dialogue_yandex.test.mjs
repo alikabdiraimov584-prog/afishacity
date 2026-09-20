@@ -173,15 +173,47 @@ test("вслух агент не ходит к модели третий раз"
   assert.equal(m.seen.length,2,"вслух — не больше двух обращений к модели");
 });
 
-test("у консьержа мужской голос, и он совпадает с умолчанием клиента", async () => {
+const FEMALE_VOICES=new Set(["alena","jane","omazh","dasha","julia","lera","marina","masha"]);
+const MALE_VOICES=new Set(["filipp","ermil","zahar","madirus","anton","alexander","kirill"]);
+const FEMALE_NAMES=new Set(["Варя","Маша","Рита","Ася","Женя","Ника","Мира"]);
+const MALE_NAMES=new Set(["Савва","Гриша","Тимур","Лёва","Марк","Женя"]);
+
+test("пол голоса и имя агента не расходятся", async () => {
+  const {CONCIERGE}=await import("../agent.mjs");
+  // Этот тест уже ловил одну такую ошибку: у Саввы стояла alena, то есть
+  // голос Алисы. Проверять «голос не из списка женских» оказалось мало —
+  // masha в список не попала, и расхождение проехало молча. Поэтому здесь
+  // сверяются обе стороны, и добавить новый голос, не тронув имя, нельзя.
+  const female=FEMALE_VOICES.has(CONCIERGE.voice),male=MALE_VOICES.has(CONCIERGE.voice);
+  assert.ok(female||male,`голос ${CONCIERGE.voice} не описан: добавьте его в список и проверьте имя`);
+  if(female)assert.ok(FEMALE_NAMES.has(CONCIERGE.name),
+    `голос ${CONCIERGE.voice} женский, а имя «${CONCIERGE.name}» мужское`);
+  else assert.ok(MALE_NAMES.has(CONCIERGE.name),
+    `голос ${CONCIERGE.voice} мужской, а имя «${CONCIERGE.name}» женское`);
+});
+
+test("описание личности согласовано по роду", async () => {
+  const {CONCIERGE,agentSystem}=await import("../agent.mjs");
+  const female=FEMALE_VOICES.has(CONCIERGE.voice);
+  const text=[...CONCIERGE.traits,agentSystem({})].join(" ");
+  // Смена голоса легко оставляет прежние формы: «честный», «предложил и
+  // отошёл», «Какой ты». В речи от первого лица это слышно сразу.
+  const male=/\b(честный|спокойный|уверенный|внимательный)\b|предложил и отошёл|Какой ты:/;
+  const fem=/\b(честная|спокойная|уверенная|внимательная)\b|предложила и отошла|Какая ты:/;
+  if(female){
+    assert.ok(!male.test(text),"у женского голоса остались мужские формы");
+    assert.ok(fem.test(text));
+  }else{
+    assert.ok(!fem.test(text),"у мужского голоса остались женские формы");
+    assert.ok(male.test(text));
+  }
+});
+
+test("личность и умолчание клиента не разъезжаются", async () => {
   const {CONCIERGE}=await import("../agent.mjs");
   const {yandexConfig}=await import("../yandex.mjs");
-  // Савва — мужское имя. Раньше здесь стояла alena, то есть голос Алисы:
-  // собственный агент звучал как чужой продукт.
-  assert.ok(!["alena","jane","omazh","dasha","julia","lera","marina"].includes(CONCIERGE.voice),
-    "женский голос для Саввы — ошибка");
-  assert.equal(CONCIERGE.voice,yandexConfig({}).voice,
-    "личность и умолчание клиента не должны разъезжаться");
+  assert.equal(CONCIERGE.voice,yandexConfig({}).voice);
+  assert.equal(CONCIERGE.voiceRole,yandexConfig({}).role);
 });
 
 test("агент умеет попросить о близости отдельно от центра", async () => {

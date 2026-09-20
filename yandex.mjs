@@ -34,13 +34,13 @@ export function yandexConfig(env=process.env){
     // два предложения, а лишняя секунда молчания в живом диалоге заметнее, чем
     // разница в формулировке. Для переписки остаётся старшая модель.
     voiceModel:env.YANDEX_VOICE_MODEL||"yandexgpt-lite/latest",
-    voice:env.YANDEX_VOICE||"anton",
+    voice:env.YANDEX_VOICE||"masha",
     emotion:env.YANDEX_EMOTION||"neutral",
     // Подъём интонационного контура: голос звучит живее и моложе. Только v3.
     pitchShift:Number(env.YANDEX_PITCH_SHIFT||0),
     // Роль (амплуа) — это про манеру, а не про тембр: один и тот же голос
     // в neutral и friendly звучит на разный возраст. Есть только в v3.
-    role:env.YANDEX_ROLE||"good",
+    role:env.YANDEX_ROLE||"neutral",
     // auto — пробуем третью версию, при отказе один раз откатываемся на первую
     // и дальше работаем на ней. v1/v3 — жёстко выбранная версия.
     ttsVersion:env.YANDEX_TTS_VERSION||"auto",
