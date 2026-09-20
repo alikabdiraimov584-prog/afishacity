@@ -5,6 +5,16 @@
 # Скрипт идемпотентный: повторный запуск обновляет код и перезапускает сервис.
 set -euo pipefail
 
+# Ниже git reset --hard перезаписывает в том числе этот файл, а bash дочитывает
+# скрипт с диска по мере выполнения — обновление ломало бы само себя на полпути.
+# Поэтому сразу уходим в копию. При запуске через curl | bash копия не нужна.
+if [ -z "${FREE_SELF_COPY:-}" ] && [ -f "${BASH_SOURCE[0]:-/nonexistent}" ]; then
+  self="$(mktemp "${TMPDIR:-/tmp}/free-install.XXXXXX")"
+  cat "${BASH_SOURCE[0]}" >"$self"
+  FREE_SELF_COPY="$self" exec bash "$self" "$@"
+fi
+if [ -n "${FREE_SELF_COPY:-}" ]; then trap 'rm -f "$FREE_SELF_COPY"' EXIT; fi
+
 DOMAIN="${1:-}"; BOT_TOKEN="${2:-}"
 REPO="https://github.com/alikabdiraimov584-prog/afishacity"
 BRANCH="${FREE_BRANCH:-claude/blissful-lamport-3rprjv}"
