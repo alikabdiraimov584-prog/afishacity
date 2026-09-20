@@ -260,6 +260,33 @@ const DIMS=["romantic","quiet","trendy","luxury","hidden","late","family","work"
 const LABEL={romantic:"Romantic",quiet:"Quiet",trendy:"Trendy",luxury:"Luxury",hidden:"Hidden gem",late:"Late night",family:"Family",work:"Work-friendly",active:"Active",culture:"Culture",music:"Music",nightlife:"Nightlife"};
 let taste={};DIMS.forEach(k=>taste[k]=0);
 let saved=[],plan=[],evening=null,geoCache=null,currentResults=[],voice={mode:"unknown",rec:null},chatState={intent:null,slots:{},history:[],selected:null,phase:"idle",awaitingContinuation:false,previousSelected:null,aiReady:false,aiResponseId:null};
+
+/* Карточки остаются в переписке навсегда, а currentResults — только про
+   последний поиск. Кнопка на карточке выше искала место в уже заменённом
+   списке, не находила и молча ничего не делала: человек жал «В план» и
+   думал, что приложение зависло.
+   Реестр помнит всё показанное за сеанс; предел — чтобы длинная переписка
+   не копила память бесконечно. */
+const SEEN_MAX=400;
+const seenPlaces=new Map();
+function rememberPlaces(list){
+  for(const r of list||[]){
+    if(!r||!r.id)continue;
+    seenPlaces.delete(r.id);          // повторно показанное — снова свежее
+    seenPlaces.set(r.id,r);
+  }
+  while(seenPlaces.size>SEEN_MAX)seenPlaces.delete(seenPlaces.keys().next().value);
+}
+// Открыто для проверок: реестр показанных мест проверяется без прогона
+// всего разговора, иначе тест ломается от любой правки в ходе диалога.
+if(typeof window!=="undefined")Object.assign(window,{
+  __placeById:(id)=>placeById(id),
+  __setResults:(rs)=>{currentResults=rs;rememberPlaces(rs)},
+  __seenSize:()=>seenPlaces.size});
+function placeById(id){
+  return currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id)
+    ||plan.find(x=>x.id===id)||seenPlaces.get(id)||null;
+}
 try{taste={...taste,...JSON.parse(localStorage.getItem("free_v14_taste")||"{}")}}catch(_){}
 try{saved=JSON.parse(localStorage.getItem("free_v14_saved")||"[]")}catch(_){}
 try{plan=JSON.parse(localStorage.getItem("free_v14_plan")||"[]")}catch(_){}
@@ -585,7 +612,7 @@ function bookingLabel(r){
   return "Бронировать";
 }
 function cards(rs){
-  currentResults=rs;
+  currentResults=rs;rememberPlaces(rs);
   return '<div class="inlineCards">'+rs.map((r,i)=>`<div class="placeCard ${i===0?"best":""}">
     ${imageBlock(r)}
     <div class="tag">${i===0?"BEST MATCH":esc([r.category,r.area||r.metro].filter(Boolean).join(" · ").slice(0,42))}</div>
@@ -765,11 +792,11 @@ function renderNeuralResult(bubble,data){
   chatState.aiResponseId=data.response_id||chatState.aiResponseId;
   const rs=Array.isArray(data.results)?data.results:[];
   if(data.plan&&Array.isArray(data.plan.stops)&&data.plan.stops.length){
-    evening=data.plan;saveEvening();currentResults=eveningPlaces(data.plan);chatState.phase="results";
+    evening=data.plan;saveEvening();currentResults=eveningPlaces(data.plan);rememberPlaces(currentResults);chatState.phase="results";
     bubble.innerHTML=plainTextHtml(data.reply)+planCard(data.plan);bindPlanCard(bubble);
     if($("#view-plan").classList.contains("on"))renderPlan();
   }else if(rs.length){
-    currentResults=rs;chatState.phase="results";
+    currentResults=rs;rememberPlaces(rs);chatState.phase="results";
     bubble.innerHTML=plainTextHtml(data.reply)+cards(rs);bindCards();
   }else{
     chatState.phase="collecting";
@@ -968,7 +995,7 @@ async function copyText(text){
 }
 function waWithText(url,text){try{const u=new URL(url);u.searchParams.set("text",text);return u.href}catch{return url}}
 async function openBooking(id){
-  const r=currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id)||plan.find(x=>x.id===id);if(!r)return;
+  const r=placeById(id);if(!r)return;
   const url=r.booking_url||(r.kind==="event"?(r.point_source||r.source):null);
   const text=bookingRequestText(r);chatState.phase="action";learn("book",r);
   if(!url){const page=r.point_source||r.source;addMsg("ai",`У <b>${esc(r.name)}</b> я пока не вижу отдельного канала бронирования. Открываю страницу места.${linkFallback(page)}`);openExternal(page);return}
@@ -1013,7 +1040,7 @@ function bindPlanCard(root){
 function eveningPlaces(p){const out=[];for(const s of (p?.stops||[])){if(s.place)out.push(s.place);for(const a of (s.alternatives||[]))out.push(a)}return out}
 function showPlan(p,intro){
   evening=p;saveEvening();
-  currentResults=eveningPlaces(p);chatState.phase="results";
+  currentResults=eveningPlaces(p);rememberPlaces(currentResults);chatState.phase="results";
   const msg=addMsg("ai",`${intro?plainTextHtml(intro):""}${planCard(p)}`);bindPlanCard(msg);setTimeout(()=>scrollChatToLatest(msg),120);
   if($("#view-plan").classList.contains("on"))renderPlan();
 }
@@ -1027,7 +1054,7 @@ async function swapStop(i,altId){
   const rebuilt=await FreePlanner.buildPlan({stops,start_time:evening.stops[0].slot_start},async()=>({results:[]}));
   rebuilt.stops.forEach((s,j)=>{s.alternatives=stops[j].alternatives});
   const last=[...$("#chat").querySelectorAll(".planCard")].at(-1);
-  evening=rebuilt;saveEvening();currentResults=eveningPlaces(rebuilt);
+  evening=rebuilt;saveEvening();currentResults=eveningPlaces(rebuilt);rememberPlaces(currentResults);
   if(last){const wrap=document.createElement("div");wrap.innerHTML=planCard(rebuilt);last.replaceWith(wrap.firstElementChild);bindPlanCard($("#chat"))}
   if($("#view-plan").classList.contains("on"))renderPlan();
 }
@@ -1050,7 +1077,7 @@ async function refindStop(i){
   const rebuilt=await FreePlanner.buildPlan({stops,start_time:evening.stops[0].slot_start},async()=>({results:[]}));
   rebuilt.stops.forEach((x,j)=>{x.alternatives=stops[j].alternatives});
   const last=[...$("#chat").querySelectorAll(".planCard")].at(-1);
-  evening=rebuilt;saveEvening();currentResults=eveningPlaces(rebuilt);
+  evening=rebuilt;saveEvening();currentResults=eveningPlaces(rebuilt);rememberPlaces(currentResults);
   if(last){const wrap=document.createElement("div");wrap.innerHTML=planCard(rebuilt);last.replaceWith(wrap.firstElementChild);bindPlanCard($("#chat"))}
   if($("#view-plan").classList.contains("on"))renderPlan();
 }
@@ -1130,7 +1157,7 @@ async function buildEveningScripted(stops){
   showPlan(p,p.total.found<p.total.stops?"Собрал вечер, но одну из точек не нашёл — её можно заменить.":"Собрал вечер по порядку. Время примерное, переходы посчитаны от точки к точке.");
 }
 function selectPlace(id){
-  const r=currentResults.find(x=>x.id===id);if(!r)return;
+  const r=placeById(id);if(!r)return;
   chatState.selected=r;chatState.phase="selected";chatState.awaitingContinuation=false;
   if(!plan.some(x=>x.id===id))plan.push(r);save();learn("select",r);haptic();
   let body=`Добавил <b>${esc(r.name)}</b> в план. Что дальше?`;
@@ -1151,10 +1178,10 @@ async function routeItems(items){
   win.go(u);
   if(!g)toast("Маршрут без вашей геопозиции — задайте точку старта в картах.");
 }
-function routePlace(id){const r=currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id)||plan.find(x=>x.id===id);if(r)routeItems([r])}
-function toggleSave(id){const r=currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id);if(!r)return;const i=saved.findIndex(x=>x.id===id);if(i>=0)saved.splice(i,1);else{saved.unshift(r);learn("save",r);haptic()}save();toast(i>=0?"Удалено из Saved":"Сохранено")}
+function routePlace(id){const r=placeById(id);if(r)routeItems([r])}
+function toggleSave(id){const r=placeById(id);if(!r)return;const i=saved.findIndex(x=>x.id===id);if(i>=0)saved.splice(i,1);else{saved.unshift(r);learn("save",r);haptic()}save();toast(i>=0?"Удалено из Saved":"Сохранено")}
 function openDetail(id){
-  const r=currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id)||plan.find(x=>x.id===id);if(!r)return;
+  const r=placeById(id);if(!r)return;
   $("#detail").innerHTML=`<div class="sheet"><button class="close">×</button>
     ${r.image_url?`<div class="placeMedia ${placeEmoji(r).cls}" data-emoji="${placeEmoji(r).emoji}" style="margin:0 0 15px"><img src="${esc(imgSrc(r.image_url))}" alt="" referrerpolicy="no-referrer" onerror="noImg(this)"></div>`:""}
     <div class="eyebrow">${esc(r.kind==="event"?"СОБЫТИЕ":"МЕСТО")}</div><h2>${esc(r.name)}</h2><p>${esc(r.category||"")} · ${esc(r.area||"")}</p>
@@ -1355,7 +1382,7 @@ function initVoiceScreen(){
     // Карточки рисуем тем же кодом, что и в переписке: один вид места на всё приложение.
     renderCards:(rs,box)=>{
       if(!box)return;
-      currentResults=rs;
+      currentResults=rs;rememberPlaces(rs);
       box.innerHTML=cards(rs);
       bindCards(box);
       lastVoiceItems=rs;
