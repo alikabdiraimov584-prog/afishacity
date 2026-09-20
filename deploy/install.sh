@@ -48,10 +48,15 @@ say "Node $(node -v)"
 
 say "Код проекта → $DIR"
 id -u free >/dev/null 2>&1 || useradd -r -m -s /usr/sbin/nologin free
+# Папка принадлежит пользователю free, а запуск идёт от root: без этого git
+# отказывается работать с "dubious ownership" и обновление тихо не происходит.
+git config --global --get-all safe.directory 2>/dev/null | grep -qx "$DIR" || git config --global --add safe.directory "$DIR"
 if [ -d "$DIR/.git" ]; then
-  git -C "$DIR" fetch -q origin "$BRANCH" && git -C "$DIR" checkout -q "$BRANCH" && git -C "$DIR" reset -q --hard "origin/$BRANCH"
+  git -C "$DIR" fetch -q origin "$BRANCH" || die "не удалось скачать код с GitHub"
+  git -C "$DIR" checkout -q "$BRANCH" || die "не удалось переключиться на ветку $BRANCH"
+  git -C "$DIR" reset -q --hard "origin/$BRANCH" || die "не удалось обновить код до origin/$BRANCH"
 else
-  git clone -q -b "$BRANCH" "$REPO" "$DIR"
+  git clone -q -b "$BRANCH" "$REPO" "$DIR" || die "не удалось клонировать $REPO"
 fi
 (cd "$DIR" && npm ci --omit=dev --silent)
 
@@ -84,6 +89,12 @@ echo "   сервис отвечает на 127.0.0.1:3000"
 
 say "nginx для $DOMAIN"
 if ss -ltnp | grep -q ':80 .*apache2'; then systemctl disable -q --now apache2; fi
+# Шаблон ниже перезапишет конфиг вместе с блоком SSL, который дописал certbot.
+# Держим копию, чтобы вернуть рабочий HTTPS, если сертификат не встанет обратно.
+NGINX_PREV=""
+if grep -qs ssl_certificate /etc/nginx/sites-available/free; then
+  NGINX_PREV="$(mktemp)"; cp /etc/nginx/sites-available/free "$NGINX_PREV"
+fi
 sed "s/YOUR_DOMAIN/$DOMAIN www.$DOMAIN/" "$DIR/deploy/nginx.conf" > /etc/nginx/sites-available/free
 rm -f /etc/nginx/sites-enabled/default
 ln -sf /etc/nginx/sites-available/free /etc/nginx/sites-enabled/free
@@ -109,14 +120,24 @@ elif [ -n "$WWW_IPS" ]; then
   echo "   www.$DOMAIN указывает на $WWW_IPS вместо $APEX_IPS — сертификат без www"
 fi
 issue(){ certbot --nginx "$@" --non-interactive --agree-tos --register-unsafely-without-email --redirect >/dev/null 2>&1; }
-if issue "${DOMAINS[@]}"; then
+restore_nginx(){
+  [ -n "${NGINX_PREV:-}" ] || return 1
+  cp "$NGINX_PREV" /etc/nginx/sites-available/free
+  nginx -t -q && systemctl reload nginx
+}
+if [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ] && certbot install --nginx --cert-name "$DOMAIN" --redirect --non-interactive >/dev/null 2>&1; then
+  echo "   сертификат уже выпущен — вернули его в конфиг nginx"
+elif issue "${DOMAINS[@]}"; then
   echo "   сертификат выпущен, редирект на HTTPS включён"
 elif [ "${#DOMAINS[@]}" -gt 2 ] && issue -d "$DOMAIN"; then
   echo "   сертификат выпущен для $DOMAIN (без www), редирект на HTTPS включён"
+elif restore_nginx; then
+  echo "   сертификат не обновлён, вернули прежний конфиг с HTTPS"
 else
   echo "   сертификат не выпущен (DNS ещё не дошёл или порт 80 закрыт). Повторите позже:"
   echo "   certbot --nginx -d $DOMAIN --redirect"
 fi
+if [ -n "${NGINX_PREV:-}" ]; then rm -f "$NGINX_PREV"; fi
 
 say "Готово"
 echo "Проверка:   https://$DOMAIN/api/health"
