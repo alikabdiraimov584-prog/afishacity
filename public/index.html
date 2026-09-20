@@ -144,6 +144,17 @@ function openExternal(url){
   if(TG){try{if(/^https?:\/\/t\.me\//i.test(url))TG.openTelegramLink(url);else if(/^https?:/i.test(url))TG.openLink(url);else window.location.href=url;return}catch(_){}}
   openExternal(url);
 }
+// Окно надо открыть синхронно в обработчике клика, иначе после await браузер сочтёт его всплывающим и заблокирует.
+function deferredOpen(){
+  if(TG)return {go:openExternal,cancel(){}};
+  let w=null;try{w=window.open("about:blank","_blank")}catch(_){}
+  if(w){try{w.opener=null}catch(_){}}
+  return {
+    go(url){if(!url){this.cancel();return}if(w&&!w.closed){try{w.location.href=url;return}catch(_){}}openExternal(url)},
+    cancel(){if(w&&!w.closed){try{w.close()}catch(_){}}}
+  };
+}
+function linkFallback(url,label="Открыть ссылку вручную"){return url?`<div class="small" style="margin-top:8px"><a href="${esc(url)}" target="_blank" rel="noopener" style="color:#315fff;font-weight:600">${esc(label)} ↗</a></div>`:""}
 function esc(s=""){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 function norm(s=""){return String(s).toLowerCase().replace(/ё/g,"е").replace(/<[^>]*>/g," ").replace(/[^a-zа-я0-9+\-\s]/gi," ").replace(/\s+/g," ").trim()}
 function save(){localStorage.setItem("free_v14_taste",JSON.stringify(taste));localStorage.setItem("free_v14_saved",JSON.stringify(saved));localStorage.setItem("free_v14_plan",JSON.stringify(plan));renderSaved();renderPlan();renderTaste()}
@@ -548,13 +559,16 @@ function waWithText(url,text){try{const u=new URL(url);u.searchParams.set("text"
 async function openBooking(id){
   const r=currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id)||plan.find(x=>x.id===id);if(!r)return;
   const url=r.booking_url||(r.kind==="event"?(r.point_source||r.source):null);
-  if(!url){addMsg("ai",`У <b>${esc(r.name)}</b> я пока не вижу отдельного канала бронирования. Открываю конкретную страницу точки.`);openExternal(r.point_source||r.source);return}
   const text=bookingRequestText(r);chatState.phase="action";
-  if(r.kind==="event"||r.booking_kind==="tickets"){addMsg("ai",`Открываю реальную страницу билетов / регистрации для <b>${esc(r.name)}</b>. После оформления можно вернуться сюда — я построю маршрут или продолжу вечер.`);openExternal(url);return}
-  if(r.booking_kind==="whatsapp"){addMsg("ai",`Передаю заявку в WhatsApp для <b>${esc(r.name)}</b>.<div class="bookingSummary">${esc(text)}</div>`);openExternal(waWithText(url,text));return}
-  if(r.booking_kind==="telegram"){const copied=await copyText(text);addMsg("ai",`Открываю ${esc(r.booking_provider||"Telegram")} для <b>${esc(r.name)}</b>. ${copied?"Текст заявки уже скопирован — останется вставить и отправить.":"Вставьте данные брони в чат."}<div class="bookingSummary">${esc(text)}</div>`);openExternal(url);return}
-  if(r.booking_kind==="phone"||String(url).startsWith("tel:")){addMsg("ai",`Для <b>${esc(r.name)}</b> подтверждённый канал бронирования — телефон. Открываю звонок.<div class="bookingSummary">${esc(text)}</div>`);window.location.href=url;return}
-  const copied=await copyText(text);addMsg("ai",`Открываю форму / сервис бронирования <b>${esc(r.name)}</b>. ${copied?"Параметры заявки скопированы.":""}<div class="bookingSummary">${esc(text)}</div>`);openExternal(url);
+  if(!url){const page=r.point_source||r.source;addMsg("ai",`У <b>${esc(r.name)}</b> я пока не вижу отдельного канала бронирования. Открываю страницу места.${linkFallback(page)}`);openExternal(page);return}
+  if(r.booking_kind==="phone"||String(url).startsWith("tel:")){addMsg("ai",`Для <b>${esc(r.name)}</b> подтверждённый канал бронирования — телефон.<div class="bookingSummary">${esc(text)}</div>${linkFallback(url,"Позвонить")}`);window.location.href=url;return}
+  if(r.kind==="event"||r.booking_kind==="tickets"){addMsg("ai",`Открываю страницу билетов / регистрации для <b>${esc(r.name)}</b>. После оформления можно вернуться сюда — я построю маршрут или продолжу вечер.${linkFallback(url,"Билеты / регистрация")}`);openExternal(url);return}
+  if(r.booking_kind==="whatsapp"){const target=waWithText(url,text);addMsg("ai",`Передаю заявку в WhatsApp для <b>${esc(r.name)}</b>.<div class="bookingSummary">${esc(text)}</div>${linkFallback(target,"Открыть WhatsApp")}`);openExternal(target);return}
+  // Дальше нужно скопировать текст заявки: окно открываем ДО await, чтобы не попасть под блокировку всплывающих окон.
+  const win=deferredOpen();
+  const copied=await copyText(text);
+  if(r.booking_kind==="telegram"){addMsg("ai",`Открываю ${esc(r.booking_provider||"Telegram")} для <b>${esc(r.name)}</b>. ${copied?"Текст заявки скопирован — останется вставить и отправить.":"Вставьте данные брони в чат."}<div class="bookingSummary">${esc(text)}</div>${linkFallback(url,"Открыть Telegram")}`);win.go(url);return}
+  addMsg("ai",`Открываю форму / сервис бронирования <b>${esc(r.name)}</b>. ${copied?"Параметры заявки скопированы.":""}<div class="bookingSummary">${esc(text)}</div>${linkFallback(url,"Открыть страницу бронирования")}`);win.go(url);
 }
 
 try{evening=JSON.parse(localStorage.getItem("free_v14_evening")||"null")}catch(_){evening=null}
@@ -662,7 +676,15 @@ function selectPlace(id){
 }
 function coords(r){const c=r.coords;if(!c)return null;if(Array.isArray(c)&&c.length>=2){const a=+c[0],b=+c[1];return a>50?{lat:a,lon:b}:{lat:b,lon:a}}const lat=+(c.lat??c.latitude),lon=+(c.lon??c.lng??c.longitude);return Number.isFinite(lat)&&Number.isFinite(lon)?{lat,lon}:null}
 function dest(r){const c=coords(r);return c?`${c.lat},${c.lon}`:`Москва, ${r.area||r.name}`}
-async function routeItems(items){const g=await geo(false);if(!g)return;const u=`https://yandex.ru/maps/?mode=routes&rtext=${[`${g.lat},${g.lon}`,...items.map(dest)].map(encodeURIComponent).join("~")}`;openExternal(u)}
+async function routeItems(items){
+  const win=deferredOpen();
+  const g=await geo(false);
+  // Без геопозиции строим маршрут от первой точки; Яндекс сам предложит выбрать старт.
+  const pts=[g?`${g.lat},${g.lon}`:null,...items.map(dest)].filter(Boolean);
+  const u=`https://yandex.ru/maps/?mode=routes&rtext=${pts.map(encodeURIComponent).join("~")}`;
+  win.go(u);
+  if(!g)toast("Маршрут без вашей геопозиции — задайте точку старта в картах.");
+}
 function routePlace(id){const r=currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id)||plan.find(x=>x.id===id);if(r)routeItems([r])}
 function toggleSave(id){const r=currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id);if(!r)return;const i=saved.findIndex(x=>x.id===id);if(i>=0)saved.splice(i,1);else saved.unshift(r);save();toast(i>=0?"Удалено из Saved":"Сохранено")}
 function openDetail(id){
@@ -714,7 +736,20 @@ async function detectCapabilities(){
     $("#aiStatus").textContent="Preview fallback · Москва";
   }
 }
-function browserVoice(){const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR){toast("Голос недоступен. Текстовый чат работает.");return}const rec=new SR();voice.rec=rec;rec.lang="ru-RU";rec.interimResults=true;rec.onstart=()=>$("#voiceBtn").classList.add("live");rec.onresult=e=>{let t="";for(let i=0;i<e.results.length;i++)t+=e.results[i][0].transcript;$("#input").value=t};rec.onend=()=>{$("#voiceBtn").classList.remove("live");const t=$("#input").value.trim();if(t)submitUser(t)};rec.start()}
+const VOICE_ERRORS={"not-allowed":"Доступ к микрофону запрещён. Разрешите его в настройках браузера или Telegram.","service-not-allowed":"Распознавание речи отключено в этом браузере.","audio-capture":"Микрофон не найден.","network":"Распознавание речи недоступно в этой сети: Chrome отправляет звук на серверы Google. Напишите текстом.","no-speech":"Не услышал речь. Нажмите и говорите сразу.","aborted":""};
+function browserVoice(){
+  if(voice.rec){try{voice.rec.stop()}catch(_){}return}
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){toast(TG?"В этой версии Telegram нет распознавания речи. Напишите текстом.":"Голосовой ввод есть только в Chrome и Safari. Напишите текстом.");return}
+  if(!window.isSecureContext){toast("Голос работает только по HTTPS.");return}
+  const rec=new SR();voice.rec=rec;rec.lang="ru-RU";rec.interimResults=true;rec.continuous=false;
+  let gotResult=false;
+  rec.onstart=()=>{$("#voiceBtn").classList.add("live");$("#input").placeholder="Говорите… (нажмите ещё раз, чтобы остановить)"};
+  rec.onresult=e=>{let t="";for(let i=0;i<e.results.length;i++)t+=e.results[i][0].transcript;gotResult=true;$("#input").value=t};
+  rec.onerror=e=>{const m=VOICE_ERRORS[e.error]??("Голос недоступен: "+e.error);if(m)toast(m)};
+  rec.onend=()=>{voice.rec=null;$("#voiceBtn").classList.remove("live");$("#input").placeholder="Например: хочу выпить";const t=$("#input").value.trim();if(gotResult&&t)submitUser(t)};
+  try{rec.start()}catch(e){voice.rec=null;toast("Не удалось включить микрофон: "+e.message)}
+}
 $("#input").addEventListener("focus",()=>setTimeout(()=>{$(".composerWrap")?.scrollIntoView({block:"end"});scrollChatToLatest()},220));
 $("#sendBtn").onclick=()=>submitUser($("#input").value);$("#input").addEventListener("keydown",e=>{if(e.key==="Enter")submitUser($("#input").value)});$("#voiceBtn").onclick=browserVoice;$$("[data-view]").forEach(b=>b.onclick=()=>switchView(b.dataset.view));$("#detail").onclick=e=>{if(e.target===$("#detail"))$("#detail").classList.remove("on")};
 renderSaved();renderPlan();renderTaste();detectCapabilities();startConversation();
