@@ -37,6 +37,8 @@ npm start              # http://localhost:3000
 | `GET /api/health` | Готовность текстового AI, голоса и провайдеров |
 | `POST /api/recommend` | Поиск по живым источникам. Тело: `{query, party_size, after_time, target_date, max_price_rub, area, taste_weights, user_location, weather_context}` |
 | `POST /api/dialogue` | Диалог через Claude с инструментом `recommend_free`. Тело: `{message, previous_response_id, context}`; ответ содержит `response_id` — идентификатор истории, которую сервер хранит 2 часа. Требует `ANTHROPIC_API_KEY` |
+| `POST /api/dialogue/stream` | То же, что `/api/dialogue`, но ответ приходит потоком Server-Sent Events: события `delta` (текст), `status` (что ищет агент), `break`, `done` (полный результат) и `error` |
+| `GET /api/img?u=` | Прокси картинок мест: обходит защиту от хотлинков и смешанный контент, отдаёт только изображения до 3 МБ |
 | `POST /api/plan` | Собрать план вечера: `{stops:[{query}], start_time, party_size, max_price_rub, target_date, anchor}` |
 | `POST /api/plan/share` | Сохранить план и получить ссылку `/p/:id` (страница для отправки друзьям) |
 | `GET /api/weather` | Прогноз Open-Meteo по `lat`/`lon` |

@@ -303,8 +303,8 @@ function extractText(message){
   return (message?.content||[]).filter(b=>b.type==="text"&&b.text).map(b=>b.text).join("\n").trim();
 }
 
-async function claudeTurn(system,messages){
-  return anthropic.beta.messages.create({
+function claudeParams(system,messages){
+  return {
     model:TEXT_MODEL,
     max_tokens:4000,
     system,
@@ -314,10 +314,27 @@ async function claudeTurn(system,messages){
     output_config:{effort:TEXT_EFFORT},
     betas:["server-side-fallback-2026-07-01"],
     fallbacks:"default"
-  });
+  };
+}
+// Один ход модели. С onText — стриминг: текст уходит клиенту по мере генерации.
+async function claudeTurn(system,messages,onText){
+  const params=claudeParams(system,messages);
+  if(onText&&typeof anthropic.beta.messages.stream==="function"){
+    const stream=anthropic.beta.messages.stream(params);
+    stream.on("text",delta=>{try{onText(delta)}catch{}});
+    return stream.finalMessage();
+  }
+  return anthropic.beta.messages.create(params);
+}
+// Описание вызова инструмента для статуса в интерфейсе.
+function toolStatus(call){
+  const a=call.input&&typeof call.input==="object"?call.input:{};
+  if(call.name==="plan_evening"){const q=(a.stops||[]).map(s=>s.query).filter(Boolean).join(" → ");return {stage:"planning",text:q?`Собираю вечер: ${q}`:"Собираю план вечера"}}
+  return {stage:"searching",text:a.query?`Ищу: ${a.query}`:"Ищу варианты"};
 }
 
-async function runDialogue(message,conversationId,context={}){
+async function runDialogue(message,conversationId,context={},emit=null){
+  const send=(type,data)=>{if(emit){try{emit(type,data)}catch{}}};
   const existing=conversationGet(conversationId);
   const id=existing?conversationId:randomUUID();
   const messages=existing?existing.messages:[];
@@ -330,8 +347,10 @@ async function runDialogue(message,conversationId,context={}){
   let toolUsed=false;
   let response=null;
 
+  let streamedText="";
   for(let loops=0;loops<4;loops++){
-    response=await claudeTurn(system,messages);
+    streamedText="";
+    response=await claudeTurn(system,messages,emit?(d)=>{streamedText+=d;send("delta",{text:d})}:null);
     messages.push({role:"assistant",content:response.content});
 
     if(response.stop_reason==="refusal"||response.stop_reason==="max_tokens")break;
@@ -339,10 +358,13 @@ async function runDialogue(message,conversationId,context={}){
 
     const calls=response.content.filter(b=>b.type==="tool_use");
     if(!calls.length)break;
+    // Промежуточный текст перед инструментом уже ушёл дельтами; следующий ход начнёт новый абзац.
+    if(streamedText.trim())send("break",{});
 
     const results=[];
     for(const call of calls){
       const args=(call.input&&typeof call.input==="object")?{...call.input}:{};
+      send("status",toolStatus(call));
       if(call.name==="plan_evening"){
         toolUsed=true;
         try{
@@ -379,6 +401,7 @@ async function runDialogue(message,conversationId,context={}){
   }
 
   let reply=extractText(response);
+  const streamedFinal=streamedText.trim().length>0;
   if(response?.stop_reason==="refusal"){
     reply="С этим запросом помочь не смогу. Давайте подберём что-то другое: место, событие или формат вечера.";
   }
@@ -392,6 +415,7 @@ async function runDialogue(message,conversationId,context={}){
 
   return {
     reply,
+    reply_streamed:streamedFinal&&reply===streamedText.trim(),
     response_id:id,
     results:latestResults,
     plan:latestPlan,
@@ -471,6 +495,29 @@ const server=http.createServer(async(req,res)=>{
       return send(res,200,sharedPlanPage(rec),"text/html; charset=utf-8");
     }
 
+    if(req.method==="POST"&&url.pathname==="/api/dialogue/stream"){
+      if(!AI_READY)return json(res,503,{error:"ANTHROPIC_API_KEY not set",fallback:true});
+      const auth=authorize(req);if(auth.error)return json(res,auth.error.status,auth.error);
+      const rl=dialogueLimiter.check(auth.user?.id?`tg:${auth.user.id}`:`ip:${clientKey(req)}`);
+      if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return json(res,429,{error:"rate_limited",message:"Слишком много сообщений, подождите немного",retry_after:rl.retryAfterSec})}
+      let body={};
+      try{body=JSON.parse(await readBody(req,240000))}catch{return json(res,400,{error:"invalid_json"})}
+      const message=String(body.message||"").trim();
+      if(!message)return json(res,400,{error:"message_required"});
+      res.writeHead(200,{"Content-Type":"text/event-stream; charset=utf-8","Cache-Control":"no-store","Connection":"keep-alive","X-Accel-Buffering":"no"});
+      const emit=(type,data)=>{if(!res.writableEnded)res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`)};
+      const ping=setInterval(()=>{if(!res.writableEnded)res.write(": ping\n\n")},15000);
+      try{
+        const result=await runDialogue(message,body.previous_response_id||null,body.context||{},emit);
+        emit("done",result);
+      }catch(e){
+        console.error("dialogue/stream:",e);
+        const err=dialogueError(e);
+        emit("error",{error:err.error,message:err.message,fallback:true});
+      }finally{clearInterval(ping);res.end()}
+      return;
+    }
+
     if(req.method==="POST"&&url.pathname==="/api/recommend"){
       let args={};
       try{args=JSON.parse(await readBody(req))}catch{return json(res,400,{error:"invalid_json"})}
@@ -523,7 +570,7 @@ const server=http.createServer(async(req,res)=>{
   }
 });
 
-export {runDialogue,conversationTrim,recommendTool,planTool,dialogueSystem,sharePlan,sharedPlanPage,planEvening};
+export {runDialogue,conversationTrim,recommendTool,planTool,dialogueSystem,sharePlan,sharedPlanPage,planEvening,server};
 
 if(process.env.NODE_ENV!=="test"){
   server.listen(PORT,HOST,()=>{

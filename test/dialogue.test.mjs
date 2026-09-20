@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 process.env.NODE_ENV="test";
+process.env.ANTHROPIC_API_KEY="test-key";
 const {runDialogue,conversationTrim,setDialogueClient,recommendTool}=await import("../server.mjs");
 
 // Мок Claude: первый ход — вызов инструмента, второй — текстовый ответ по результатам.
@@ -101,4 +102,40 @@ test("plan_evening: план возвращается в ответе, моде�
   assert.ok(html.includes("&lt;b&gt;Бар&lt;/b&gt;"));
   assert.ok(html.includes("пешком ~7 мин"));
   assert.ok(html.includes("кальян — не найдено"));
+});
+
+test("стриминг: дельты, статус инструмента и done по SSE", async ()=>{
+  const {server}=await import("../server.mjs");
+  // Мок с .stream(): отдаёт текст кусками, потом финальное сообщение.
+  let n=0;
+  const streamClient={beta:{messages:{
+    stream:(req)=>{
+      n++;
+      const handlers={};
+      const final=n===1
+        ?{model:"m",stop_reason:"tool_use",content:[{type:"text",text:"Сейчас посмотрю."},{type:"tool_use",id:"tu_s",name:"recommend_free",input:{query:"джаз бар"}}]}
+        :{model:"m",stop_reason:"end_turn",content:[{type:"text",text:"Вот два бара."}]};
+      return {on(ev,cb){handlers[ev]=cb;return this},async finalMessage(){const t=final.content.find(b=>b.type==="text")?.text||"";for(const ch of t.match(/.{1,5}/g)||[])handlers.text?.(ch);return final}};
+    }
+  }}};
+  setDialogueClient(streamClient);
+  // Без emit — обычный путь, но клиент без create: проверяем только стриминговый путь через HTTP.
+  await new Promise(r=>server.listen(0,"127.0.0.1",r));
+  const port=server.address().port;
+  try{
+  const resp=await fetch(`http://127.0.0.1:${port}/api/dialogue/stream`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:"джаз бар"})});
+  assert.equal(resp.headers.get("content-type"),"text/event-stream; charset=utf-8");
+  const raw=await resp.text();
+  const events=raw.split("\n\n").filter(x=>x.startsWith("event:")).map(x=>{const [e,d]=x.split("\n");return {type:e.slice(7),data:JSON.parse(d.slice(6))}});
+  const types=events.map(e=>e.type);
+  assert.ok(types.includes("delta"));
+  assert.ok(types.includes("status"));
+  assert.ok(types.includes("break"));
+  assert.equal(types.at(-1),"done");
+  const deltas=events.filter(e=>e.type==="delta").map(e=>e.data.text).join("");
+  assert.ok(deltas.includes("Сейчас посмотрю.")&&deltas.includes("Вот два бара."));
+  assert.equal(events.find(e=>e.type==="status").data.text,"Ищу: джаз бар");
+  const done=events.at(-1).data;
+  assert.equal(done.reply,"Вот два бара.");assert.equal(done.reply_streamed,true);assert.ok(done.response_id);
+  }finally{await new Promise(r=>server.close(r))}
 });
