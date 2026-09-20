@@ -1,0 +1,20 @@
+# systemd unit: sudo cp deploy/free.service /etc/systemd/system/free.service
+[Unit]
+Description=FREE Moscow concierge (Telegram Mini App backend)
+After=network.target
+
+[Service]
+Type=simple
+User=free
+WorkingDirectory=/opt/afishacity
+EnvironmentFile=/opt/afishacity/.env
+ExecStart=/usr/bin/node server.mjs
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/afishacity
+
+[Install]
+WantedBy=multi-user.target

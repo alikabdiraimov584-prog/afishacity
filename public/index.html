@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#f6f6f4">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <title>FREE — разговор, который приводит к плану</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23111316'/%3E%3Ctext x='32' y='44' font-family='Arial,Helvetica,sans-serif' font-size='36' font-weight='700' fill='%23fff' text-anchor='middle'%3EF%3C/text%3E%3C/svg%3E">
 <style>
@@ -14,7 +15,7 @@
 *{box-sizing:border-box}html{scroll-behavior:smooth}
 body{margin:0;background:radial-gradient(900px 520px at 50% -10%,#fff,transparent 72%),var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Arial,sans-serif;padding-bottom:92px}
 button,input{font:inherit}button{cursor:pointer}
-.top{position:sticky;top:0;z-index:50;padding:10px 12px}
+.top{position:sticky;top:0;z-index:50;padding:calc(10px + var(--tg-content-safe-area-inset-top,0px) + var(--tg-safe-area-inset-top,0px)) 12px 10px}
 .topbar{max-width:860px;margin:auto;background:rgba(250,251,252,.72);border:1px solid rgba(255,255,255,.9);backdrop-filter:blur(24px);border-radius:999px;padding:7px 9px 7px 14px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 8px 26px rgba(35,39,48,.05)}
 .brand{font-weight:820;letter-spacing:-.04em}.sub{font-size:10px;color:#777d86;margin-top:1px}.avatar{width:34px;height:34px;border-radius:50%;border:0;background:#111;color:#fff;font-weight:800}
 .shell{max-width:860px;margin:auto;padding:0 14px}
@@ -49,7 +50,7 @@ button,input{font:inherit}button{cursor:pointer}
 .composer{display:flex;gap:7px;align-items:center;background:rgba(255,255,255,.78);border:1px solid rgba(255,255,255,.95);box-shadow:0 12px 35px rgba(31,36,46,.09);border-radius:20px;padding:7px;backdrop-filter:blur(20px)}
 .voice{width:44px;height:44px;border-radius:50%;border:1px solid var(--line);background:#fff}.voice.live{box-shadow:0 0 0 8px rgba(49,95,255,.08);background:#eef3ff}.composer input{flex:1;border:0;background:transparent;outline:0;padding:11px 9px}.send{height:44px;border:0;background:#111;color:#fff;border-radius:14px;padding:0 15px;font-weight:750}
 .hint{font-size:10px;color:#888d95;text-align:center;margin-top:7px}
-.bottom{position:fixed;left:50%;bottom:12px;transform:translateX(-50%);width:min(520px,calc(100% - 20px));z-index:60;background:rgba(246,247,248,.86);border:1px solid rgba(255,255,255,.92);box-shadow:0 10px 36px rgba(31,36,46,.12);backdrop-filter:blur(24px);border-radius:22px;padding:7px;display:grid;grid-template-columns:repeat(4,1fr)}
+.bottom{position:fixed;left:50%;bottom:calc(12px + var(--tg-safe-area-inset-bottom,0px));transform:translateX(-50%);width:min(520px,calc(100% - 20px));z-index:60;background:rgba(246,247,248,.86);border:1px solid rgba(255,255,255,.92);box-shadow:0 10px 36px rgba(31,36,46,.12);backdrop-filter:blur(24px);border-radius:22px;padding:7px;display:grid;grid-template-columns:repeat(4,1fr)}
 .nav{border:0;background:transparent;border-radius:15px;padding:8px 4px;color:#777d86;font-size:10px}.nav b{display:block;font-size:17px}.nav.on{background:#111;color:#fff}
 .overlay{display:none;position:fixed;inset:0;z-index:120;background:rgba(228,232,237,.45);backdrop-filter:blur(16px);padding:18px;align-items:center;justify-content:center}.overlay.on{display:flex}
 .sheet{width:min(590px,100%);max-height:90vh;overflow:auto;background:rgba(250,251,252,.94);border:1px solid #fff;border-radius:28px;padding:23px;box-shadow:0 30px 90px rgba(31,36,46,.18)}.close{float:right;width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#fff}.sheet h2{font-size:30px;letter-spacing:-.04em;margin:8px 0}.sheet p{color:#737983;font-size:12px;line-height:1.5}.detailGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0}.detail{background:#fff;border:1px solid var(--line);border-radius:14px;padding:11px;font-size:11px}.sheetActions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.sheetActions button,.sheetActions a{border:1px solid var(--line);background:#fff;color:#222;border-radius:13px;padding:11px;text-align:center;text-decoration:none;font-size:11px;font-weight:700}.sheetActions .primary{background:#111;color:#fff}
@@ -59,7 +60,7 @@ button,input{font:inherit}button{cursor:pointer}
 @media(max-width:650px){
       .intro{padding-top:38px}.intro h1{font-size:50px}.msg{max-width:90%}
       .chat{padding-bottom:195px;scroll-padding-bottom:195px}
-      .composerWrap{bottom:78px;width:calc(100% - 14px);padding:16px 7px 8px}
+      .composerWrap{bottom:calc(78px + var(--tg-safe-area-inset-bottom,0px));width:calc(100% - 14px);padding:16px 7px 8px}
       .msg:last-child,.inlineCards:last-child{scroll-margin-bottom:195px}
       .tasteGrid{grid-template-columns:1fr}
     }
@@ -119,6 +120,14 @@ try{taste={...taste,...JSON.parse(localStorage.getItem("free_v14_taste")||"{}")}
 try{saved=JSON.parse(localStorage.getItem("free_v14_saved")||"[]")}catch(_){}
 try{plan=JSON.parse(localStorage.getItem("free_v14_plan")||"[]")}catch(_){}
 
+const TG=(window.Telegram&&window.Telegram.WebApp&&window.Telegram.WebApp.initData)?window.Telegram.WebApp:null;
+if(TG){try{TG.ready();TG.expand();TG.setHeaderColor("#f6f6f4");TG.setBackgroundColor("#f6f6f4");if(TG.disableVerticalSwipes)TG.disableVerticalSwipes()}catch(_){}}
+function apiFetch(path,opts={}){const headers={...(opts.headers||{})};if(TG)headers["X-Telegram-Init-Data"]=TG.initData;return fetch(path,{...opts,headers})}
+function openExternal(url){
+  if(!url)return;
+  if(TG){try{if(/^https?:\/\/t\.me\//i.test(url))TG.openTelegramLink(url);else if(/^https?:/i.test(url))TG.openLink(url);else window.location.href=url;return}catch(_){}}
+  openExternal(url);
+}
 function esc(s=""){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 function norm(s=""){return String(s).toLowerCase().replace(/ё/g,"е").replace(/<[^>]*>/g," ").replace(/[^a-zа-я0-9+\-\s]/gi," ").replace(/\s+/g," ").trim()}
 function save(){localStorage.setItem("free_v14_taste",JSON.stringify(taste));localStorage.setItem("free_v14_saved",JSON.stringify(saved));localStorage.setItem("free_v14_plan",JSON.stringify(plan));renderSaved();renderPlan();renderTaste()}
@@ -266,7 +275,7 @@ function fallbackSearch(args){
   out.sort((a,b)=>b._s-a._s);return out.slice(0,3).map((v,i)=>({id:v.id,name:v.name,organizer:v.organizer,category:v.cat,date:v.date_start||"постоянно",time:v.times?.[0]||v.hours_label||"",price:v.price_label,availability:v.availability,area:v.area,metro:v.metro,source:v.source,point_source:v.point_source||v.source,official_source:v.official_source||null,coords:v.coords||null,provider:"Fallback",image_url:v.image_url||null,booking_url:v.booking_url||null,booking_kind:v.booking_kind||null,booking_provider:v.booking_provider||null,phone:v.phone||null,reasons:[],dna:v.dna,match:Math.max(76,94-i*5),kind:v.kind}))}
 async function recommend(){
   const args=await liveArgs();
-  try{const r=await fetch("/api/recommend",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(args)});if(r.ok){const d=await r.json();if(d.results?.length)return d.results.slice(0,3)}}catch(_){}
+  try{const r=await apiFetch("/api/recommend",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(args)});if(r.ok){const d=await r.json();if(d.results?.length)return d.results.slice(0,3)}}catch(_){}
   return fallbackSearch(args);
 }
 function reason(r){const a=[...(r.reasons||[])],d=r.dna||{};if(d.quiet>=68)a.push("можно разговаривать");if(d.romantic>=70)a.push("подходит вдвоём");if(d.late>=70)a.push("работает поздно");return [...new Set(a)].slice(0,3).join(" · ")||"лучшее совпадение с вашим контекстом"}
@@ -426,7 +435,7 @@ async function submitNeuralUser(text){
   const t=typing();
 
   try{
-    const resp=await fetch("/api/dialogue",{
+    const resp=await apiFetch("/api/dialogue",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
@@ -483,13 +492,13 @@ function waWithText(url,text){try{const u=new URL(url);u.searchParams.set("text"
 async function openBooking(id){
   const r=currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id)||plan.find(x=>x.id===id);if(!r)return;
   const url=r.booking_url||(r.kind==="event"?(r.point_source||r.source):null);
-  if(!url){addMsg("ai",`У <b>${esc(r.name)}</b> я пока не вижу отдельного канала бронирования. Открываю конкретную страницу точки.`);window.open(r.point_source||r.source,"_blank","noopener");return}
+  if(!url){addMsg("ai",`У <b>${esc(r.name)}</b> я пока не вижу отдельного канала бронирования. Открываю конкретную страницу точки.`);openExternal(r.point_source||r.source);return}
   const text=bookingRequestText(r);chatState.phase="action";
-  if(r.kind==="event"||r.booking_kind==="tickets"){addMsg("ai",`Открываю реальную страницу билетов / регистрации для <b>${esc(r.name)}</b>. После оформления можно вернуться сюда — я построю маршрут или продолжу вечер.`);window.open(url,"_blank","noopener");return}
-  if(r.booking_kind==="whatsapp"){addMsg("ai",`Передаю заявку в WhatsApp для <b>${esc(r.name)}</b>.<div class="bookingSummary">${esc(text)}</div>`);window.open(waWithText(url,text),"_blank","noopener");return}
-  if(r.booking_kind==="telegram"){const copied=await copyText(text);addMsg("ai",`Открываю ${esc(r.booking_provider||"Telegram")} для <b>${esc(r.name)}</b>. ${copied?"Текст заявки уже скопирован — останется вставить и отправить.":"Вставьте данные брони в чат."}<div class="bookingSummary">${esc(text)}</div>`);window.open(url,"_blank","noopener");return}
+  if(r.kind==="event"||r.booking_kind==="tickets"){addMsg("ai",`Открываю реальную страницу билетов / регистрации для <b>${esc(r.name)}</b>. После оформления можно вернуться сюда — я построю маршрут или продолжу вечер.`);openExternal(url);return}
+  if(r.booking_kind==="whatsapp"){addMsg("ai",`Передаю заявку в WhatsApp для <b>${esc(r.name)}</b>.<div class="bookingSummary">${esc(text)}</div>`);openExternal(waWithText(url,text));return}
+  if(r.booking_kind==="telegram"){const copied=await copyText(text);addMsg("ai",`Открываю ${esc(r.booking_provider||"Telegram")} для <b>${esc(r.name)}</b>. ${copied?"Текст заявки уже скопирован — останется вставить и отправить.":"Вставьте данные брони в чат."}<div class="bookingSummary">${esc(text)}</div>`);openExternal(url);return}
   if(r.booking_kind==="phone"||String(url).startsWith("tel:")){addMsg("ai",`Для <b>${esc(r.name)}</b> подтверждённый канал бронирования — телефон. Открываю звонок.<div class="bookingSummary">${esc(text)}</div>`);window.location.href=url;return}
-  const copied=await copyText(text);addMsg("ai",`Открываю форму / сервис бронирования <b>${esc(r.name)}</b>. ${copied?"Параметры заявки скопированы.":""}<div class="bookingSummary">${esc(text)}</div>`);window.open(url,"_blank","noopener");
+  const copied=await copyText(text);addMsg("ai",`Открываю форму / сервис бронирования <b>${esc(r.name)}</b>. ${copied?"Параметры заявки скопированы.":""}<div class="bookingSummary">${esc(text)}</div>`);openExternal(url);
 }
 
 function selectPlace(id){
@@ -505,7 +514,7 @@ function selectPlace(id){
 }
 function coords(r){const c=r.coords;if(!c)return null;if(Array.isArray(c)&&c.length>=2){const a=+c[0],b=+c[1];return a>50?{lat:a,lon:b}:{lat:b,lon:a}}const lat=+(c.lat??c.latitude),lon=+(c.lon??c.lng??c.longitude);return Number.isFinite(lat)&&Number.isFinite(lon)?{lat,lon}:null}
 function dest(r){const c=coords(r);return c?`${c.lat},${c.lon}`:`Москва, ${r.area||r.name}`}
-async function routeItems(items){const g=await geo(false);if(!g)return;const u=`https://yandex.ru/maps/?mode=routes&rtext=${[`${g.lat},${g.lon}`,...items.map(dest)].map(encodeURIComponent).join("~")}`;window.open(u,"_blank","noopener")}
+async function routeItems(items){const g=await geo(false);if(!g)return;const u=`https://yandex.ru/maps/?mode=routes&rtext=${[`${g.lat},${g.lon}`,...items.map(dest)].map(encodeURIComponent).join("~")}`;openExternal(u)}
 function routePlace(id){const r=currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id)||plan.find(x=>x.id===id);if(r)routeItems([r])}
 function toggleSave(id){const r=currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id);if(!r)return;const i=saved.findIndex(x=>x.id===id);if(i>=0)saved.splice(i,1);else saved.unshift(r);save();toast(i>=0?"Удалено из Saved":"Сохранено")}
 function openDetail(id){
@@ -532,9 +541,10 @@ function startConversation(){
 async function detectCapabilities(){
   voice.mode=(window.SpeechRecognition||window.webkitSpeechRecognition)?"browser":"none";
   try{
-    const r=await fetch("/api/health",{cache:"no-store"});
+    const r=await apiFetch("/api/health",{cache:"no-store"});
     const d=await r.json();
     chatState.aiReady=Boolean(d.text_ai_ready);
+    if(d.telegram_auth&&!TG){chatState.aiReady=false;$("#hint").textContent="Полный AI-режим доступен внутри Telegram-бота. Здесь работает демо-сценарий."}
     if(d.voice_ready)voice.mode="live";
     $("#aiStatus").textContent=chatState.aiReady?`Neural chat · ${d.text_ai_model||"Claude"}`:"AI fallback · Москва";
     $("#hint").textContent=chatState.aiReady

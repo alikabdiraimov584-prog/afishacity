@@ -4,12 +4,30 @@ import {extname,join,normalize} from "node:path";
 import {fileURLToPath} from "node:url";
 import {randomUUID} from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
+import {verifyInitData,createRateLimiter} from "./telegram.mjs";
 import {searchLiveInventory} from "./providers.mjs";
 import {rankLive,resultPayload} from "./live_ranker.mjs";
 
 const __dirname=fileURLToPath(new URL(".",import.meta.url));
 const PUBLIC=join(__dirname,"public");
 const PORT=Number(process.env.PORT||3000);
+const HOST=process.env.HOST||"127.0.0.1";
+// Токен бота включает проверку подписи Telegram Mini App для платных эндпоинтов.
+const TG_BOT_TOKEN=process.env.TELEGRAM_BOT_TOKEN||"";
+const TG_REQUIRED=Boolean(TG_BOT_TOKEN);
+const dialogueLimiter=createRateLimiter({limit:Number(process.env.DIALOGUE_RATE_LIMIT||40),windowMs:10*60*1000});
+setInterval(()=>dialogueLimiter.sweep(),5*60*1000).unref();
+function clientKey(req){
+  const fwd=String(req.headers["x-forwarded-for"]||"").split(",")[0].trim();
+  return fwd||req.socket?.remoteAddress||"unknown";
+}
+// Возвращает {user} либо {error} для ответа. Без токена бота (локальная разработка) пропускает всех.
+function authorize(req){
+  if(!TG_REQUIRED)return {user:null};
+  const v=verifyInitData(req.headers["x-telegram-init-data"],TG_BOT_TOKEN);
+  if(!v.ok)return {error:{status:401,error:"telegram_auth_required",reason:v.reason,message:"Откройте FREE через Telegram-бота"}};
+  return {user:v.user};
+}
 const CACHE=new Map();
 const CACHE_MS=5*60*1000;
 
@@ -302,6 +320,7 @@ const server=http.createServer(async(req,res)=>{
         ok:true,
         text_ai_ready:AI_READY,
         text_ai_model:TEXT_MODEL,
+        telegram_auth:TG_REQUIRED,
         voice_ready:false,
         voice_model:null,
         providers:{kudago:true,timepad:true,osm:true,dgis:Boolean(process.env.DGIS_API_KEY||process.env.TWOGIS_API_KEY)}
@@ -310,6 +329,9 @@ const server=http.createServer(async(req,res)=>{
 
     if(req.method==="POST"&&url.pathname==="/api/dialogue"){
       if(!AI_READY)return json(res,503,{error:"ANTHROPIC_API_KEY not set",fallback:true});
+      const auth=authorize(req);if(auth.error)return json(res,auth.error.status,auth.error);
+      const rl=dialogueLimiter.check(auth.user?.id?`tg:${auth.user.id}`:`ip:${clientKey(req)}`);
+      if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return json(res,429,{error:"rate_limited",message:"Слишком много сообщений, подождите немного",retry_after:rl.retryAfterSec})}
       let body={};
       try{body=JSON.parse(await readBody(req,240000))}catch{return json(res,400,{error:"invalid_json"})}
       const message=String(body.message||"").trim();
@@ -327,6 +349,7 @@ const server=http.createServer(async(req,res)=>{
       let args={};
       try{args=JSON.parse(await readBody(req))}catch{return json(res,400,{error:"invalid_json"})}
       if(!String(args.query||"").trim())return json(res,400,{error:"query_required"});
+      const auth=authorize(req);if(auth.error)return json(res,auth.error.status,auth.error);
       try{return json(res,200,await recommend(args))}
       catch(e){console.error(e);return json(res,502,{error:"providers_unavailable",message:e.message})}
     }
@@ -373,8 +396,9 @@ const server=http.createServer(async(req,res)=>{
 export {runDialogue,conversationTrim,recommendTool,dialogueSystem};
 
 if(process.env.NODE_ENV!=="test"){
-  server.listen(PORT,"127.0.0.1",()=>{
-    console.log(`FREE v18: http://localhost:${PORT}`);
+  server.listen(PORT,HOST,()=>{
+    console.log(`FREE v18: http://${HOST}:${PORT}`);
+    console.log("Telegram auth: "+(TG_REQUIRED?"required (TELEGRAM_BOT_TOKEN set)":"off"));
     console.log("Live providers: KudaGo + Timepad + OpenStreetMap/Overpass" + (process.env.DGIS_API_KEY||process.env.TWOGIS_API_KEY?" + 2GIS":""));
     console.log("Text AI: "+(AI_READY?`Claude ${TEXT_MODEL} ready`:"scripted fallback (ANTHROPIC_API_KEY not set)"));
     console.log("Voice: browser speech recognition → text dialogue");

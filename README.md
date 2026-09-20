@@ -26,6 +26,7 @@ npm start              # http://localhost:3000
 | `server.mjs` | HTTP-сервер, статика из `public/`, API, диалог с Claude (tool use), обогащение карточек метаданными страниц |
 | `providers.mjs` | Live-источники: KudaGo, Timepad, OpenStreetMap/Overpass, 2GIS (по ключу). Построение плана поиска из запроса |
 | `live_ranker.mjs` | Фильтрация и ранжирование результатов, «ДНК места», учёт Taste Graph, геолокации и погоды |
+| `telegram.mjs` | Проверка подписи initData Telegram Mini App и лимит запросов |
 | `public/index.html` | Одностраничный UI: чат, карточки, план, сохранённое, Taste Graph, голос |
 
 ## API
@@ -44,6 +45,14 @@ npm start              # http://localhost:3000
 кеширование системного промпта и серверный fallback на другую модель Anthropic при отказе
 по политике (`fallbacks: "default"`). Голосовой WebRTC-режим прежнего бэкенда убран:
 у Claude нет realtime-канала, поэтому речь распознаёт браузер.
+
+## Telegram Mini App
+
+Интерфейс подключает Telegram WebApp SDK: внутри бота раскрывается на весь экран,
+учитывает безопасные отступы, открывает ссылки через Telegram и подписывает запросы
+к API заголовком `X-Telegram-Init-Data`. При заданном `TELEGRAM_BOT_TOKEN` сервер проверяет
+эту подпись и ограничивает частоту сообщений. Пошаговая публикация на своём домене:
+[deploy/DEPLOY.md](deploy/DEPLOY.md).
 
 ## Проверка
 
