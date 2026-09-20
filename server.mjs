@@ -7,6 +7,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import {verifyInitData,createRateLimiter} from "./telegram.mjs";
 import {buildPlan,planSummary} from "./planner.mjs";
 import {openStore} from "./store.mjs";
+import {mkdirSync,writeFileSync as writeFileSyncFs,existsSync} from "node:fs";
 import {searchLiveInventory} from "./providers.mjs";
 import {rankLive,resultPayload} from "./live_ranker.mjs";
 import {startWarmup} from "./warmup.mjs";
@@ -190,12 +191,22 @@ const planTool={
   }
 };
 function planId(){return randomUUID().replace(/-/g,"").slice(0,10)}
+const CARD_DIR=join(__dirname,"data","cards");
+const CARD_MAX=900*1024;
+function saveCard(id,dataUrl){
+  const m=/^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl||""));if(!m)return false;
+  const buf=Buffer.from(m[1],"base64");if(!buf.length||buf.length>CARD_MAX)return false;
+  if(buf[0]!==0x89||buf[1]!==0x50)return false; // PNG signature
+  try{mkdirSync(CARD_DIR,{recursive:true});writeFileSyncFs(join(CARD_DIR,id+".png"),buf);return true}catch{return false}
+}
 function sharePlan(plan,meta={}){
   const id=planId();
   const stops=(plan.stops||[]).map(s=>({...s,alternatives:[]}));
-  store.setShared(id,{id,created_at:new Date().toISOString(),title:meta.title||"Вечер с FREE",date:meta.date||null,plan:{...plan,stops}});
+  const has_card=meta.image?saveCard(id,meta.image):false;
+  store.setShared(id,{id,created_at:new Date().toISOString(),title:meta.title||"Вечер с FREE",date:meta.date||null,has_card,plan:{...plan,stops}});
   return id;
 }
+function publicOrigin(req){return (req.headers["x-forwarded-proto"]||"http")+"://"+(req.headers["x-forwarded-host"]||req.headers.host||`localhost:${PORT}`)}
 async function planEvening(args,context={}){
   const req={...args};
   if(req.area&&Array.isArray(req.stops))req.stops=req.stops.map(s=>({...s,query:`${s.query} ${req.area}`}));
@@ -213,16 +224,29 @@ function planForModel(plan){
       alternatives:(s.alternatives||[]).map(a=>({id:a.id,name:a.name,category:a.category,area:a.area}))}))};
 }
 function escapeHtml(s=""){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
-function sharedPlanPage(rec){
+function sharedPlanPage(rec,origin=""){
   const p=rec.plan,e=escapeHtml;
+  const names=(p.stops||[]).filter(s=>s.place).map(s=>s.place.name);
+  const desc=`${p.total?.start||""}–${p.total?.end||""}: ${names.join(" → ")}`;
+  const cardUrl=rec.has_card?`${origin}/p/${rec.id}/card.png`:null;
+  const og=[
+    `<meta property="og:type" content="website">`,
+    `<meta property="og:site_name" content="FREE">`,
+    `<meta property="og:title" content="${e(rec.title)} · FREE">`,
+    `<meta property="og:description" content="${e(desc)}">`,
+    `<meta property="og:url" content="${e(origin)}/p/${e(rec.id)}">`,
+    cardUrl?`<meta property="og:image" content="${e(cardUrl)}"><meta property="og:image:width" content="1080"><meta property="og:image:height" content="1350"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="${e(cardUrl)}">`:`<meta name="twitter:card" content="summary">`,
+    `<meta name="twitter:title" content="${e(rec.title)} · FREE"><meta name="twitter:description" content="${e(desc)}">`
+  ].join("\n");
   const rows=(p.stops||[]).map(s=>{
     const pl=s.place;
     const travel=s.travel_to_next?`<div class="travel">↓ ${s.travel_to_next.mode==="walk"?"пешком":s.travel_to_next.mode==="taxi"?"такси":"переход"} ~${s.travel_to_next.minutes} мин${s.travel_to_next.km?` · ${s.travel_to_next.km} км`:""}</div>`:"";
     return `<div class="stop"><div class="time">${e(s.slot_start)}–${e(s.slot_end)}</div><div class="body"><h3>${pl?e(pl.name):e(s.query)+" — не найдено"}</h3>${pl?`<p>${e(pl.category||"")}${pl.area?" · "+e(pl.area):""}${pl.metro?" · м. "+e(pl.metro):""}</p><p class="muted">${e(pl.price||"")}${pl.availability?" · "+e(pl.availability):""}</p>${pl.booking_url||pl.source?`<a href="${e(pl.booking_url||pl.source)}" target="_blank" rel="noopener">${pl.booking_url?"Бронь / билеты":"Страница места"}</a>`:""}`:""}</div></div>${travel}`;
   }).join("");
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${e(rec.title)} · FREE</title>
-<style>body{margin:0;font-family:-apple-system,Inter,Segoe UI,Roboto,sans-serif;background:#f6f6f4;color:#111214}main{max-width:560px;margin:0 auto;padding:24px 16px 48px}.eyebrow{font-size:11px;letter-spacing:.14em;color:#727780;text-transform:uppercase}h1{font-size:28px;margin:6px 0 4px}.sub{color:#727780;margin:0 0 20px}.stop{display:flex;gap:14px;background:#fff;border:1px solid rgba(20,24,28,.08);border-radius:18px;padding:14px 16px;box-shadow:0 10px 30px rgba(31,36,46,.06)}.time{min-width:92px;font-weight:700;font-variant-numeric:tabular-nums}.body h3{margin:0 0 4px;font-size:17px}.body p{margin:2px 0;font-size:13px}.muted{color:#727780}.body a{display:inline-block;margin-top:8px;font-size:13px;color:#315fff;text-decoration:none;font-weight:600}.travel{padding:8px 0 8px 108px;color:#727780;font-size:12px}.cta{display:flex;gap:10px;margin-top:22px;flex-wrap:wrap}.cta a{flex:1;text-align:center;padding:13px 16px;border-radius:14px;text-decoration:none;font-weight:700;font-size:14px}.cta .dark{background:#111316;color:#fff}.cta .light{background:#fff;color:#111214;border:1px solid rgba(20,24,28,.12)}.foot{margin-top:28px;font-size:12px;color:#727780}</style></head>
-<body><main><div class="eyebrow">План вечера</div><h1>${e(rec.title)}</h1><p class="sub">${e(p.total?.start||"")}–${e(p.total?.end||"")}${rec.date?" · "+e(rec.date):""}${p.total?.travel_km?" · переходы "+e(String(p.total.travel_km))+" км":""}</p>
+${og}
+<style>body{margin:0;font-family:-apple-system,Inter,Segoe UI,Roboto,sans-serif;background:#f6f6f4;color:#111214}main{max-width:560px;margin:0 auto;padding:24px 16px 48px}.eyebrow{font-size:11px;letter-spacing:.14em;color:#727780;text-transform:uppercase}h1{font-size:28px;margin:6px 0 4px}.sub{color:#727780;margin:0 0 20px}.stop{display:flex;gap:14px;background:#fff;border:1px solid rgba(20,24,28,.08);border-radius:18px;padding:14px 16px;box-shadow:0 10px 30px rgba(31,36,46,.06)}.time{min-width:92px;font-weight:700;font-variant-numeric:tabular-nums}.body h3{margin:0 0 4px;font-size:17px}.body p{margin:2px 0;font-size:13px}.muted{color:#727780}.body a{display:inline-block;margin-top:8px;font-size:13px;color:#315fff;text-decoration:none;font-weight:600}.travel{padding:8px 0 8px 108px;color:#727780;font-size:12px}.cta{display:flex;gap:10px;margin-top:22px;flex-wrap:wrap}.cta a{flex:1;text-align:center;padding:13px 16px;border-radius:14px;text-decoration:none;font-weight:700;font-size:14px}.cta .dark{background:#111316;color:#fff}.cta .light{background:#fff;color:#111214;border:1px solid rgba(20,24,28,.12)}.foot{margin-top:28px;font-size:12px;color:#727780}.hero{width:100%;border-radius:22px;display:block;margin:0 0 18px;box-shadow:0 20px 50px rgba(31,36,46,.12)}</style></head>
+<body><main>${cardUrl?`<img class="hero" src="${e(cardUrl)}" alt="">`:""}<div class="eyebrow">План вечера</div><h1>${e(rec.title)}</h1><p class="sub">${e(p.total?.start||"")}–${e(p.total?.end||"")}${rec.date?" · "+e(rec.date):""}${p.total?.travel_km?" · переходы "+e(String(p.total.travel_km))+" км":""}</p>
 ${rows}
 <div class="cta">${p.route_url?`<a class="dark" href="${e(p.route_url)}" target="_blank" rel="noopener">Маршрут в Яндекс Картах</a>`:""}<a class="light" href="/">Собрать свой вечер в FREE</a></div>
 <div class="foot">Составлено FREE по данным KudaGo, Timepad, OpenStreetMap и официальных сайтов. Часы и наличие мест стоит перепроверить у заведения.</div></main></body></html>`;
@@ -511,11 +535,11 @@ const server=http.createServer(async(req,res)=>{
 
     if(req.method==="POST"&&url.pathname==="/api/plan/share"){
       let body={};
-      try{body=JSON.parse(await readBody(req,240000))}catch{return json(res,400,{error:"invalid_json"})}
+      try{body=JSON.parse(await readBody(req,2500000))}catch{return json(res,400,{error:"invalid_json"})} // план + PNG-карточка до ~1 МБ
       if(!body.plan||!Array.isArray(body.plan.stops)||!body.plan.stops.length)return json(res,400,{error:"plan_required"});
-      const id=sharePlan(body.plan,{title:String(body.title||"").slice(0,80),date:String(body.date||"").slice(0,10)||null});
-      const origin=(req.headers["x-forwarded-proto"]||"http")+"://"+(req.headers["x-forwarded-host"]||req.headers.host||`localhost:${PORT}`);
-      return json(res,201,{id,url:`${origin}/p/${id}`});
+      const id=sharePlan(body.plan,{title:String(body.title||"").slice(0,80),date:String(body.date||"").slice(0,10)||null,image:typeof body.image==="string"&&body.image.length<1400000?body.image:null});
+      const rec=store.getShared(id);
+      return json(res,201,{id,url:`${publicOrigin(req)}/p/${id}`,card_url:rec?.has_card?`${publicOrigin(req)}/p/${id}/card.png`:null});
     }
 
     if(req.method==="GET"&&/^\/api\/plan\/[a-z0-9]{6,20}$/.test(url.pathname)){
@@ -523,10 +547,16 @@ const server=http.createServer(async(req,res)=>{
       return rec?json(res,200,rec):json(res,404,{error:"not_found"});
     }
 
+    if(req.method==="GET"&&/^\/p\/[a-z0-9]{6,20}\/card\.png$/.test(url.pathname)){
+      const id=url.pathname.split("/")[2];const file=join(CARD_DIR,id+".png");
+      if(!/^[a-z0-9]+$/.test(id)||!existsSync(file))return send(res,404,"Not found");
+      try{const data=await readFile(file);res.writeHead(200,{"Content-Type":"image/png","Cache-Control":"public, max-age=31536000, immutable","Content-Length":String(data.length)});return res.end(data)}catch{return send(res,404,"Not found")}
+    }
+
     if(req.method==="GET"&&/^\/p\/[a-z0-9]{6,20}$/.test(url.pathname)){
       const rec=store.getShared(url.pathname.split("/").pop());
       if(!rec)return send(res,404,"План не найден или удалён");
-      return send(res,200,sharedPlanPage(rec),"text/html; charset=utf-8");
+      return send(res,200,sharedPlanPage(rec,publicOrigin(req)),"text/html; charset=utf-8");
     }
 
     if(req.method==="POST"&&url.pathname==="/api/dialogue/stream"){
