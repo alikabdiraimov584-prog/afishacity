@@ -75,13 +75,30 @@ systemctl enable -q nginx; systemctl reload nginx || systemctl restart nginx
 if command -v ufw >/dev/null && ufw status | grep -q '^Status: active'; then ufw allow -q 'Nginx Full' >/dev/null || true; fi
 
 say "HTTPS через Let's Encrypt"
+ips(){ getent ahostsv4 "$1" 2>/dev/null | awk '{print $1}' | sort -u | tr '\n' ' ' | sed 's/ $//'; }
+SELF_IP="$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
+APEX_IPS="$(ips "$DOMAIN")"; WWW_IPS="$(ips "www.$DOMAIN")"
+if [ -z "$APEX_IPS" ]; then
+  echo "   $DOMAIN пока не резолвится — DNS не дошёл"
+elif [ -n "$SELF_IP" ] && ! printf '%s\n' $APEX_IPS | grep -qx "$SELF_IP"; then
+  echo "   внимание: $DOMAIN указывает на $APEX_IPS, а этот сервер — $SELF_IP"
+fi
 DOMAINS=(-d "$DOMAIN")
-if getent hosts "www.$DOMAIN" >/dev/null; then DOMAINS+=(-d "www.$DOMAIN"); fi
-if certbot --nginx "${DOMAINS[@]}" --non-interactive --agree-tos --register-unsafely-without-email --redirect >/dev/null 2>&1; then
+# www добавляем, только если он указывает ровно туда же. Лишняя A-запись
+# (парковка хостера) не проходит проверку и заваливает весь сертификат.
+if [ -n "$WWW_IPS" ] && [ "$WWW_IPS" = "$APEX_IPS" ]; then
+  DOMAINS+=(-d "www.$DOMAIN")
+elif [ -n "$WWW_IPS" ]; then
+  echo "   www.$DOMAIN указывает на $WWW_IPS вместо $APEX_IPS — сертификат без www"
+fi
+issue(){ certbot --nginx "$@" --non-interactive --agree-tos --register-unsafely-without-email --redirect >/dev/null 2>&1; }
+if issue "${DOMAINS[@]}"; then
   echo "   сертификат выпущен, редирект на HTTPS включён"
+elif [ "${#DOMAINS[@]}" -gt 2 ] && issue -d "$DOMAIN"; then
+  echo "   сертификат выпущен для $DOMAIN (без www), редирект на HTTPS включён"
 else
   echo "   сертификат не выпущен (DNS ещё не дошёл или порт 80 закрыт). Повторите позже:"
-  echo "   certbot --nginx -d $DOMAIN -d www.$DOMAIN --redirect"
+  echo "   certbot --nginx -d $DOMAIN --redirect"
 fi
 
 say "Готово"
