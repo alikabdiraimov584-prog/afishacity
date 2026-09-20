@@ -1,0 +1,539 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#f6f6f4">
+<title>FREE — разговор, который приводит к плану</title>
+<style>
+:root{
+  --bg:#f6f6f4;--ink:#111214;--muted:#727780;--card:#fff;--line:rgba(20,24,28,.08);
+  --dark:#111316;--green:#14865a;--blue:#315fff;--shadow:0 16px 46px rgba(31,36,46,.08)
+}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:radial-gradient(900px 520px at 50% -10%,#fff,transparent 72%),var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Arial,sans-serif;padding-bottom:92px}
+button,input{font:inherit}button{cursor:pointer}
+.top{position:sticky;top:0;z-index:50;padding:10px 12px}
+.topbar{max-width:860px;margin:auto;background:rgba(250,251,252,.72);border:1px solid rgba(255,255,255,.9);backdrop-filter:blur(24px);border-radius:999px;padding:7px 9px 7px 14px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 8px 26px rgba(35,39,48,.05)}
+.brand{font-weight:820;letter-spacing:-.04em}.sub{font-size:10px;color:#777d86;margin-top:1px}.avatar{width:34px;height:34px;border-radius:50%;border:0;background:#111;color:#fff;font-weight:800}
+.shell{max-width:860px;margin:auto;padding:0 14px}
+.intro{padding:50px 0 24px;text-align:center}.eyebrow{font-size:10px;text-transform:uppercase;letter-spacing:.14em;font-weight:800;color:#7b8088}.intro h1{font-size:clamp(45px,7vw,72px);line-height:.94;letter-spacing:-.065em;margin:10px auto 12px}.intro p{max-width:620px;margin:auto;color:#727780;line-height:1.5}
+.chat{display:flex;flex-direction:column;gap:12px;padding:18px 0 210px;min-height:340px;scroll-padding-bottom:210px}
+.msg{max-width:82%;border-radius:22px;padding:13px 15px;line-height:1.45;font-size:14px;animation:fade .18s ease}
+.msg.ai{align-self:flex-start;background:rgba(255,255,255,.82);border:1px solid rgba(255,255,255,.96);box-shadow:var(--shadow)}
+.msg.user{align-self:flex-end;background:#111;color:#fff;border-bottom-right-radius:7px}
+.msg .small{font-size:11px;color:#838892;margin-top:6px}.msg.user .small{color:#b8bdc5}
+@keyframes fade{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+.typing{display:flex;gap:4px;align-items:center}.typing i{width:5px;height:5px;background:#8a9098;border-radius:50%;animation:bounce .9s infinite}.typing i:nth-child(2){animation-delay:.12s}.typing i:nth-child(3){animation-delay:.24s}@keyframes bounce{50%{transform:translateY(-4px)}}
+.quick{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.quick button{border:1px solid var(--line);background:#fff;color:#4e555f;border-radius:999px;padding:8px 11px;font-size:11px}.quick button.primary{background:#111;color:#fff}
+.inlineCards{display:flex;gap:10px;overflow-x:auto;padding:8px 0 3px;scroll-snap-type:x mandatory}
+.placeCard{min-width:min(330px,85vw);max-width:330px;scroll-snap-align:start;border-radius:23px;background:#fff;border:1px solid rgba(255,255,255,.95);padding:16px;box-shadow:var(--shadow)}
+.placeCard.best{border-color:rgba(17,19,22,.18)}
+.placeCard .tag{font-size:9px;text-transform:uppercase;letter-spacing:.11em;color:#858b93}.placeCard h3{font-size:20px;letter-spacing:-.035em;margin:6px 0 5px}.reason{font-size:12px;color:#626a74;line-height:1.4}.meta{font-size:11px;color:#8a9098;margin-top:7px}.score{float:right;font-size:20px;font-weight:780;letter-spacing:-.05em}.score small{font-size:8px;text-transform:uppercase;color:#91969d;letter-spacing:.08em}
+.cardBtns{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:13px}.cardBtn{border:1px solid var(--line);background:#fff;color:#313740;border-radius:12px;padding:9px;font-size:11px;font-weight:700}.cardBtn.primary{background:#111;color:#fff}.cardBtn.saved{background:#eaf7f0;color:#13724e}
+.actionBox{margin-top:12px;padding:14px;border-radius:18px;background:#111;color:#fff}.actionBox h4{margin:0 0 5px;font-size:15px}.actionBox p{margin:0;color:#adb3bb;font-size:11px;line-height:1.45}.actionBtns{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.actionBtns button,.actionBtns a{border:0;background:#fff;color:#111;border-radius:11px;padding:9px 11px;font-size:11px;font-weight:720;text-decoration:none}.actionBtns .ghost{background:#22262c;color:#fff}
+.composerWrap{
+      position:fixed;
+      left:50%;
+      bottom:82px;
+      transform:translateX(-50%);
+      z-index:55;
+      width:min(860px,calc(100% - 28px));
+      padding:18px 14px 10px;
+      background:linear-gradient(to top,var(--bg) 0%,rgba(246,246,244,.97) 64%,rgba(246,246,244,0) 100%);
+      pointer-events:none
+    }
+    .composerWrap .composer,.composerWrap .hint{pointer-events:auto}
+    .msg:last-child,.inlineCards:last-child{scroll-margin-bottom:210px}
+.composer{display:flex;gap:7px;align-items:center;background:rgba(255,255,255,.78);border:1px solid rgba(255,255,255,.95);box-shadow:0 12px 35px rgba(31,36,46,.09);border-radius:20px;padding:7px;backdrop-filter:blur(20px)}
+.voice{width:44px;height:44px;border-radius:50%;border:1px solid var(--line);background:#fff}.voice.live{box-shadow:0 0 0 8px rgba(49,95,255,.08);background:#eef3ff}.composer input{flex:1;border:0;background:transparent;outline:0;padding:11px 9px}.send{height:44px;border:0;background:#111;color:#fff;border-radius:14px;padding:0 15px;font-weight:750}
+.hint{font-size:10px;color:#888d95;text-align:center;margin-top:7px}
+.bottom{position:fixed;left:50%;bottom:12px;transform:translateX(-50%);width:min(520px,calc(100% - 20px));z-index:60;background:rgba(246,247,248,.86);border:1px solid rgba(255,255,255,.92);box-shadow:0 10px 36px rgba(31,36,46,.12);backdrop-filter:blur(24px);border-radius:22px;padding:7px;display:grid;grid-template-columns:repeat(4,1fr)}
+.nav{border:0;background:transparent;border-radius:15px;padding:8px 4px;color:#777d86;font-size:10px}.nav b{display:block;font-size:17px}.nav.on{background:#111;color:#fff}
+.overlay{display:none;position:fixed;inset:0;z-index:120;background:rgba(228,232,237,.45);backdrop-filter:blur(16px);padding:18px;align-items:center;justify-content:center}.overlay.on{display:flex}
+.sheet{width:min(590px,100%);max-height:90vh;overflow:auto;background:rgba(250,251,252,.94);border:1px solid #fff;border-radius:28px;padding:23px;box-shadow:0 30px 90px rgba(31,36,46,.18)}.close{float:right;width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#fff}.sheet h2{font-size:30px;letter-spacing:-.04em;margin:8px 0}.sheet p{color:#737983;font-size:12px;line-height:1.5}.detailGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0}.detail{background:#fff;border:1px solid var(--line);border-radius:14px;padding:11px;font-size:11px}.sheetActions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.sheetActions button,.sheetActions a{border:1px solid var(--line);background:#fff;color:#222;border-radius:13px;padding:11px;text-align:center;text-decoration:none;font-size:11px;font-weight:700}.sheetActions .primary{background:#111;color:#fff}
+.routeStatus{display:none;position:fixed;left:50%;bottom:104px;transform:translateX(-50%);z-index:170;background:#111;color:#fff;border-radius:14px;padding:11px 14px;font-size:12px}.routeStatus.on{display:block}
+.panel{display:none}.panel.on{display:block}.panelHeader{padding:30px 0 14px}.panelHeader h2{font-size:36px;letter-spacing:-.05em;margin:6px 0}.list{display:flex;flex-direction:column;gap:9px}.row{background:#fff;border:1px solid var(--line);border-radius:19px;padding:14px;display:flex;justify-content:space-between;gap:12px;align-items:center}.row h3{margin:0 0 4px;font-size:17px}.row p{margin:0;color:#7b8189;font-size:11px}.row button{border:0;background:#111;color:#fff;border-radius:10px;padding:8px 10px;font-size:10px}
+.tasteGrid{display:grid;grid-template-columns:repeat(2,1fr);gap:9px}.taste{background:#fff;border:1px solid var(--line);border-radius:16px;padding:12px}.tasteHead{display:flex;justify-content:space-between;font-size:11px;margin-bottom:7px}.bar{height:6px;background:#eceef0;border-radius:99px;overflow:hidden}.bar i{display:block;height:100%;background:#111}
+@media(max-width:650px){
+      .intro{padding-top:38px}.intro h1{font-size:50px}.msg{max-width:90%}
+      .chat{padding-bottom:195px;scroll-padding-bottom:195px}
+      .composerWrap{bottom:78px;width:calc(100% - 14px);padding:16px 7px 8px}
+      .msg:last-child,.inlineCards:last-child{scroll-margin-bottom:195px}
+      .tasteGrid{grid-template-columns:1fr}
+    }
+
+.placeMedia{height:170px;margin:-16px -16px 14px;border-radius:23px 23px 15px 15px;overflow:hidden;background:linear-gradient(135deg,#e2e4e7,#cfd3d9);position:relative}
+.placeMedia img{width:100%;height:100%;display:block;object-fit:cover}
+.placeMedia.noimg{display:flex;align-items:flex-end;padding:14px;color:#747a83;font-size:10px}
+.placeMedia .photoSource{position:absolute;right:8px;bottom:8px;padding:5px 7px;border-radius:999px;background:rgba(0,0,0,.52);color:#fff;font-size:8px;backdrop-filter:blur(8px)}
+.bookingBtn{background:#111!important;color:#fff!important}
+.newRequestDivider{align-self:center;font-size:9px;text-transform:uppercase;letter-spacing:.13em;color:#9a9fa6;padding:7px 0}
+.bookingSummary{margin-top:9px;padding:9px 10px;background:rgba(255,255,255,.08);border-radius:11px;font-size:11px;color:#d4d8dd;line-height:1.45}
+
+</style>
+</head>
+<body>
+<header class="top"><div class="topbar"><div><div class="brand">FREE</div><div id="aiStatus" class="sub">Подключаю нейросеть · Москва</div></div><button class="avatar" data-view="profile">F</button></div></header>
+
+<main class="shell">
+<section id="view-chat" class="panel on">
+  <div class="intro">
+    <div class="eyebrow">НЕ ИЩИТЕ. РАЗГОВАРИВАЙТЕ.</div>
+    <h1>Чего хочется?</h1>
+    <p>FREE сначала понимает контекст, потом предлагает несколько вариантов и ведёт к следующему действию.</p>
+  </div>
+  <div id="chat" class="chat"></div>
+  <div id="chatBottomSpacer" aria-hidden="true" style="height:1px"></div>
+  <div class="composerWrap">
+    <div class="composer"><button id="voiceBtn" class="voice">⌁</button><input id="input" placeholder="Например: хочу выпить"><button id="sendBtn" class="send">Отправить</button></div>
+    <div id="hint" class="hint">Говорите естественно. FREE сам спросит только то, что действительно нужно.</div>
+  </div>
+</section>
+
+<section id="view-saved" class="panel"><div class="panelHeader"><div class="eyebrow">SAVED</div><h2>Сохранённое</h2></div><div id="savedList" class="list"></div></section>
+<section id="view-plan" class="panel"><div class="panelHeader"><div class="eyebrow">YOUR PLAN</div><h2>План</h2></div><div id="planList" class="list"></div></section>
+<section id="view-profile" class="panel"><div class="panelHeader"><div class="eyebrow">TASTE GRAPH</div><h2>Ваш вкус</h2></div><div id="tasteGrid" class="tasteGrid"></div></section>
+</main>
+
+<nav class="bottom">
+  <button class="nav on" data-view="chat"><b>✦</b>AI</button>
+  <button class="nav" data-view="saved"><b>♡</b>Saved</button>
+  <button class="nav" data-view="plan"><b>◎</b>Plan</button>
+  <button class="nav" data-view="profile"><b>◉</b>Profile</button>
+</nav>
+
+<div id="detail" class="overlay"></div>
+<div id="routeStatus" class="routeStatus"></div>
+<audio id="remoteAudio" autoplay></audio>
+
+<script>
+const FALLBACK=[{"id":"standupstore_show_20260919","kind":"event","name":"StandUp Store Шоу","organizer":"StandUp Store Moscow","cat":"Стендап","tags":["friends","nightlife","comedy","event","evening"],"area":"Петровка, 21","metro":"Трубная / Чеховская","date_start":"2026-09-19","date_end":"2026-09-19","times":["19:30"],"duration_min":90,"price_label":"1 650 ₽","price_min":1650,"free":false,"availability":"места есть","source":"https://www.standupstore.ru/events/berezov-adam-gani-nikita-koliev-hetag-rubcov-zahar-19-sentyabrya-2026-v-19-30/","desc":"Пять комиков и полтора часа свежей комедии. Официальная страница указывает начало в 19:30 и наличие мест.","keywords":"стендап юмор комики вечер компания петровка","aliases":["standup store","стендап стор"],"point_source":"https://www.standupstore.ru/events/berezov-adam-gani-nikita-koliev-hetag-rubcov-zahar-19-sentyabrya-2026-v-19-30/","official_source":"https://www.standupstore.ru/events/berezov-adam-gani-nikita-koliev-hetag-rubcov-zahar-19-sentyabrya-2026-v-19-30/","booking_url":"https://www.standupstore.ru/events/berezov-adam-gani-nikita-koliev-hetag-rubcov-zahar-19-sentyabrya-2026-v-19-30/","booking_kind":"tickets","booking_provider":"официальная билетная / регистрационная страница"},{"id":"standupclub_hard_20260919","kind":"event","name":"Жесткий стендап","organizer":"Stand Up Club #1","cat":"Стендап","tags":["friends","nightlife","comedy","event","evening","late"],"area":"Рождественский бульвар","metro":"Трубная","date_start":"2026-09-19","date_end":"2026-09-19","times":["22:00"],"duration_min":90,"price_label":"бронирование на сайте","price_min":null,"free":false,"availability":"бронирование открыто","source":"https://standupclub.ru/afisha","desc":"Поздний стендап в Большом зале Stand Up Club #1. В официальной афише на 19 сентября указан старт в 22:00.","keywords":"стендап юмор поздно ночь друзья трубная","aliases":["stand up club","стендап клуб"],"point_source":"https://standupclub.ru/afisha","official_source":"https://standupclub.ru/afisha","booking_url":"https://standupclub.ru/afisha","booking_kind":"tickets","booking_provider":"официальная билетная / регистрационная страница"},{"id":"thehat_jazz_20260919","kind":"event","name":"Jazz jam в The Hat","organizer":"The Hat Moscow","cat":"Живая музыка","tags":["music","date","nightlife","friends","event","jazz","bar","late"],"area":"Тверская, 20 стр. 1","metro":"Пушкинская / Тверская","date_start":"2026-09-19","date_end":"2026-09-19","times":["22:00"],"duration_min":null,"price_label":"депозит 1 000 ₽","price_min":1000,"free":false,"availability":"еженедельный субботний джем","source":"https://thehatmoscow.ru/","desc":"Субботний джазовый джем. На официальном сайте указано: суббота 22:00, депозит 1 000 ₽, которым можно расплатиться в баре.","keywords":"джаз живая музыка бар свидание тверская поздно коктейли","aliases":["the hat","зэ хэт","джаз"],"point_source":"https://thehatmoscow.ru/","official_source":"https://thehatmoscow.ru/","booking_url":"https://thehatmoscow.ru/","booking_kind":"tickets","booking_provider":"официальная билетная / регистрационная страница"},{"id":"design_music_forum_2026","kind":"event","name":"Форум музыкальной индустрии","organizer":"Дизайн завод","cat":"Музыка / индустрия","tags":["music","creative","tech","friends","event","forum","lecture","design"],"area":"Большая Новодмитровская, 36с2","metro":"Дмитровская","date_start":"2026-09-17","date_end":"2026-09-20","times":[],"duration_min":null,"price_label":"условия на сайте","price_min":null,"free":false,"availability":"идёт до 20 сентября","source":"https://design-zavod.ru/event/forum-muzykalnoj-industrii","desc":"Форум музыкальной индустрии: бренды, образование, технологии, концерты и мастер-классы. На 19 сентября в программе концерты с 12:30 до 18:00.","keywords":"музыка форум концерты мастер классы технологии дизайн завод дмитровская","aliases":["форум музыкальной индустрии","дизайн завод"],"point_source":"https://design-zavod.ru/event/forum-muzykalnoj-industrii","official_source":"https://design-zavod.ru/event/forum-muzykalnoj-industrii","booking_url":"https://design-zavod.ru/event/forum-muzykalnoj-industrii","booking_kind":"tickets","booking_provider":"официальная билетная / регистрационная страница"},{"id":"winzavod_design_prosmotr","kind":"event","name":"Форум Design Prosmotr","organizer":"ЦСИ Винзавод","cat":"Дизайн / форум","tags":["creative","design","culture","event","forum"],"area":"4-й Сыромятнический пер., 1/8","metro":"Курская / Чкаловская","date_start":"2026-09-19","date_end":"2026-09-20","times":[],"duration_min":null,"price_label":"4 900 ₽","price_min":4900,"free":false,"availability":"19–20 сентября","source":"https://www.winzavod.ru/calendar/","desc":"Форум Design Prosmotr проходит на Винзаводе 19–20 сентября 2026. Стоимость на официальной афише — 4 900 ₽.","keywords":"дизайн форум винзавод лекции индустрия креатив","aliases":["design prosmotr","дизайн просмотр","винзавод"],"point_source":"https://www.winzavod.ru/calendar/","official_source":"https://www.winzavod.ru/calendar/","booking_url":"https://www.winzavod.ru/calendar/","booking_kind":"tickets","booking_provider":"официальная билетная / регистрационная страница"},{"id":"winzavod_keramania","kind":"event","name":"Керамания «Черно-белая»","organizer":"ЦСИ Винзавод","cat":"Фестиваль / керамика","tags":["creative","culture","unusual","event","market","ceramics","design"],"area":"Зелёный ангар Винзавода","metro":"Курская / Чкаловская","date_start":"2026-09-19","date_end":"2026-09-20","times":[],"duration_min":null,"price_label":"по регистрации","price_min":null,"free":false,"availability":"19–20 сентября","source":"https://www.winzavod.ru/calendar/","desc":"Фестиваль керамики «Черно-белая» на Винзаводе. Официальная афиша указывает вход по регистрации.","keywords":"керамика фестиваль маркет дизайн творчество винзавод","aliases":["керамания","винзавод","керамика"],"point_source":"https://www.winzavod.ru/calendar/","official_source":"https://www.winzavod.ru/calendar/","booking_url":"https://www.winzavod.ru/calendar/","booking_kind":"tickets","booking_provider":"официальная билетная / регистрационная страница"},{"id":"winzavod_cyborgs","kind":"event","name":"«Ирония киборгов»","organizer":"ЦСИ Винзавод","cat":"Современное искусство","tags":["culture","creative","unusual","tech","event","art","exhibition"],"area":"Акцизный зал, Винзавод","metro":"Курская / Чкаловская","date_start":"2026-09-01","date_end":"2026-10-11","times":[],"hours_label":"вт–вс 12:00–20:00","price_label":"Бесплатно","price_min":0,"free":true,"availability":"идёт до 11 октября","source":"https://www.winzavod.ru/calendar/","desc":"Коллективная выставка в программе Винзавод.Эксперимент. На официальном сайте отмечена как бесплатная.","keywords":"современное искусство киборги технологии выставка бесплатно винзавод","aliases":["ирония киборгов","винзавод"],"point_source":"https://www.winzavod.ru/calendar/","official_source":"https://www.winzavod.ru/calendar/","booking_url":"https://www.winzavod.ru/calendar/","booking_kind":"tickets","booking_provider":"официальная билетная / регистрационная страница"},{"id":"ges2_moscow_hanoi","kind":"event","name":"«Москва — Ханой. Ландшафты оптимизма»","organizer":"Дом культуры «ГЭС-2»","cat":"Выставка / архитектура","tags":["culture","architecture","creative","unusual","event","art","exhibition"],"area":"Болотная набережная, 15","metro":"Кропоткинская","date_start":"2026-05-21","date_end":"2026-09-20","times":[],"hours_label":"11:00–22:00","price_label":"билет на сайте","price_min":null,"free":false,"availability":"до 20 сентября","source":"https://ges-2.org/projects/moscow-hanoi-landscapes-of-optimism","desc":"Выставка-исследование типового жилья в Москве и Ханое через архитектуру, модернистское наследие и адхокизм.","keywords":"архитектура современное искусство москва ханой гэс 2 болото выставка","aliases":["гэс-2","гэс 2","москва ханой"],"point_source":"https://ges-2.org/projects/moscow-hanoi-landscapes-of-optimism","official_source":"https://ges-2.org/projects/moscow-hanoi-landscapes-of-optimism","booking_url":"https://ges-2.org/projects/moscow-hanoi-landscapes-of-optimism","booking_kind":"tickets","booking_provider":"официальная билетная / регистрационная страница"},{"id":"vdnh_orion_20260920","kind":"event","name":"«Орион в движении»","organizer":"ВДНХ","cat":"Интерактивный праздник","tags":["active","music","friends","family","outdoors","event","show","free"],"area":"Тематический парк «Орион», ВДНХ","metro":"ВДНХ","date_start":"2026-09-20","date_end":"2026-09-20","times":["13:00"],"end_time":"18:00","duration_min":300,"price_label":"Бесплатно","price_min":0,"free":true,"availability":"20 сентября 13:00–18:00","source":"https://vdnh.ru/events/3942/","desc":"Интерактивный праздник с танцами, музыкой, иллюзионными номерами и общим флешмобом. Вход свободный.","keywords":"вднх музыка танцы шоу бесплатно семья друзья интерактив","aliases":["вднх","орион"],"point_source":"https://vdnh.ru/events/3942/","official_source":"https://vdnh.ru/events/3942/","booking_url":"https://vdnh.ru/events/3942/","booking_kind":"tickets","booking_provider":"официальная билетная / регистрационная страница"},{"id":"experimentanium_lecture_20260920","kind":"event","name":"«Древние люди: как они совершали великие открытия?»","organizer":"Музей «Экспериментаниум» / ООО «Научный мир»","cat":"Научная лекция","tags":["science","tech","culture","family","event","lecture","free"],"area":"Ленинградский проспект, 80 к.11","metro":"Сокол","date_start":"2026-09-20","date_end":"2026-09-20","times":["17:00"],"duration_min":null,"price_label":"Бесплатно","price_min":0,"free":true,"availability":"20 сентября 17:00","source":"https://www.experimentanium.ru/","desc":"Бесплатная научно-популярная лекция проекта «Учёные — детям». Анонс опубликован самим музеем.","keywords":"наука лекция история древние люди бесплатно экспериментаниум дети","aliases":["экспериментаниум","ученые детям"],"point_source":"https://www.experimentanium.ru/","official_source":"https://www.experimentanium.ru/","booking_url":"https://www.experimentanium.ru/","booking_kind":"tickets","booking_provider":"официальная билетная / регистрационная страница"},{"id":"experimentanium_visit","kind":"venue","name":"Музей занимательных наук «Экспериментаниум»","organizer":"ООО «Научный мир»","cat":"Интерактивный музей","tags":["science","tech","active","family","friends","venue","museum"],"area":"Ленинградский проспект, 80 к.11","metro":"Сокол","date_start":null,"date_end":null,"times":[],"hours_label":"09:30–20:00","price_label":"19–20 сентября от 950 ₽","price_min":950,"free":false,"availability":"ежедневно","source":"https://www.experimentanium.ru/schedule-tickets/","desc":"Реальный интерактивный музей науки. На официальной афише на 19–20 сентября билеты указаны от 950 ₽.","keywords":"наука эксперименты интерактив музей технологии дети взрослые сокол","aliases":["экспериментаниум"],"point_source":"https://www.experimentanium.ru/schedule-tickets/","official_source":"https://www.experimentanium.ru/schedule-tickets/","booking_url":"https://www.experimentanium.ru/schedule-tickets/","booking_kind":"site","booking_provider":"сайт заведения"},{"id":"planetarium_evolution_20260919","kind":"event","name":"«Эволюция Земли»","organizer":"Московский Планетарий","cat":"4D / научпоп","tags":["science","tech","unusual","family","event","space","film"],"area":"Садовая-Кудринская, 5 стр.1","metro":"Баррикадная","date_start":"2026-09-19","date_end":"2026-09-19","times":["15:45","16:30","17:15","18:00","18:45"],"duration_min":25,"price_label":"от 700 ₽","price_min":700,"free":false,"availability":"сеансы по расписанию","source":"https://planetarium-moscow.ru/schedule","desc":"Научно-популярный стереофильм 3D в 4D-кинотеатре Московского Планетария.","keywords":"космос планетарий земля 4d кино наука баррикадная","aliases":["планетарий","эволюция земли"],"point_source":"https://planetarium-moscow.ru/schedule","official_source":"https://planetarium-moscow.ru/schedule","booking_url":"https://planetarium-moscow.ru/schedule","booking_kind":"tickets","booking_provider":"официальная билетная / регистрационная страница"},{"id":"planetarium_lunarium_20260920","kind":"event","name":"Лунариум: интерактивное пространство","organizer":"Московский Планетарий","cat":"Космос / интерактив","tags":["science","tech","active","family","unusual","event","space","museum"],"area":"Садовая-Кудринская, 5 стр.1","metro":"Баррикадная","date_start":"2026-09-20","date_end":"2026-09-20","times":["10:00","11:30","13:00","14:30","16:00","17:30","19:00"],"duration_min":120,"price_label":"от 1 100 ₽","price_min":1100,"free":false,"availability":"сеансы 20 сентября","source":"https://planetarium-moscow.ru/schedule/tomorrow","desc":"Двухуровневое интерактивное пространство о Земле и Вселенной. На выходные официальный сайт показывает билеты от 1 100 ₽.","keywords":"космос планетарий интерактив вселенная технологии баррикадная","aliases":["планетарий","лунариум"],"point_source":"https://planetarium-moscow.ru/schedule/tomorrow","official_source":"https://planetarium-moscow.ru/schedule/tomorrow","booking_url":"https://planetarium-moscow.ru/schedule/tomorrow","booking_kind":"tickets","booking_provider":"официальная билетная / регистрационная страница"},{"id":"pushkin_cuban_poster","kind":"event","name":"«Кубинский плакат. 1950–1970-е. Кино и революция»","organizer":"ГМИИ им. А. С. Пушкина","cat":"Выставка","tags":["culture","creative","design","event","art","exhibition"],"area":"Галерея искусства стран Европы и Америки","metro":"Кропоткинская","date_start":null,"date_end":"2026-11-22","times":[],"hours_label":"по расписанию музея","price_label":"билет на сайте","price_min":null,"free":false,"availability":"до 22 ноября","source":"https://pushkinmuseum.art/events/blocks/events_query.php","desc":"Текущая выставка Пушкинского музея о кубинском плакате, кино и визуальной культуре 1950–1970-х.","keywords":"плакат дизайн куба кино революция искусство пушкинский музей","aliases":["пушкинский музей","кубинский плакат"],"point_source":"https://pushkinmuseum.art/events/blocks/events_query.php","official_source":"https://pushkinmuseum.art/events/blocks/events_query.php","booking_url":"https://pushkinmuseum.art/events/blocks/events_query.php","booking_kind":"tickets","booking_provider":"официальная билетная / регистрационная страница"},{"id":"pushkin_poster_workshop_20260922","kind":"event","name":"Мастер-класс «Создай свой плакат»","organizer":"ГМИИ им. А. С. Пушкина","cat":"Мастер-класс","tags":["creative","culture","design","active","event","workshop"],"area":"Галерея искусства стран Европы и Америки","metro":"Кропоткинская","date_start":"2026-09-22","date_end":"2026-09-22","times":["18:30"],"duration_min":null,"price_label":"билет на сайте","price_min":null,"free":false,"availability":"22 сентября 18:30","source":"https://pushkinmuseum.art/events/blocks/events_list.php","desc":"Реальный мастер-класс из сентябрьской программы Пушкинского музея.","keywords":"мастер класс плакат дизайн творчество искусство пушкинский","aliases":["пушкинский музей","создай свой плакат"],"point_source":"https://pushkinmuseum.art/events/blocks/events_list.php","official_source":"https://pushkinmuseum.art/events/blocks/events_list.php","booking_url":"https://pushkinmuseum.art/events/blocks/events_list.php","booking_kind":"tickets","booking_provider":"официальная билетная / регистрационная страница"},{"id":"tretyakov_chamber_20260923","kind":"event","name":"«От квартета до секстета. Вечер камерной музыки»","organizer":"Третьяковская галерея","cat":"Камерная музыка","tags":["music","culture","date","calm","event","classical","concert"],"area":"Кадашёвская набережная, 12","metro":"Третьяковская / Новокузнецкая","date_start":"2026-09-23","date_end":"2026-09-23","times":["19:00"],"duration_min":null,"price_label":"билет на сайте","price_min":null,"free":false,"availability":"23 сентября 19:00","source":"https://www.tretyakovgallery.ru/for-visitors/museums/korpus-na-kadashevskoi-naberejnoi/","desc":"Концерт в цикле «С музыкой на Т» в новом корпусе Третьяковской галереи.","keywords":"камерная музыка концерт квартет секстет третьяковка свидание","aliases":["третьяковская галерея","третьяковка","камерная музыка"],"point_source":"https://www.tretyakovgallery.ru/for-visitors/museums/korpus-na-kadashevskoi-naberejnoi/","official_source":"https://www.tretyakovgallery.ru/for-visitors/museums/korpus-na-kadashevskoi-naberejnoi/","booking_url":"https://www.tretyakovgallery.ru/for-visitors/museums/korpus-na-kadashevskoi-naberejnoi/","booking_kind":"tickets","booking_provider":"официальная билетная / регистрационная страница"},{"id":"winzavod_sarabyanov_20260924","kind":"event","name":"Паблик-ток с Андреем Сарабьяновым","organizer":"ЦСИ Винзавод","cat":"Лекция / искусство","tags":["culture","creative","calm","event","lecture","art","free"],"area":"Винтажный зал, Винзавод","metro":"Курская / Чкаловская","date_start":"2026-09-24","date_end":"2026-09-24","times":["19:30"],"duration_min":null,"price_label":"Бесплатно по регистрации","price_min":0,"free":true,"availability":"24 сентября 19:30","source":"https://www.winzavod.ru/calendar/lectures/pablik-tok-s-iskusstvovedom-andreem-sarabyanovym/","desc":"Паблик-ток искусствоведа Андрея Сарабьянова в Винтажном зале. Вход свободный по регистрации.","keywords":"лекция искусствовед авангард винзавод бесплатно","aliases":["винзавод","сарабьянов"],"point_source":"https://www.winzavod.ru/calendar/lectures/pablik-tok-s-iskusstvovedom-andreem-sarabyanovym/","official_source":"https://www.winzavod.ru/calendar/lectures/pablik-tok-s-iskusstvovedom-andreem-sarabyanovym/","booking_url":"https://www.winzavod.ru/calendar/lectures/pablik-tok-s-iskusstvovedom-andreem-sarabyanovym/","booking_kind":"tickets","booking_provider":"официальная билетная / регистрационная страница"},{"id":"livearena_fullhouse_20260924","kind":"event","name":"Full House","organizer":"Live Арена","cat":"Рок-концерт","tags":["music","nightlife","friends","event","rock","concert"],"area":"Live Арена","metro":"МЦД Сколково / Новоивановское","date_start":"2026-09-24","date_end":"2026-09-24","times":["20:00"],"duration_min":null,"price_label":"билеты на сайте","price_min":null,"free":false,"availability":"24 сентября 20:00","source":"https://www.live-arena.moscow/afisha/","desc":"Рок-концерт Full House в Live Арене. Дата и время подтверждены официальной афишей площадки.","keywords":"рок концерт live arena музыка вечер","aliases":["live арена","live arena","full house"],"point_source":"https://www.live-arena.moscow/afisha/","official_source":"https://www.live-arena.moscow/afisha/","booking_url":"https://www.live-arena.moscow/afisha/","booking_kind":"tickets","booking_provider":"официальная билетная / регистрационная страница"},{"id":"design_eco_20260926","kind":"event","name":"ECO FRIENDLY FEST","organizer":"Дизайн завод","cat":"Фестиваль / маркет","tags":["creative","market","friends","culture","event","festival","design"],"area":"Большая Новодмитровская, 36 стр.2","metro":"Дмитровская","date_start":"2026-09-26","date_end":"2026-09-27","times":["12:00"],"end_time":"19:00","duration_min":420,"price_label":"условия на сайте","price_min":null,"free":false,"availability":"26–27 сентября 12:00–19:00","source":"https://design-zavod.ru/event/eko-frendli-fest-2026","desc":"Городской фестиваль: маркет eco-friendly брендов, лекторий, своп и квесты.","keywords":"маркет фестиваль экология дизайн завод бренды своп лекции","aliases":["eco friendly fest","дизайн завод"],"point_source":"https://design-zavod.ru/event/eko-frendli-fest-2026","official_source":"https://design-zavod.ru/event/eko-frendli-fest-2026","booking_url":"https://design-zavod.ru/event/eko-frendli-fest-2026","booking_kind":"tickets","booking_provider":"официальная билетная / регистрационная страница"},{"id":"livearena_lucky_20260926","kind":"event","name":"Большой фестиваль «Удачные песни»","organizer":"Live Арена","cat":"Концерт / фестиваль","tags":["music","friends","event","concert","festival"],"area":"Live Арена","metro":"МЦД Сколково / Новоивановское","date_start":"2026-09-26","date_end":"2026-09-26","times":["19:00"],"duration_min":null,"price_label":"от 4 900 ₽","price_min":4900,"free":false,"availability":"26 сентября 19:00","source":"https://www.live-arena.moscow/afisha/","desc":"Большой концертный фестиваль в Live Арене. Официальная афиша указывает начало в 19:00 и билеты от 4 900 ₽.","keywords":"концерт фестиваль песни live arena музыка","aliases":["live арена","live arena","удачные песни"],"point_source":"https://www.live-arena.moscow/afisha/","official_source":"https://www.live-arena.moscow/afisha/","booking_url":"https://www.live-arena.moscow/afisha/","booking_kind":"tickets","booking_provider":"официальная билетная / регистрационная страница"},{"id":"sensorium","kind":"venue","name":"СЕНСОРИУМ — путешествие в полной темноте","organizer":"Музей в темноте «СЕНСОРИУМ»","cat":"Иммерсивный опыт","tags":["unusual","date","active","friends","venue","immersive"],"area":"Арбат, 17","metro":"Арбатская","date_start":null,"date_end":null,"times":[],"hours_label":"ежедневно 10:00–22:00","duration_min":60,"price_label":"взрослый 1 800–2 000 ₽","price_min":1800,"free":false,"availability":"слоты на официальном сайте","source":"https://www.muzeysensorium.ru/","desc":"60-минутная экскурсия в полной темноте через пять сенсорных зон. Официальный сайт публикует цены и календарь слотов.","keywords":"свидание темнота иммерсив необычное арбат чувства квест","aliases":["сенсориум","арбат","темнота"],"point_source":"https://www.muzeysensorium.ru/","official_source":"https://www.muzeysensorium.ru/","booking_url":"https://www.muzeysensorium.ru/","booking_kind":"site","booking_provider":"сайт заведения"},{"id":"cityspace","kind":"venue","name":"City Space Bar & Restaurant","organizer":"City Space / Swissôtel Красные Холмы","cat":"Панорамный ресторан / бар","tags":["food","date","nightlife","calm","venue","restaurant","bar","view","panorama"],"area":"Космодамианская наб., 52 стр.6, 34 этаж","metro":"Павелецкая","date_start":null,"date_end":null,"times":[],"hours_label":"пт–сб 16:00–01:00, вс–чт 16:00–23:00","price_label":"по меню","price_min":null,"free":false,"availability":"бронирование столика","source":"https://cityspacebar.com/en","desc":"Панорамный ресторан и бар на 34-м этаже с обзором Москвы на 360°. Есть онлайн-бронирование столика.","keywords":"ресторан бар панорама свидание коктейли павелецкая вечер","aliases":["city space","сити спейс","панорамный ресторан","павелецкая"],"point_source":"https://cityspacebar.com/en","official_source":"https://cityspacebar.com/en","booking_url":"https://cityspacebar.com/en","booking_kind":"site","booking_provider":"сайт заведения"},{"id":"fallback_hookahplace_forever","kind":"venue","name":"HookahPlace Forever","organizer":"HookahPlace","cat":"Кальянная","tags":["hookah","lounge","nightlife","friends","late"],"area":"Мясницкая ул., 13с24","metro":"Чистые пруды / Тургеневская","date_start":null,"date_end":null,"times":[],"hours_label":"круглосуточно","price_label":"цены на сайте","price_min":null,"free":false,"availability":"действующее заведение; часы проверены 19.09.2026","source":"https://hookahplace.ru/places/hookahplace-forever/","desc":"Кальянная сети HookahPlace в центре Москвы.","keywords":"кальян hookah lounge кальянная круглосуточно мясницкая центр друзья ночь","aliases":["hookahplace forever","хукаплейс форевер"],"point_source":"https://hookahplace.ru/places/hookahplace-forever/","official_source":"https://hookahplace.ru/places/hookahplace-forever/","image_url":"https://api.russianhookah.ru/wp-content/uploads/2023/07/6352597cb96c5-scaled.jpg","booking_url":"https://t.me/+hB3L0BMEJLk4ZGNi","booking_kind":"telegram","booking_provider":"Telegram-бронь","phone":"+74951458868"},{"id":"fallback_msk_serp","kind":"venue","name":"MSK Lounge на Серпуховской","organizer":"MSK Lounge","cat":"Lounge / кальянная","tags":["hookah","lounge","nightlife","friends"],"area":"Большая Серпуховская, 8/7с2","metro":"Серпуховская / Добрынинская","date_start":null,"date_end":null,"times":[],"hours_label":"часы на официальном сайте","price_label":"цены на сайте","price_min":null,"free":false,"availability":"действующее заведение; адрес проверен 19.09.2026","source":"https://mskofficial.ru/msk_serpuh","desc":"Одна из московских площадок сети MSK Lounge.","keywords":"кальян кальянная lounge серпуховская добрынинская друзья","aliases":["msk lounge","мск лаунж"],"point_source":"https://mskofficial.ru/msk_serpuh","official_source":"https://mskofficial.ru/msk_serpuh","image_url":"https://mskofficial.ru/uploads/serpuh_main.jpg","booking_url":"tel:+74959749996","booking_kind":"phone","booking_provider":"телефон точки","phone":"+74959749996"},{"id":"fallback_mos_arbat","kind":"venue","name":"MOS Lounge Арбат","organizer":"MOS Lounge","cat":"Lounge / кальянная","tags":["hookah","lounge","nightlife","date","friends"],"area":"Арбатский переулок, 2/6","metro":"Арбатская","date_start":null,"date_end":null,"times":[],"hours_label":"часы на официальном сайте","price_label":"цены на сайте","price_min":null,"free":false,"availability":"действующее заведение; адрес проверен 19.09.2026","source":"https://mos-lounge.ru/arbat","desc":"Lounge-бар сети MOS в районе Арбата.","keywords":"кальян lounge арбат свидание друзья бар","aliases":["mos lounge","мос лаунж"],"point_source":"https://mos-lounge.ru/arbat","official_source":"https://mos-lounge.ru/arbat","booking_url":"https://t.me/+79652333343","booking_kind":"telegram","booking_provider":"Telegram","phone":"+79661660029"},{"id":"fallback_noor","kind":"venue","name":"Noor Bar & Gallery","organizer":"Noor","cat":"Коктейль-бар","tags":["bar","nightlife","date","friends","late"],"area":"Тверская, 23/12","metro":"Маяковская / Пушкинская","date_start":null,"date_end":null,"times":[],"hours_label":"вс–чт 10:00–03:00, пт–сб 10:00–06:00","price_label":"по меню","price_min":null,"free":false,"availability":"действующий бар; часы проверены 19.09.2026","source":"https://noorbar.com/contacts","desc":"Коктейльный бар и галерея на Тверской.","keywords":"бар коктейли выпить тверская ночь до 6 свидание друзья","aliases":["noor","нур бар"],"point_source":"https://noorbar.com/contacts","official_source":"https://noorbar.com/contacts","booking_url":"tel:+79031367686","booking_kind":"phone","booking_provider":"менеджер Noor","phone":"+79031367686"},{"id":"fallback_meow","kind":"venue","name":"MEOW Bar","organizer":"MEOW","cat":"Коктейль-бар","tags":["bar","nightlife","date","friends"],"area":"Кузнецкий Мост, 19с1","metro":"Кузнецкий Мост","date_start":null,"date_end":null,"times":[],"hours_label":"вт–чт и вс 17:00–00:00, пт–сб 17:00–02:00","price_label":"по меню","price_min":null,"free":false,"availability":"действующий бар; часы проверены 19.09.2026","source":"https://meow.bar/","desc":"Коктейли, вино, барная еда и вечерняя атмосфера в центре Москвы.","keywords":"бар коктейль вино кузнецкий мост свидание друзья вечером","aliases":["meow","мяу бар"],"point_source":"https://meow.bar/","official_source":"https://meow.bar/","booking_url":"https://meow.bar/","booking_kind":"site","booking_provider":"форма бронирования MEOW","phone":"+79269842808"},{"id":"fallback_kadril","kind":"venue","name":"Караоке «Кадриль»","organizer":"Кадриль","cat":"Караоке-бар","tags":["karaoke","nightlife","music","friends","late"],"area":"Пушечная ул., 7/5","metro":"Кузнецкий Мост / Лубянка","date_start":null,"date_end":null,"times":[],"hours_label":"вс–чт 21:00–06:00, пт–сб 19:00–06:00","price_label":"условия бронирования на сайте","price_min":null,"free":false,"availability":"действующий караоке-клуб; часы проверены 19.09.2026","source":"https://kadrilkaraoke.ru/contact/","desc":"Караоке-клуб-ресторан с отдельными залами и ежедневной шоу-программой.","keywords":"караоке петь музыка ночь друзья кузнецкий мост лубянка","aliases":["кадриль караоке"],"point_source":"https://kadrilkaraoke.ru/contact/","official_source":"https://kadrilkaraoke.ru/contact/","booking_url":"https://kadrilkaraoke.ru/","booking_kind":"site","booking_provider":"форма бронирования «Кадриль»","phone":"+74957443535"}];
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const DIMS=["romantic","quiet","trendy","luxury","hidden","late","family","work","active","culture","music","nightlife"];
+const LABEL={romantic:"Romantic",quiet:"Quiet",trendy:"Trendy",luxury:"Luxury",hidden:"Hidden gem",late:"Late night",family:"Family",work:"Work-friendly",active:"Active",culture:"Culture",music:"Music",nightlife:"Nightlife"};
+let taste={};DIMS.forEach(k=>taste[k]=0);
+let saved=[],plan=[],geoCache=null,currentResults=[],voice={mode:"unknown",rec:null},chatState={intent:null,slots:{},history:[],selected:null,phase:"idle",awaitingContinuation:false,previousSelected:null,aiReady:false,aiResponseId:null};
+try{taste={...taste,...JSON.parse(localStorage.getItem("free_v14_taste")||"{}")}}catch(_){}
+try{saved=JSON.parse(localStorage.getItem("free_v14_saved")||"[]")}catch(_){}
+try{plan=JSON.parse(localStorage.getItem("free_v14_plan")||"[]")}catch(_){}
+
+function esc(s=""){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+function norm(s=""){return String(s).toLowerCase().replace(/ё/g,"е").replace(/<[^>]*>/g," ").replace(/[^a-zа-я0-9+\-\s]/gi," ").replace(/\s+/g," ").trim()}
+function save(){localStorage.setItem("free_v14_taste",JSON.stringify(taste));localStorage.setItem("free_v14_saved",JSON.stringify(saved));localStorage.setItem("free_v14_plan",JSON.stringify(plan));renderSaved();renderPlan();renderTaste()}
+function toast(t){const e=$("#routeStatus");e.textContent=t;e.classList.add("on");clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.remove("on"),3500)}
+function scrollChatToLatest(target=null){
+  const el=target||$("#chat").lastElementChild;
+  const composer=$(".composerWrap");
+  if(!el||!composer)return;
+  requestAnimationFrame(()=>{
+    const er=el.getBoundingClientRect(),cr=composer.getBoundingClientRect();
+    const safeBottom=cr.top-18;
+    if(er.bottom>safeBottom){
+      window.scrollBy({top:(er.bottom-safeBottom)+12,behavior:"smooth"});
+    }else if(er.top<84){
+      window.scrollBy({top:er.top-100,behavior:"smooth"});
+    }
+  });
+}
+function addMsg(role,html){
+  const d=document.createElement("div");
+  d.className="msg "+role;
+  d.innerHTML=html;
+  $("#chat").appendChild(d);
+  chatState.history.push({role,html});
+  scrollChatToLatest(d);
+  return d
+}
+function typing(){const d=addMsg("ai",'<span class="typing"><i></i><i></i><i></i></span>');return d}
+function quick(opts){return '<div class="quick">'+opts.map((x,i)=>`<button class="${i===0?"primary":""}" data-quick="${esc(x)}">${esc(x)}</button>`).join("")+'</div>'}
+function bindQuick(){$$("[data-quick]").forEach(b=>{if(!b.dataset.bound){b.dataset.bound="1";b.onclick=()=>submitUser(b.dataset.quick)}})}
+function detectIntent(t){
+  const n=norm(t);
+  if(/выпить|бар|паб|коктейл|пиво|вино|алкогол/.test(n))return "drink";
+  if(/кальян|покурить/.test(n))return "hookah";
+  if(/поесть|ресторан|кафе|ужин|бранч/.test(n))return "food";
+  if(/концерт|стендап|театр|выстав|мероприят|событ|билет/.test(n))return "event";
+  if(/свидан|романт/.test(n))return "date";
+  if(/ребен|дет/.test(n))return "family";
+  if(/поработать|ноутбук|коворкинг/.test(n))return "work";
+  if(/спа|саун|массаж|йога/.test(n))return "wellness";
+  if(/караоке|клуб|тусов|вечерин/.test(n))return "nightlife";
+  return "general";
+}
+function extractSlots(t){
+  const n=norm(t),s={};
+  if(/вдвоем|вдвоём|на двоих/.test(n))s.party_size=2;
+  let m=n.match(/(\d{1,2})\s*(?:человек|людей|чел)/);if(m)s.party_size=+m[1];
+  m=n.match(/(?:до|бюджет)\s*(\d{2,6})/);if(m)s.max_price_rub=+m[1];
+  m=n.match(/после\s*(\d{1,2})(?::(\d{2}))?/);if(m)s.after_time=String(+m[1]).padStart(2,"0")+":"+String(+(m[2]||0)).padStart(2,"0");
+  if(/вечер/.test(n)&&!s.after_time)s.after_time="18:00";
+  if(/сегодня/.test(n))s.date_word="today";if(/завтра/.test(n))s.date_word="tomorrow";
+  if(/коктейл/.test(n))s.style="cocktail";if(/пиво|паб/.test(n))s.style="pub";if(/вино/.test(n))s.style="wine";
+  if(/спокой|тихо|разговар/.test(n))s.vibe="quiet";if(/шумно|весело|тусов/.test(n))s.vibe="social";if(/красив/.test(n))s.vibe="beautiful";
+  if(/рок/.test(n))s.genre="rock";if(/джаз/.test(n))s.genre="jazz";if(/стендап/.test(n))s.genre="standup";
+  if(/рядом|недалеко|от меня/.test(n))s.near=true;
+  return s;
+}
+function mergeSlots(t){Object.assign(chatState.slots,extractSlots(t))}
+function requiredQuestion(){
+  const i=chatState.intent,s=chatState.slots;
+  if(i==="drink"){
+    if(!s.style&&!s.vibe)return {q:"Какой вечер вам ближе?",o:["Коктейли и красиво","Пиво и шумно","Вино и спокойно","Просто хороший бар"]};
+    if(!s.party_size)return {q:"Вы один, вдвоём или компанией?",o:["Вдвоём","С друзьями","Один","Компания 4–6 человек"]};
+    if(s.max_price_rub==null)return {q:"Есть ориентир по бюджету на вечер?",o:["До 5 000 ₽","До 8 000 ₽","До 15 000 ₽","Бюджет не важен"]};
+  }
+  if(i==="hookah"){
+    if(!s.vibe)return {q:"Что важнее: атмосфера, приватность или чтобы было оживлённо?",o:["Спокойно и красиво","Приватно","Поживее","Без разницы"]};
+    if(!s.party_size)return {q:"Сколько вас будет?",o:["Вдвоём","3–4 человека","5+ человек"]};
+  }
+  if(i==="food"||i==="date"){
+    if(!s.vibe)return {q:"Что важнее в этот раз?",o:["Красиво и спокойно","Вкусно и неформально","Необычно","Просто рядом"]};
+    if(s.max_price_rub==null)return {q:"Какой бюджет на человека или на двоих?",o:["До 3 000 ₽","До 6 000 ₽","До 12 000 ₽","Не ограничивать"]};
+  }
+  if(i==="event"){
+    if(!s.date_word&&!s.after_time)return {q:"Когда хотите пойти?",o:["Сегодня вечером","Завтра","На выходных","Дата не важна"]};
+    if(!s.genre)return {q:"Что вам ближе?",o:["Концерт","Стендап","Выставка","Театр"]};
+  }
+  if(i==="family"){
+    if(!s.date_word)return {q:"Когда планируете?",o:["Сегодня","Завтра","На выходных"]};
+  }
+  if(i==="work"&&!s.near)return {q:"Насколько далеко готовы ехать?",o:["Рядом со мной","До 20 минут","Любой район"]};
+  return null;
+}
+function styleText(){
+  const s=chatState.slots,i=chatState.intent,parts=[];
+  if(i==="drink")parts.push(s.style==="cocktail"?"коктейльный бар":s.style==="pub"?"паб / пиво":s.style==="wine"?"винный бар":"бар");
+  if(i==="hookah")parts.push("кальянная");
+  if(i==="event")parts.push(s.genre||"событие");
+  if(s.vibe==="quiet")parts.push("спокойно");if(s.vibe==="beautiful")parts.push("красиво");if(s.vibe==="social")parts.push("поживее");
+  if(s.party_size)parts.push(`${s.party_size} чел.`);if(s.max_price_rub)parts.push(`до ${s.max_price_rub.toLocaleString("ru-RU")} ₽`);
+  return parts.join(" · ");
+}
+function dateStr(word){
+  const base=new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Moscow",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
+  const d=new Date(base+"T12:00:00Z");if(word==="tomorrow")d.setUTCDate(d.getUTCDate()+1);return d.toISOString().slice(0,10);
+}
+async function geo(silent=false){
+  if(geoCache&&Date.now()-geoCache.at<300000)return geoCache;
+  if(!navigator.geolocation)return null;
+  try{const p=await new Promise((ok,bad)=>navigator.geolocation.getCurrentPosition(ok,bad,{enableHighAccuracy:true,timeout:9000,maximumAge:60000}));geoCache={lat:p.coords.latitude,lon:p.coords.longitude,at:Date.now()};return geoCache}catch(e){if(!silent)toast("Разрешите геолокацию для маршрута и nearby-поиска.");return null}
+}
+function queryFromState(){
+  const s=chatState.slots,i=chatState.intent;let q="";
+  if(i==="drink")q=s.style==="cocktail"?"коктейльный бар":s.style==="pub"?"паб":s.style==="wine"?"винный бар":"бар";
+  else if(i==="hookah")q="кальянная";
+  else if(i==="event")q=s.genre||"событие";
+  else if(i==="food")q="ресторан";
+  else if(i==="date")q="ресторан для свидания";
+  else if(i==="family")q="куда сходить с детьми";
+  else if(i==="work")q="кафе для работы с ноутбуком";
+  else if(i==="wellness")q="spa wellness";
+  else if(i==="nightlife")q="караоке клуб";
+  else q=chatState.history.filter(x=>x.role==="user").map(x=>x.html.replace(/<[^>]+>/g," ")).join(" ");
+  if(s.vibe==="quiet")q+=" спокойно тихо";if(s.vibe==="beautiful")q+=" красиво";if(s.vibe==="social")q+=" весело";
+  if(s.date_word==="today")q+=" сегодня";if(s.date_word==="tomorrow")q+=" завтра";
+  return q.trim();
+}
+async function liveArgs(){
+  const s=chatState.slots,args={query:queryFromState(),taste_weights:{...taste}};
+  if(s.max_price_rub)args.max_price_rub=s.max_price_rub;if(s.party_size)args.party_size=s.party_size;if(s.after_time)args.after_time=s.after_time;
+  if(s.date_word)args.target_date=dateStr(s.date_word);
+  if(s.near){const g=await geo(false);if(g)args.user_location={lat:g.lat,lon:g.lon}}
+  return args;
+}
+function localDna(v){const t=norm([v.name,v.cat,v.keywords,v.desc,(v.tags||[]).join(" ")].join(" ")),h=r=>r.test(t),cl=x=>Math.max(0,Math.min(100,x));const night=h(/ноч|бар|клуб|караоке|кальян|до 0[1-6]|круглосуточ/);return {romantic:cl(30+(h(/панорам|вино|коктейл|джаз|ресторан/)?40:0)),quiet:cl(40+(h(/тих|спокой|уют|кофейн/)?35:0)-(night?20:0)),trendy:cl(35+(h(/дизайн|арт|коктейл|иммерсив/)?35:0)),luxury:cl(20+(h(/преми|панорам|отель|гастроном/)?40:0)),hidden:cl(30+(h(/переул|необыч|иммерсив/)?35:0)),late:cl(20+(night?60:0)),family:cl(18+(h(/дет|семейн|зоопарк|эксперимент/)?60:0)),work:cl(20+(h(/коворкинг|кофейн|ноутбук/)?55:0)),active:cl(25+(h(/квест|боулинг|vr|танц/)?55:0)),culture:cl(20+(h(/музей|искусств|выстав|театр/)?60:0)),music:cl(20+(h(/музык|концерт|джаз|рок/)?60:0)),nightlife:cl(18+(night?60:0))}}
+
+function moscowToday(){return new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Moscow",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date())}
+function fallbackCurrent(v,args){
+  const today=moscowToday();
+  if(v.kind==="event"){
+    if(v.date_end&&v.date_end<today)return false;
+    if(args.target_date&&v.date_start&&(args.target_date<v.date_start||args.target_date>(v.date_end||v.date_start)))return false;
+  }
+  return true;
+}
+
+function fallbackSearch(args){
+  const q=norm(args.query),words=q.split(" ").filter(x=>x.length>3),out=[];
+  for(const v of FALLBACK){if(!fallbackCurrent(v,args))continue;const text=norm([v.name,v.cat,v.desc,v.keywords,(v.tags||[]).join(" ")].join(" "));let s=0;for(const w of words)if(text.includes(w))s+=12;if(s<12)continue;const dna=localDna(v);for(const [k,w] of Object.entries(taste))s+=(w||0)*(dna[k]-50)/14;out.push({...v,dna,_s:s,match:90})}
+  out.sort((a,b)=>b._s-a._s);return out.slice(0,3).map((v,i)=>({id:v.id,name:v.name,organizer:v.organizer,category:v.cat,date:v.date_start||"постоянно",time:v.times?.[0]||v.hours_label||"",price:v.price_label,availability:v.availability,area:v.area,metro:v.metro,source:v.source,point_source:v.point_source||v.source,official_source:v.official_source||null,coords:v.coords||null,provider:"Fallback",image_url:v.image_url||null,booking_url:v.booking_url||null,booking_kind:v.booking_kind||null,booking_provider:v.booking_provider||null,phone:v.phone||null,reasons:[],dna:v.dna,match:Math.max(76,94-i*5),kind:v.kind}))}
+async function recommend(){
+  const args=await liveArgs();
+  try{const r=await fetch("/api/recommend",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(args)});if(r.ok){const d=await r.json();if(d.results?.length)return d.results.slice(0,3)}}catch(_){}
+  return fallbackSearch(args);
+}
+function reason(r){const a=[...(r.reasons||[])],d=r.dna||{};if(d.quiet>=68)a.push("можно разговаривать");if(d.romantic>=70)a.push("подходит вдвоём");if(d.late>=70)a.push("работает поздно");return [...new Set(a)].slice(0,3).join(" · ")||"лучшее совпадение с вашим контекстом"}
+function imageBlock(r){
+  if(r.image_url)return `<div class="placeMedia"><img src="${esc(r.image_url)}" alt="${esc(r.name)}" loading="lazy" referrerpolicy="no-referrer"><span class="photoSource">${esc(r.provider||"источник")}</span></div>`;
+  return `<div class="placeMedia noimg">Фото в источнике не найдено</div>`;
+}
+function bookingLabel(r){
+  if(r.kind==="event")return "Билеты";
+  if(r.booking_kind==="telegram")return "Бронь в Telegram";
+  if(r.booking_kind==="whatsapp")return "Бронь в WhatsApp";
+  if(r.booking_kind==="phone")return "Позвонить";
+  return "Бронировать";
+}
+function cards(rs){
+  currentResults=rs;
+  return '<div class="inlineCards">'+rs.map((r,i)=>`<div class="placeCard ${i===0?"best":""}">
+    ${imageBlock(r)}
+    <div class="tag">${i===0?"BEST MATCH":esc(r.provider||"")}</div>
+    <div class="score">${r.match||94}%<small>match</small></div>
+    <h3>${esc(r.name)}</h3><div class="reason">Почему вам: ${esc(reason(r))}</div>
+    <div class="meta">${esc(r.area||"")}${r.metro?" · м. "+esc(r.metro):""}${r.time?" · "+esc(r.time):""}</div>
+    <div class="meta">${esc(r.price||"цена на сайте")}</div>
+    <div class="cardBtns">
+      <button class="cardBtn primary bookingBtn" data-book="${esc(r.id)}">${bookingLabel(r)}</button>
+      <button class="cardBtn" data-pick="${esc(r.id)}">В план</button>
+      <button class="cardBtn" data-route="${esc(r.id)}">Маршрут</button>
+      <button class="cardBtn ${saved.some(x=>x.id===r.id)?"saved":""}" data-save="${esc(r.id)}">${saved.some(x=>x.id===r.id)?"Сохранено":"Сохранить"}</button>
+      <button class="cardBtn" data-detail="${esc(r.id)}" style="grid-column:1/-1">Подробнее</button>
+    </div></div>`).join("")+'</div>';
+}
+function bindCards(){
+  $$("[data-book]").forEach(b=>b.onclick=()=>openBooking(b.dataset.book));
+  $$("[data-pick]").forEach(b=>b.onclick=()=>selectPlace(b.dataset.pick));
+  $$("[data-detail]").forEach(b=>b.onclick=()=>openDetail(b.dataset.detail));
+  $$("[data-route]").forEach(b=>b.onclick=()=>routePlace(b.dataset.route));
+  $$("[data-save]").forEach(b=>b.onclick=()=>toggleSave(b.dataset.save));
+}
+async function showMatches(){
+  const t=typing();const rs=await recommend();t.remove();
+  if(!rs.length){addMsg("ai","По этим условиям точных вариантов нет. Что можно ослабить — бюджет, район или формат?"+quick(["Бюджет не важен","Любой район","Покажи похожее"]));bindQuick();return}
+  chatState.phase="results";
+  const intro=chatState.intent==="event"?"Нашёл несколько реальных событий. Выбирал по дате и формату.":"Вот три варианта, которые лучше всего совпали с контекстом.";
+  const resultMessage=addMsg("ai",`${intro}<div class="small">${esc(styleText())}</div>${cards(rs)}`);bindCards();setTimeout(()=>scrollChatToLatest(resultMessage),120);
+}
+
+function continuationCue(text){
+  const n=norm(text);
+  return /^(после этого|а потом|потом|дальше|еще|ещё|и еще|и ещё|рядом с этим|после него|после нее|после неё|а после|затем)(?:\s|$)/.test(n)
+    || chatState.awaitingContinuation===true;
+}
+function explicitNewRequest(text){
+  return /^(хочу|найди|нужен|нужна|нужно|куда|покажи|давай|ищу|подбери|хотим)(?:\s|$)/.test(norm(text));
+}
+function resetSearchContext({keepShared=false,announce=true}={}){
+  const old={...chatState.slots};
+  chatState.intent=null;
+  chatState.slots=keepShared?{
+    party_size:old.party_size||undefined,date_word:old.date_word||undefined,
+    max_price_rub:old.max_price_rub||undefined,after_time:old.after_time||undefined
+  }:{};
+  Object.keys(chatState.slots).forEach(k=>chatState.slots[k]===undefined&&delete chatState.slots[k]);
+  chatState.selected=null;chatState.phase="idle";chatState.awaitingContinuation=false;currentResults=[];
+  if(announce){const d=document.createElement("div");d.className="newRequestDivider";d.textContent="Новый запрос";$("#chat").appendChild(d)}
+}
+function shouldStartNewRequest(text,newIntent){
+  if(!["results","selected","action"].includes(chatState.phase))return false;
+  if(continuationCue(text))return false;
+  if(explicitNewRequest(text))return true;
+  if(newIntent!=="general"&&chatState.intent&&newIntent!==chatState.intent)return true;
+  return false;
+}
+function beginContinuation(){
+  chatState.previousSelected=chatState.selected;chatState.awaitingContinuation=true;chatState.phase="action";
+  addMsg("ai","Что хочется после этого? Например: «караоке», «выпить», «десерт» или «что-нибудь спокойное».");
+  $("#input").focus();
+}
+
+async function submitScriptedUser(text,alreadyAdded=false){
+  text=(text||"").trim();if(!text)return;
+  const newIntent=detectIntent(text),isContinuation=continuationCue(text);
+
+  if(shouldStartNewRequest(text,newIntent)){
+    resetSearchContext({keepShared:false,announce:true});
+  }else if(isContinuation && ["selected","action","results"].includes(chatState.phase)){
+    const previous=chatState.selected||chatState.previousSelected;
+    resetSearchContext({keepShared:true,announce:false});
+    chatState.previousSelected=previous;
+  }
+
+  if(!alreadyAdded)addMsg("user",esc(text));$("#input").value="";chatState.awaitingContinuation=false;
+  if(!chatState.intent || (newIntent!=="general"&&chatState.intent==="general"))chatState.intent=newIntent;
+  mergeSlots(text);
+
+  const n=norm(text);
+  if(/коктейли/.test(n))chatState.slots.style="cocktail";
+  if(/пиво/.test(n))chatState.slots.style="pub";
+  if(/вино/.test(n))chatState.slots.style="wine";
+  if(/красиво/.test(n))chatState.slots.vibe="beautiful";
+  if(/спокой/.test(n))chatState.slots.vibe="quiet";
+  if(/поживее|шумно|весело/.test(n))chatState.slots.vibe="social";
+  if(/с друзьями/.test(n)&&!chatState.slots.party_size)chatState.slots.party_size=4;
+  if(/один/.test(n))chatState.slots.party_size=1;
+  if(/до 5 000/.test(text))chatState.slots.max_price_rub=5000;
+  if(/до 8 000/.test(text))chatState.slots.max_price_rub=8000;
+  if(/до 15 000/.test(text))chatState.slots.max_price_rub=15000;
+  if(/бюджет не важен|не ограничивать/.test(n))chatState.slots.max_price_rub=999999;
+  if(/сегодня/.test(n))chatState.slots.date_word="today";
+  if(/завтра/.test(n))chatState.slots.date_word="tomorrow";
+  if(/концерт/.test(n))chatState.slots.genre="концерт";
+  if(/стендап/.test(n))chatState.slots.genre="стендап";
+  if(/выстав/.test(n))chatState.slots.genre="выставка";
+  if(/театр/.test(n))chatState.slots.genre="театр";
+
+  const q=requiredQuestion();
+  if(q){chatState.phase="collecting";const t=typing();setTimeout(()=>{t.remove();addMsg("ai",q.q+quick(q.o));bindQuick()},220);return}
+  await showMatches();
+}
+
+
+function plainTextHtml(text){
+  return esc(text||"").replace(/\n/g,"<br>");
+}
+function selectedForAI(){
+  const r=chatState.selected;
+  if(!r)return null;
+  return {id:r.id,name:r.name,category:r.category,area:r.area,time:r.time,price:r.price,kind:r.kind};
+}
+function planForAI(){
+  return plan.slice(0,6).map(r=>({id:r.id,name:r.name,category:r.category,area:r.area,time:r.time,price:r.price,kind:r.kind}));
+}
+async function neuralContextFor(text){
+  let user_location=null;
+  if(/рядом|недалеко|от меня|пешком/.test(norm(text))){
+    const g=await geo(true);
+    if(g)user_location={lat:g.lat,lon:g.lon};
+  }
+  return {
+    taste_weights:{...taste},
+    selected_place:selectedForAI(),
+    plan:planForAI(),
+    user_location
+  };
+}
+async function submitNeuralUser(text){
+  text=(text||"").trim();if(!text)return;
+  addMsg("user",esc(text));$("#input").value="";
+  const t=typing();
+
+  try{
+    const resp=await fetch("/api/dialogue",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        message:text,
+        previous_response_id:chatState.aiResponseId||null,
+        context:await neuralContextFor(text)
+      })
+    });
+    const data=await resp.json().catch(()=>({}));
+    if(!resp.ok)throw new Error(data.message||data.error||"AI недоступен");
+
+    t.remove();
+    chatState.aiResponseId=data.response_id||chatState.aiResponseId;
+    const rs=Array.isArray(data.results)?data.results:[];
+
+    if(rs.length){
+      currentResults=rs;
+      chatState.phase="results";
+      const msg=addMsg("ai",`${plainTextHtml(data.reply)}${cards(rs)}`);
+      bindCards();
+      setTimeout(()=>scrollChatToLatest(msg),120);
+    }else{
+      chatState.phase="collecting";
+      addMsg("ai",plainTextHtml(data.reply));
+    }
+
+    $("#hint").textContent=`Нейросеть ведёт диалог · ${data.model||"OpenAI"} · поиск вызывается только когда он нужен`;
+  }catch(e){
+    t.remove();
+    chatState.aiReady=false;
+    $("#aiStatus").textContent="AI fallback · Москва";
+    $("#hint").textContent="OpenAI API сейчас недоступен — включён локальный fallback.";
+    toast("Нейросеть недоступна, включаю резервный режим.");
+    await submitScriptedUser(text,true);
+  }
+}
+async function submitUser(text){
+  if(chatState.aiReady)return submitNeuralUser(text);
+  return submitScriptedUser(text,false);
+}
+
+
+function bookingRequestText(r){
+  const s=chatState.slots,parts=[`Здравствуйте! Хочу забронировать ${r.name}.`];
+  if(s.date_word==="today")parts.push("Дата: сегодня.");
+  if(s.date_word==="tomorrow")parts.push("Дата: завтра.");
+  if(s.after_time)parts.push(`Время: после ${s.after_time}.`);
+  if(s.party_size)parts.push(`Гостей: ${s.party_size}.`);
+  parts.push("Запрос сформирован через FREE.");
+  return parts.join(" ");
+}
+async function copyText(text){try{await navigator.clipboard.writeText(text);return true}catch{return false}}
+function waWithText(url,text){try{const u=new URL(url);u.searchParams.set("text",text);return u.href}catch{return url}}
+async function openBooking(id){
+  const r=currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id)||plan.find(x=>x.id===id);if(!r)return;
+  const url=r.booking_url||(r.kind==="event"?(r.point_source||r.source):null);
+  if(!url){addMsg("ai",`У <b>${esc(r.name)}</b> я пока не вижу отдельного канала бронирования. Открываю конкретную страницу точки.`);window.open(r.point_source||r.source,"_blank","noopener");return}
+  const text=bookingRequestText(r);chatState.phase="action";
+  if(r.kind==="event"||r.booking_kind==="tickets"){addMsg("ai",`Открываю реальную страницу билетов / регистрации для <b>${esc(r.name)}</b>. После оформления можно вернуться сюда — я построю маршрут или продолжу вечер.`);window.open(url,"_blank","noopener");return}
+  if(r.booking_kind==="whatsapp"){addMsg("ai",`Передаю заявку в WhatsApp для <b>${esc(r.name)}</b>.<div class="bookingSummary">${esc(text)}</div>`);window.open(waWithText(url,text),"_blank","noopener");return}
+  if(r.booking_kind==="telegram"){const copied=await copyText(text);addMsg("ai",`Открываю ${esc(r.booking_provider||"Telegram")} для <b>${esc(r.name)}</b>. ${copied?"Текст заявки уже скопирован — останется вставить и отправить.":"Вставьте данные брони в чат."}<div class="bookingSummary">${esc(text)}</div>`);window.open(url,"_blank","noopener");return}
+  if(r.booking_kind==="phone"||String(url).startsWith("tel:")){addMsg("ai",`Для <b>${esc(r.name)}</b> подтверждённый канал бронирования — телефон. Открываю звонок.<div class="bookingSummary">${esc(text)}</div>`);window.location.href=url;return}
+  const copied=await copyText(text);addMsg("ai",`Открываю форму / сервис бронирования <b>${esc(r.name)}</b>. ${copied?"Параметры заявки скопированы.":""}<div class="bookingSummary">${esc(text)}</div>`);window.open(url,"_blank","noopener");
+}
+
+function selectPlace(id){
+  const r=currentResults.find(x=>x.id===id);if(!r)return;
+  chatState.selected=r;chatState.phase="selected";chatState.awaitingContinuation=false;
+  if(!plan.some(x=>x.id===id))plan.push(r);save();
+  let body=`Добавил <b>${esc(r.name)}</b> в план. Что дальше?`;
+  body+=`<div class="actionBox"><h4>Следующее действие</h4><p>${r.kind==="event"?"Можно перейти к билетам / регистрации, построить маршрут или продолжить вечер.":"Можно забронировать через реальный канал заведения, построить маршрут или добавить следующую точку."}</p><div class="actionBtns"><button data-book-one>${r.kind==="event"?"Билеты / регистрация":bookingLabel(r)}</button><button data-route-one>Маршрут</button><button class="ghost" data-after>Продолжить вечер</button></div></div>`;
+  addMsg("ai",body);
+  const bookBtn=[...$("#chat").querySelectorAll("[data-book-one]")].at(-1);if(bookBtn)bookBtn.onclick=()=>openBooking(r.id);
+  const routeBtn=[...$("#chat").querySelectorAll("[data-route-one]")].at(-1);if(routeBtn)routeBtn.onclick=()=>routePlace(r.id);
+  const after=[...$("#chat").querySelectorAll("[data-after]")].at(-1);if(after)after.onclick=beginContinuation;
+}
+function coords(r){const c=r.coords;if(!c)return null;if(Array.isArray(c)&&c.length>=2){const a=+c[0],b=+c[1];return a>50?{lat:a,lon:b}:{lat:b,lon:a}}const lat=+(c.lat??c.latitude),lon=+(c.lon??c.lng??c.longitude);return Number.isFinite(lat)&&Number.isFinite(lon)?{lat,lon}:null}
+function dest(r){const c=coords(r);return c?`${c.lat},${c.lon}`:`Москва, ${r.area||r.name}`}
+async function routeItems(items){const g=await geo(false);if(!g)return;const u=`https://yandex.ru/maps/?mode=routes&rtext=${[`${g.lat},${g.lon}`,...items.map(dest)].map(encodeURIComponent).join("~")}`;window.open(u,"_blank","noopener")}
+function routePlace(id){const r=currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id)||plan.find(x=>x.id===id);if(r)routeItems([r])}
+function toggleSave(id){const r=currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id);if(!r)return;const i=saved.findIndex(x=>x.id===id);if(i>=0)saved.splice(i,1);else saved.unshift(r);save();toast(i>=0?"Удалено из Saved":"Сохранено")}
+function openDetail(id){
+  const r=currentResults.find(x=>x.id===id)||saved.find(x=>x.id===id)||plan.find(x=>x.id===id);if(!r)return;
+  $("#detail").innerHTML=`<div class="sheet"><button class="close">×</button>
+    ${r.image_url?`<div class="placeMedia" style="margin:0 0 15px"><img src="${esc(r.image_url)}" alt="${esc(r.name)}" referrerpolicy="no-referrer"></div>`:""}
+    <div class="eyebrow">${esc(r.provider||"PLACE")}</div><h2>${esc(r.name)}</h2><p>${esc(r.category||"")} · ${esc(r.area||"")}</p>
+    <div class="detailGrid"><div class="detail"><b>Цена</b><br>${esc(r.price||"на сайте")}</div><div class="detail"><b>Время</b><br>${esc(r.time||"по расписанию")}</div><div class="detail"><b>Почему вам</b><br>${esc(reason(r))}</div><div class="detail"><b>Бронирование</b><br>${esc(r.booking_provider||"через страницу места")}</div></div>
+    <div class="sheetActions"><button class="primary" data-book-detail>${bookingLabel(r)}</button><button data-select>В план</button><button data-r>Маршрут</button><a target="_blank" rel="noopener" href="${esc(r.point_source||r.source||"#")}">${r.kind==="event"?"Страница события":"Страница точки"} ↗</a><button data-save-detail>${saved.some(x=>x.id===r.id)?"Убрать из Saved":"Сохранить"}</button></div></div>`;
+  $("#detail").classList.add("on");$("#detail .close").onclick=()=>$("#detail").classList.remove("on");
+  $("#detail [data-book-detail]").onclick=()=>openBooking(r.id);
+  $("#detail [data-select]").onclick=()=>{$("#detail").classList.remove("on");selectPlace(r.id)};
+  $("#detail [data-r]").onclick=()=>routePlace(r.id);
+  $("#detail [data-save-detail]").onclick=()=>{toggleSave(r.id);$("#detail").classList.remove("on")};
+}
+function renderSaved(){const box=$("#savedList");if(!saved.length){box.innerHTML='<div class="row"><div><h3>Пока пусто</h3><p>Сохраняйте понравившиеся места прямо из чата.</p></div></div>';return}box.innerHTML=saved.map(r=>`<div class="row"><div><h3>${esc(r.name)}</h3><p>${esc(r.area||"")} · ${esc(r.price||"")}</p></div><button data-s="${esc(r.id)}">Открыть</button></div>`).join("");$$("[data-s]").forEach(b=>b.onclick=()=>openDetail(b.dataset.s))}
+function renderPlan(){const box=$("#planList");if(!plan.length){box.innerHTML='<div class="row"><div><h3>План ещё не собран</h3><p>Выберите место в чате — оно появится здесь.</p></div></div>';return}box.innerHTML=plan.map((r,i)=>`<div class="row"><div><h3>${i+1}. ${esc(r.name)}</h3><p>${esc(r.time||"по расписанию")} · ${esc(r.area||"")}</p></div><button data-p="${esc(r.id)}">Открыть</button></div>`).join("")+`<div class="row"><div><h3>Маршрут всего плана</h3><p>От текущей геопозиции через все выбранные точки.</p></div><button id="planRoute">Маршрут</button></div>`;$$("[data-p]").forEach(b=>b.onclick=()=>openDetail(b.dataset.p));$("#planRoute").onclick=()=>routeItems(plan)}
+function renderTaste(){const box=$("#tasteGrid");box.innerHTML=DIMS.map(k=>{const v=Math.max(0,Math.min(100,50+taste[k]*10));return `<div class="taste"><div class="tasteHead"><span>${LABEL[k]}</span><b>${Math.round(v)}</b></div><div class="bar"><i style="width:${v}%"></i></div></div>`}).join("")}
+function switchView(v){$$(".panel").forEach(x=>x.classList.remove("on"));$$(".nav").forEach(x=>x.classList.toggle("on",x.dataset.view===v));$("#view-"+v).classList.add("on");if(v==="saved")renderSaved();if(v==="plan")renderPlan();if(v==="profile")renderTaste()}
+function startConversation(){
+  chatState.phase="idle";
+  addMsg("ai",'Расскажите как есть — одной фразой или подробно. Я сам пойму, нужно ли что-то уточнить или уже можно искать.'+quick(["Хочу выпить","Хочу поесть","Хочу на событие","Хочу покурить кальян"]));bindQuick()
+}
+async function detectCapabilities(){
+  voice.mode=(window.SpeechRecognition||window.webkitSpeechRecognition)?"browser":"none";
+  try{
+    const r=await fetch("/api/health",{cache:"no-store"});
+    const d=await r.json();
+    chatState.aiReady=Boolean(d.text_ai_ready);
+    if(d.voice_ready)voice.mode="live";
+    $("#aiStatus").textContent=chatState.aiReady?`Neural chat · ${d.text_ai_model||"OpenAI"}`:"AI fallback · Москва";
+    $("#hint").textContent=chatState.aiReady
+      ?"Свободный нейросетевой диалог: FREE сам решает, что уточнить и когда искать."
+      :"Preview / backend без API key: работает резервный сценарий.";
+  }catch(_){
+    chatState.aiReady=false;
+    $("#aiStatus").textContent="Preview fallback · Москва";
+  }
+}
+function browserVoice(){const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR){toast("Голос недоступен. Текстовый чат работает.");return}const rec=new SR();voice.rec=rec;rec.lang="ru-RU";rec.interimResults=true;rec.onstart=()=>$("#voiceBtn").classList.add("live");rec.onresult=e=>{let t="";for(let i=0;i<e.results.length;i++)t+=e.results[i][0].transcript;$("#input").value=t};rec.onend=()=>{$("#voiceBtn").classList.remove("live");const t=$("#input").value.trim();if(t)submitUser(t)};rec.start()}
+$("#input").addEventListener("focus",()=>setTimeout(()=>{$(".composerWrap")?.scrollIntoView({block:"end"});scrollChatToLatest()},220));
+$("#sendBtn").onclick=()=>submitUser($("#input").value);$("#input").addEventListener("keydown",e=>{if(e.key==="Enter")submitUser($("#input").value)});$("#voiceBtn").onclick=browserVoice;$$("[data-view]").forEach(b=>b.onclick=()=>switchView(b.dataset.view));$("#detail").onclick=e=>{if(e.target===$("#detail"))$("#detail").classList.remove("on")};
+renderSaved();renderPlan();renderTaste();detectCapabilities();startConversation();
+</script>
+</body>
+</html>
