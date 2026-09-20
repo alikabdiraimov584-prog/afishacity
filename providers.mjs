@@ -2,7 +2,7 @@ import {join} from "node:path";
 import {fileURLToPath} from "node:url";
 import {createCache,withBreaker,breakerStatus} from "./cache.mjs";
 
-import {CATEGORIES,categoryTags} from "./categories.mjs";
+import {CATEGORIES,SERVICE_TAGS,categoryTags} from "./categories.mjs";
 
 const MOSCOW_POINT = "37.6173,55.7558";
 const TIMEOUT_MS = 6500;
@@ -64,15 +64,43 @@ export function buildSearchPlan(args={}){
   if(!placeQueries.length&&!eventQueries.length&&coreQuery){eventQueries.push(coreQuery);placeQueries.push(coreQuery)}
   const placeIntent=placeQueries.length>0;
   const eventIntent=eventQueries.length>0;
+  // Аптеку или автосервис в афише событий искать бессмысленно: такие источники
+  // возвращают парки и площадки, которые только засоряют выдачу.
+  const serviceOnly=!eventIntent&&tags.some(t=>SERVICE_TAGS.has(t));
   return {
     raw:args.query||"",safeQuery,coreQuery,
     placeQueries:uniq(placeQueries).slice(0,4),eventQueries:uniq(eventQueries).slice(0,4),tags:uniq(tags),
-    placeIntent,eventIntent,
+    placeIntent,eventIntent,serviceOnly,
     targetDate:args.target_date||null,maxPrice:args.max_price_rub??null,freeOnly:args.max_price_rub===0||/бесплат/.test(q),
     afterTime:args.after_time||null,area:args.area||null,
     heavyDrinkingPhrase:/выпить.*(много|сильно)|напиться|в хлам/.test(q)
   };
 }
+
+// Соответствие структурных полей OSM нашим категориям — собирается из самих
+// фильтров справочника, поэтому новая категория подхватывается автоматически.
+const OSM_TAG_MAP=(()=>{
+  const m=new Map();
+  for(const c of CATEGORIES)for(const f of c.osm||[])
+    for(const [,key,op,vals] of f.matchAll(/\["([a-z:_]+)"([=~])"([^"]+)"\]/g)){
+      if(!/^[a-z_|]+$/.test(vals))continue;               // regex по имени — не категория
+      // Одно значение заявляют несколько категорий (hairdresser — и barber, и
+      // beauty), поэтому копим все, иначе последняя затирает предыдущие.
+      for(const v of (op==="~"?vals.split("|"):[vals])){
+        const k=`${key}=${v}`;
+        m.set(k,uniq([...(m.get(k)||[]),c.tag]));
+      }
+    }
+  return m;
+})();
+// Категория места по данным источника, а не по тексту названия.
+export function structuralTags(fields){
+  const out=[];
+  for(const [k,v] of Object.entries(fields||{}))out.push(...(OSM_TAG_MAP.get(`${k}=${v}`)||[]));
+  return uniq(out);
+}
+// Рубрики источника (KudaGo, Timepad, 2GIS) — тоже структурные данные.
+function rubricTags(names){return uniq(categoryTags(norm((names||[]).filter(Boolean).join(" "))))}
 
 function inferTags(text){
   const n=norm(text);
@@ -117,7 +145,8 @@ function normalizeKudagoEvent(e,plan){
   const text=[e.title,e.description,(e.categories||[]).map(x=>x.name).join(" "),(e.tags||[]).join(" ")].join(" ");
   return {
     id:`kudago:event:${e.id}`,provider:"KudaGo",live:true,kind:"event",name:e.title||e.short_title||"Событие",
-    organizer:place.title||"KudaGo",cat:(e.categories||[])[0]?.name||"Событие",tags:uniq([...inferTags(text),...plan.tags]),
+    organizer:place.title||"KudaGo",cat:(e.categories||[])[0]?.name||"Событие",
+    tags:inferTags(text),cat_tags:rubricTags((e.categories||[]).map(x=>x.name)),
     area:place.address||"Москва",metro:place.subway||"",date_start:d.start_date||epochDate(d.start),date_end:d.end_date||d.start_date||epochDate(d.end||d.start),
     times:uniq(relevant.map(x=>x.start_time?x.start_time.slice(0,5):null).filter(Boolean)).slice(0,8),hours_label:"",
     ...pi,availability:"актуальность из KudaGo",source:e.site_url||place.site_url||"https://kudago.com/msk/",
@@ -131,7 +160,8 @@ function normalizeKudagoPlace(p,plan){
   const text=[p.title,p.description,(p.categories||[]).map(x=>x.name).join(" "),(p.tags||[]).join(" ")].join(" ");
   return {
     id:`kudago:place:${p.id}`,provider:"KudaGo",live:true,kind:"venue",name:p.title||"Место",organizer:p.title||"",
-    cat:(p.categories||[])[0]?.name||"Место",tags:uniq([...inferTags(text),...plan.tags]),area:p.address||"Москва",metro:p.subway||"",
+    cat:(p.categories||[])[0]?.name||"Место",
+    tags:inferTags(text),cat_tags:rubricTags((p.categories||[]).map(x=>x.name)),area:p.address||"Москва",metro:p.subway||"",
     date_start:null,date_end:null,times:[],hours_label:p.timetable||"часы работы на сайте",price_label:"цены на сайте",price_min:null,free:false,
     availability:p.is_closed?"закрыто":"действующее место",source:p.site_url||p.foreign_url||"https://kudago.com/msk/",
     point_source:p.site_url||p.foreign_url||"https://kudago.com/msk/",official_source:p.foreign_url||null,
@@ -175,7 +205,7 @@ function normalizeTimepadEvent(e,plan){
   const cats=(e.categories||[]).map(x=>x.name||"");const text=[e.name,e.description_short,cats.join(" "),e.organization?.name].join(" ");
   return {
     id:`timepad:event:${e.id}`,provider:"Timepad",live:true,kind:"event",name:e.name||"Событие",organizer:e.organization?.name||"Timepad",
-    cat:cats[0]||"Событие",tags:uniq([...inferTags(text),...plan.tags]),area:e.location?.address||e.location?.city||"Москва",metro:"",
+    cat:cats[0]||"Событие",tags:inferTags(text),cat_tags:rubricTags(cats),area:e.location?.address||e.location?.city||"Москва",metro:"",
     date_start:isoDate(e.starts_at),date_end:isoDate(e.ends_at)||isoDate(e.starts_at),times:uniq([hhmm(e.starts_at)]),hours_label:"",
     price_label:priceLabel,price_min:pmin,free,availability:reg.is_registration_open===false?"регистрация закрыта":"регистрация на Timepad",
     source:e.url||e.organization?.url||"https://timepad.ru/",point_source:e.url||e.organization?.url||"https://timepad.ru/",
@@ -230,7 +260,7 @@ function normalize2gisItem(x,plan){
   if(x.schedule?.comment)schedule=x.schedule.comment;
   return {
     id:`2gis:place:${x.id}`,provider:"2GIS",live:true,kind:"venue",name:x.name||"Заведение",organizer:x.name||"",
-    cat:rubrics[0]||"Заведение",tags:uniq([...inferTags(text),...plan.tags]),area:x.address_name||x.full_address_name||"Москва",metro:"",
+    cat:rubrics[0]||"Заведение",tags:inferTags(text),cat_tags:rubricTags(rubrics),area:x.address_name||x.full_address_name||"Москва",metro:"",
     date_start:null,date_end:null,times:[],hours_label:schedule,price_label:"цены в карточке заведения",price_min:null,free:false,
     availability:"действующая организация по данным 2GIS",source:`https://2gis.ru/moscow/firm/${encodeURIComponent(x.id)}`,
     point_source:`https://2gis.ru/moscow/firm/${encodeURIComponent(x.id)}`,official_source:null,
@@ -291,7 +321,7 @@ function normalizeOsmItem(x,plan){
   return {
     id:`osm:${x.type}:${x.id}`,provider:"OpenStreetMap",live:true,kind:"venue",name,organizer:t.brand||name,
     cat:cats[amenity]||(/караоке|karaoke/i.test(text)?"Караоке":"Заведение"),
-    tags:uniq([...inferTags(text),...plan.tags]),area:osmAddress(t),metro:"",
+    tags:inferTags(text),cat_tags:structuralTags(t),area:osmAddress(t),metro:"",
     date_start:null,date_end:null,times:[],hours_label:t.opening_hours||"часы работы не указаны в OSM",
     price_label:"цены у заведения",price_min:null,free:false,
     availability:"объект из актуальной базы OpenStreetMap; часы лучше перепроверить",
@@ -390,9 +420,11 @@ export async function searchLiveInventory(args={},env=process.env,opts={}){
   const P={kudago:searchKudago,timepad:searchTimepad,osm:searchOSM,dgis:search2GIS,...(opts.providers||{})};
   const ctx={cache:opts.cache||getLiveCache(),now:opts.now||Date.now,breaker:{...BREAKER,...(opts.breaker||{})}};
   const dgisKey=env.DGIS_API_KEY||env.TWOGIS_API_KEY||"";
+  const skipEvents=plan.serviceOnly;
+  const none={items:[],errors:[],from_cache:false,degraded:false,disabled:true};
   const [k,t,o,d]=await Promise.all([
-    cachedProvider("kudago",cacheKeyFor("kudago",plan),()=>P.kudago(plan),ctx),
-    cachedProvider("timepad",cacheKeyFor("timepad",plan),()=>P.timepad(plan),ctx),
+    skipEvents?none:cachedProvider("kudago",cacheKeyFor("kudago",plan),()=>P.kudago(plan),ctx),
+    skipEvents?none:cachedProvider("timepad",cacheKeyFor("timepad",plan),()=>P.timepad(plan),ctx),
     cachedProvider("osm",cacheKeyFor("osm",plan),()=>P.osm(plan),ctx),
     dgisKey?cachedProvider("dgis",cacheKeyFor("dgis",plan,true),()=>P.dgis(plan,dgisKey),ctx):{items:[],errors:[],from_cache:false,degraded:false,disabled:true}
   ]);
@@ -407,7 +439,7 @@ export async function searchLiveInventory(args={},env=process.env,opts={}){
   return {
     plan,items,
     errors:[...(k.errors||[]),...(t.errors||[]),...(o.errors||[]),...(d.errors||[])],
-    providers:{kudago:true,timepad:true,osm:true,dgis:!d.disabled},
+    providers:{kudago:!skipEvents,timepad:!skipEvents,osm:true,dgis:!d.disabled},
     degraded,from_cache,
     note:notes.length?notes.join(" "):null
   };

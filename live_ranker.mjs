@@ -1,6 +1,6 @@
 import {parseHours,moscowNow} from "./hours.mjs";
 
-import {CATEGORIES} from "./categories.mjs";
+import {CATEGORIES,SERVICE_TAGS} from "./categories.mjs";
 
 function norm(s=""){return String(s).toLowerCase().replace(/ё/g,"е").replace(/<[^>]*>/g," ").replace(/[^a-zа-я0-9\s]/gi," ").replace(/\s+/g," ").trim()}
 function words(s){const stop=new Set(["куда","сходить","пойти","хочу","хочется","сегодня","завтра","вечером","после","москва","москве","очень","сильно","много","какой","какое","что","для","чтобы","можно","найди","место"]);return norm(s).split(" ").filter(w=>w.length>3&&!stop.has(w))}
@@ -122,7 +122,8 @@ export function rankLive(items,args={},plan={}){
   const q=args.query||"",qwords=words(q),tags=requestedTags(q,plan),
     strong=new Set(tags.filter(t=>Object.keys(SYN).includes(t))),
     taste=args.taste_weights||{}, user=coordsPair(args.user_location), near=/рядом|недалеко|от меня|пешком/.test(norm(q)),
-    rain=args.weather_context?.rain===true,moment=hoursMoment(args);
+    rain=args.weather_context?.rain===true,moment=hoursMoment(args),
+    serviceAsked=tags.some(t=>SERVICE_TAGS.has(t));
   const scored=[];
   for(const x of items){
     if(!dateOkay(x,args)||!timeOkay(x,args)||!priceOkay(x,args))continue;
@@ -130,14 +131,21 @@ export function rankLive(items,args={},plan={}){
     const hours=venueHours(x,moment);
     // Известно, что к нужному времени заведение закрыто — не показываем.
     if(hours&&hours.open_now===false&&args.after_time)continue;
-    const text=itemText(x),xtags=new Set(x.tags||[]),dna=placeDna(x);let s=0,reasons=[],strongHit=0;
+    const text=itemText(x),xtags=new Set(x.tags||[]),ctags=new Set(x.cat_tags||[]),dna=placeDna(x);let s=0,reasons=[],strongHit=0;
     if(hours&&hours.open_now){
       s+=7;reasons.push(args.after_time?`открыто в ${args.after_time}`:"открыто сейчас");
       if(hours.closes_in!==null&&hours.closes_in<=60){s-=24;reasons.push(`закрывается в ${hours.closes_at}`)}
     }
-    for(const t of tags){if(xtags.has(t)||SYN[t]?.some(k=>hasTerm(text,k))){s+=strong.has(t)?58:22;strongHit++;reasons.push(t)}}
+    for(const t of tags){
+      // Услугу засчитываем только по категории из источника: «Аптекарский огород»
+      // — парк, а «Хлебозавод» с барбершопом в описании — не барбершоп.
+      const hit=SERVICE_TAGS.has(t)?ctags.has(t):(xtags.has(t)||ctags.has(t)||SYN[t]?.some(k=>hasTerm(text,k)));
+      if(hit){s+=strong.has(t)?58:22;strongHit++;reasons.push(t)}
+    }
     let lex=0;for(const w of qwords){if(text.includes(w)){lex+=9;reasons.push(w)}}s+=Math.min(54,lex);
     if(strong.size&&strongHit===0&&lex<18)continue;
+    // Спросили услугу — показываем только подтверждённые источником места.
+    if(serviceAsked&&strongHit===0)continue;
     if(!strong.size&&qwords.length===0)s+=18;
     if(args.target_date&&x.kind==="event"){s+=22;reasons.push("по дате")}
     if(args.after_time&&x.times?.length){s+=9;reasons.push("по времени")}

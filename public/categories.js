@@ -20,8 +20,8 @@ const CATEGORIES=[
   {tag:"coffee",re:/кофе|кофейн|капучино|раф(?![а-я])/,queries:["кофейня"],osm:['nwr["amenity"="cafe"]["cuisine"="coffee_shop"]({{bbox}});','nwr["amenity"="cafe"]({{bbox}});']},
   {tag:"bakery",re:/пекарн|(?<![а-я])хлеб|круассан|булочн/,queries:["пекарня"],osm:['nwr["shop"="bakery"]({{bbox}});']},
   {tag:"pastry",re:/кондитерск|(?<![а-я])торт|пирожн|десерт|сладк/,queries:["кондитерская","торты"],osm:['nwr["shop"~"confectionery|pastry"]({{bbox}});']},
-  {tag:"winestore",re:/винотек|алкомаркет|купить вин|бутылк/,queries:["винотека","алкомаркет"],osm:['nwr["shop"~"alcohol|wine"]({{bbox}});']},
-  {tag:"grocery",re:/продукт|супермаркет|магазин у дома|за продуктами|бакале/,queries:["супермаркет","продукты"],osm:['nwr["shop"~"supermarket|convenience|greengrocer"]({{bbox}});']},
+  {tag:"winestore",service:true,re:/винотек|алкомаркет|купить вин|бутылк/,queries:["винотека","алкомаркет"],osm:['nwr["shop"~"alcohol|wine"]({{bbox}});']},
+  {tag:"grocery",service:true,re:/продукт|супермаркет|магазин у дома|за продуктами|бакале/,queries:["супермаркет","продукты"],osm:['nwr["shop"~"supermarket|convenience|greengrocer"]({{bbox}});']},
   {tag:"market",re:/(?<![а-я])рынок|рынк|фермерск|ярмарк выходн/,queries:["рынок","фермерский рынок"],osm:['nwr["amenity"="marketplace"]({{bbox}});']},
 
   // ---- Ночь и развлечения ----
@@ -45,58 +45,58 @@ const CATEGORIES=[
   {tag:"planetarium",re:/планетари|обсерватор/,queries:["планетарий"],extraTags:["family","culture"],osm:['nwr["amenity"="planetarium"]({{bbox}});']},
 
   // ---- Красота ----
-  {tag:"barber",re:/барбершоп|постричь|подстричь|стрижк|парикмахер|(?<![а-я])бритье|побрить/,queries:["барбершоп","парикмахерская"],extraTags:["beauty"],
+  {tag:"barber",service:true,re:/барбершоп|постричь|подстричь|стрижк|парикмахер|(?<![а-я])бритье|побрить/,queries:["барбершоп","парикмахерская"],extraTags:["beauty"],
    osm:['nwr["shop"="hairdresser"]({{bbox}});','nwr["name"~"барбершоп|barber",i]({{bbox}});']},
-  {tag:"nails",re:/маникюр|педикюр|(?<![а-я])ногт/,queries:["маникюр","ногтевая студия"],extraTags:["beauty"],osm:['nwr["shop"="beauty"]({{bbox}});','nwr["name"~"маникюр|ногт|nail",i]({{bbox}});']},
-  {tag:"cosmetology",re:/косметолог|(?<![а-я])бров|ресниц|шугаринг|эпиляц|чистка лица/,queries:["косметология","салон красоты"],extraTags:["beauty"],osm:['nwr["shop"="beauty"]({{bbox}});']},
-  {tag:"beauty",re:/салон красот|(?<![а-я])beauty|уход за соб/,queries:["салон красоты"],osm:['nwr["shop"~"beauty|hairdresser"]({{bbox}});']},
-  {tag:"tattoo",re:/(?<![а-я])тату|татуиров|пирсинг/,queries:["тату-салон","пирсинг"],extraTags:["beauty"],osm:['nwr["shop"="tattoo"]({{bbox}});']},
+  {tag:"nails",service:true,re:/маникюр|педикюр|(?<![а-я])ногт/,queries:["маникюр","ногтевая студия"],extraTags:["beauty"],osm:['nwr["shop"="beauty"]({{bbox}});','nwr["name"~"маникюр|ногт|nail",i]({{bbox}});']},
+  {tag:"cosmetology",service:true,re:/косметолог|(?<![а-я])бров|ресниц|шугаринг|эпиляц|чистка лица/,queries:["косметология","салон красоты"],extraTags:["beauty"],osm:['nwr["shop"="beauty"]({{bbox}});']},
+  {tag:"beauty",service:true,re:/салон красот|(?<![а-я])beauty|уход за соб/,queries:["салон красоты"],osm:['nwr["shop"~"beauty|hairdresser"]({{bbox}});']},
+  {tag:"tattoo",service:true,re:/(?<![а-я])тату|татуиров|пирсинг/,queries:["тату-салон","пирсинг"],extraTags:["beauty"],osm:['nwr["shop"="tattoo"]({{bbox}});']},
 
   // ---- Здоровье и спорт ----
   {tag:"spa",re:new RegExp(`${B}бан(я|и|ю|е|ей)${E}|саун|${B}спа${E}|хамам|парн`),queries:["баня","сауна","спа"],osm:['nwr["leisure"="spa"]({{bbox}});','nwr["amenity"="sauna"]({{bbox}});']},
-  {tag:"massage",re:/массаж/,queries:["массаж","спа"],extraTags:["spa"],osm:['nwr["shop"="massage"]({{bbox}});','nwr["name"~"массаж",i]({{bbox}});']},
+  {tag:"massage",service:true,re:/массаж/,queries:["массаж","спа"],extraTags:["spa"],osm:['nwr["shop"="massage"]({{bbox}});','nwr["name"~"массаж",i]({{bbox}});']},
   {tag:"gym",re:/тренажерн|качалк|фитнес|спортзал|(?<![а-я])зал(?![а-я])|тренировк/,queries:["фитнес-клуб","тренажёрный зал"],extraTags:["active"],osm:['nwr["leisure"="fitness_centre"]({{bbox}});']},
   {tag:"yoga",re:/(?<![а-я])йог[аиу]|пилатес|растяжк|стретчинг|медитац/,queries:["йога","студия йоги"],extraTags:["active","spa"],osm:['nwr["leisure"="fitness_centre"]["sport"="yoga"]({{bbox}});','nwr["name"~"йога|yoga",i]({{bbox}});']},
   {tag:"pool",re:/бассейн|поплавать|(?<![а-я])плаван/,queries:["бассейн"],extraTags:["active"],osm:['nwr["leisure"="swimming_pool"]({{bbox}});','nwr["leisure"="sports_centre"]["sport"="swimming"]({{bbox}});']},
   {tag:"icerink",re:/(?<![а-я])каток|коньк|(?<![а-я])лед(?![а-я])/,queries:["каток"],extraTags:["active","family"],osm:['nwr["leisure"="ice_rink"]({{bbox}});']},
   {tag:"climbing",re:/скалодром|лазать|боулдеринг/,queries:["скалодром"],extraTags:["active"],osm:['nwr["sport"="climbing"]({{bbox}});']},
   {tag:"tennis",re:/теннис|падел|сквош|бадминтон/,queries:["теннисный корт","падел"],extraTags:["active"],osm:['nwr["sport"~"tennis|padel|squash"]({{bbox}});']},
-  {tag:"clinic",re:/(?<![а-я])врач|клиник|поликлиник|терапевт|анализ[ыов]|узи(?![а-я])|больниц/,queries:["медицинский центр","клиника"],osm:['nwr["amenity"~"clinic|doctors|hospital"]({{bbox}});']},
-  {tag:"dentist",re:/стоматолог|зубн|(?<![а-я])зуб(?![а-я])/,queries:["стоматология"],osm:['nwr["amenity"="dentist"]({{bbox}});']},
-  {tag:"pharmacy",re:/аптек|лекарств|таблетк/,queries:["аптека"],osm:['nwr["amenity"="pharmacy"]({{bbox}});']},
-  {tag:"optics",re:/оптик|очк[иа](?![а-я])|линз/,queries:["оптика"],osm:['nwr["shop"="optician"]({{bbox}});']},
+  {tag:"clinic",service:true,re:/(?<![а-я])врач|клиник|поликлиник|терапевт|анализ[ыов]|узи(?![а-я])|больниц/,queries:["медицинский центр","клиника"],osm:['nwr["amenity"~"clinic|doctors|hospital"]({{bbox}});']},
+  {tag:"dentist",service:true,re:/стоматолог|зубн|(?<![а-я])зуб(?![а-я])/,queries:["стоматология"],osm:['nwr["amenity"="dentist"]({{bbox}});']},
+  {tag:"pharmacy",service:true,re:/аптек|лекарств|таблетк/,queries:["аптека"],osm:['nwr["amenity"="pharmacy"]({{bbox}});']},
+  {tag:"optics",service:true,re:/оптик|очк[иа](?![а-я])|линз/,queries:["оптика"],osm:['nwr["shop"="optician"]({{bbox}});']},
 
   // ---- Дети и питомцы ----
   {tag:"family",re:/ребен|(?<![а-я])дет(и|ей|ям|ьми|ск|ишк)|(?<![а-я])семь[яиею]|семейн/,queries:["детский центр","семейный ресторан","интерактивный музей"],
    osm:['nwr["leisure"="playground"]({{bbox}});','nwr["amenity"~"cinema|theatre"]({{bbox}});']},
-  {tag:"vet",re:/ветеринар|ветклиник|(?<![а-я])кошк|(?<![а-я])собак/,queries:["ветеринарная клиника"],osm:['nwr["amenity"="veterinary"]({{bbox}});']},
-  {tag:"petshop",re:/зоомагазин|корм для|(?<![а-я])груминг|подстричь собак/,queries:["зоомагазин","груминг"],osm:['nwr["shop"~"pet|pet_grooming"]({{bbox}});']},
+  {tag:"vet",service:true,re:/ветеринар|ветклиник|(?<![а-я])кошк|(?<![а-я])собак/,queries:["ветеринарная клиника"],osm:['nwr["amenity"="veterinary"]({{bbox}});']},
+  {tag:"petshop",service:true,re:/зоомагазин|корм для|(?<![а-я])груминг|подстричь собак/,queries:["зоомагазин","груминг"],osm:['nwr["shop"~"pet|pet_grooming"]({{bbox}});']},
 
   // ---- Работа и услуги ----
   {tag:"work",re:/коворкинг|поработать|ноутбук|деловая встреч|переговорн|бизнес.?ланч/,queries:["коворкинг","кафе для работы"],osm:['nwr["office"="coworking"]({{bbox}});','nwr["amenity"="cafe"]({{bbox}});']},
-  {tag:"print",re:/распечат|копицентр|типографи|ксерокс|напечатат/,queries:["копицентр","печать документов"],osm:['nwr["shop"="copyshop"]({{bbox}});']},
-  {tag:"bank",re:/(?<![а-я])банк(?![а-я])|банкомат|обменник|обмен валют/,queries:["банк","банкомат"],osm:['nwr["amenity"~"bank|bureau_de_change|atm"]({{bbox}});']},
-  {tag:"post",re:/(?<![а-я])почт|посылк|отправить письмо|пункт выдач|(?<![а-я])пвз(?![а-я])/,queries:["почта","пункт выдачи"],osm:['nwr["amenity"="post_office"]({{bbox}});','nwr["shop"="outpost"]({{bbox}});']},
-  {tag:"laundry",re:/прачечн|химчистк|постирать|(?<![а-я])стирк/,queries:["прачечная","химчистка"],osm:['nwr["shop"~"laundry|dry_cleaning"]({{bbox}});']},
-  {tag:"tailor",re:/ателье|подшить|ремонт одежд|ремонт обув|(?<![а-я])сапожник/,queries:["ателье","ремонт обуви"],osm:['nwr["shop"~"tailor|shoe_repair"]({{bbox}});']},
-  {tag:"keys",re:/(?<![а-я])ключ[иа](?![а-я])|сделать ключ|замок помен/,queries:["изготовление ключей"],osm:['nwr["shop"="locksmith"]({{bbox}});']},
-  {tag:"phonerepair",re:/ремонт телефон|разбил экран|замена экран|сервисный центр/,queries:["ремонт телефонов"],osm:['nwr["shop"="mobile_phone"]["repair"~"."]({{bbox}});','nwr["name"~"ремонт телефон",i]({{bbox}});']},
-  {tag:"photo",re:/фотостуди|фотограф|фото на документ/,queries:["фотостудия","фото на документы"],osm:['nwr["shop"="photo"]({{bbox}});','nwr["craft"="photographer"]({{bbox}});']},
+  {tag:"print",service:true,re:/распечат|копицентр|типографи|ксерокс|напечатат/,queries:["копицентр","печать документов"],osm:['nwr["shop"="copyshop"]({{bbox}});']},
+  {tag:"bank",service:true,re:/(?<![а-я])банк(?![а-я])|банкомат|обменник|обмен валют/,queries:["банк","банкомат"],osm:['nwr["amenity"~"bank|bureau_de_change|atm"]({{bbox}});']},
+  {tag:"post",service:true,re:/(?<![а-я])почт|посылк|отправить письмо|пункт выдач|(?<![а-я])пвз(?![а-я])/,queries:["почта","пункт выдачи"],osm:['nwr["amenity"="post_office"]({{bbox}});','nwr["shop"="outpost"]({{bbox}});']},
+  {tag:"laundry",service:true,re:/прачечн|химчистк|постирать|(?<![а-я])стирк/,queries:["прачечная","химчистка"],osm:['nwr["shop"~"laundry|dry_cleaning"]({{bbox}});']},
+  {tag:"tailor",service:true,re:/ателье|подшить|ремонт одежд|ремонт обув|(?<![а-я])сапожник/,queries:["ателье","ремонт обуви"],osm:['nwr["shop"~"tailor|shoe_repair"]({{bbox}});']},
+  {tag:"keys",service:true,re:/(?<![а-я])ключ[иа](?![а-я])|сделать ключ|замок помен/,queries:["изготовление ключей"],osm:['nwr["shop"="locksmith"]({{bbox}});']},
+  {tag:"phonerepair",service:true,re:/ремонт телефон|разбил экран|замена экран|сервисный центр/,queries:["ремонт телефонов"],osm:['nwr["shop"="mobile_phone"]["repair"~"."]({{bbox}});','nwr["name"~"ремонт телефон",i]({{bbox}});']},
+  {tag:"photo",service:true,re:/фотостуди|фотограф|фото на документ/,queries:["фотостудия","фото на документы"],osm:['nwr["shop"="photo"]({{bbox}});','nwr["craft"="photographer"]({{bbox}});']},
   {tag:"courses",re:/курсы|обучен|языков школ|репетитор|мастер.?класс по/,queries:["курсы","языковая школа"],osm:['nwr["amenity"="language_school"]({{bbox}});','nwr["office"="educational_institution"]({{bbox}});']},
-  {tag:"legal",re:/нотариус|юрист|адвокат|мфц(?![а-я])|госуслуг/,queries:["нотариус","юрист"],osm:['nwr["office"~"lawyer|notary|government"]({{bbox}});']},
+  {tag:"legal",service:true,re:/нотариус|юрист|адвокат|мфц(?![а-я])|госуслуг/,queries:["нотариус","юрист"],osm:['nwr["office"~"lawyer|notary|government"]({{bbox}});']},
 
   // ---- Машина и дорога ----
-  {tag:"carwash",re:/автомойк|помыть машин|(?<![а-я])мойк/,queries:["автомойка"],osm:['nwr["amenity"="car_wash"]({{bbox}});']},
-  {tag:"carrepair",re:/автосервис|шиномонтаж|(?<![а-я])сто(?![а-я])|ремонт машин|развал.схожден/,queries:["автосервис","шиномонтаж"],osm:['nwr["shop"~"car_repair|tyres"]({{bbox}});']},
-  {tag:"fuel",re:/заправк|бензин|азс(?![а-я])|зарядк для электро/,queries:["заправка"],osm:['nwr["amenity"="fuel"]({{bbox}});','nwr["amenity"="charging_station"]({{bbox}});']},
-  {tag:"parking",re:/парковк|где оставить машин|припарков/,queries:["парковка"],osm:['nwr["amenity"="parking"]({{bbox}});']},
+  {tag:"carwash",service:true,re:/автомойк|помыть машин|(?<![а-я])мойк/,queries:["автомойка"],osm:['nwr["amenity"="car_wash"]({{bbox}});']},
+  {tag:"carrepair",service:true,re:/автосервис|шиномонтаж|(?<![а-я])сто(?![а-я])|ремонт машин|развал.схожден/,queries:["автосервис","шиномонтаж"],osm:['nwr["shop"~"car_repair|tyres"]({{bbox}});']},
+  {tag:"fuel",service:true,re:/заправк|бензин|азс(?![а-я])|зарядк для электро/,queries:["заправка"],osm:['nwr["amenity"="fuel"]({{bbox}});','nwr["amenity"="charging_station"]({{bbox}});']},
+  {tag:"parking",service:true,re:/парковк|где оставить машин|припарков/,queries:["парковка"],osm:['nwr["amenity"="parking"]({{bbox}});']},
 
   // ---- Покупки и ночлег ----
-  {tag:"mall",re:/торгов центр|(?<![а-я])тц(?![а-я])|шопинг|купить одежд|за покупк/,queries:["торговый центр"],osm:['nwr["shop"~"mall|department_store"]({{bbox}});']},
-  {tag:"flowers",re:/цвет[ыов](?![а-я])|букет|флорист/,queries:["цветы","доставка букетов"],osm:['nwr["shop"="florist"]({{bbox}});']},
-  {tag:"gifts",re:/подар|сувенир/,queries:["подарки","сувениры"],osm:['nwr["shop"~"gift|souvenir"]({{bbox}});']},
-  {tag:"books",re:/книжн|(?<![а-я])книг/,queries:["книжный магазин"],osm:['nwr["shop"="books"]({{bbox}});']},
-  {tag:"hotel",re:/отел[ья]|гостиниц|хостел|переночевать|апартамент/,queries:["отель","хостел"],osm:['nwr["tourism"~"hotel|hostel|guest_house"]({{bbox}});']},
+  {tag:"mall",service:true,re:/торгов центр|(?<![а-я])тц(?![а-я])|шопинг|купить одежд|за покупк/,queries:["торговый центр"],osm:['nwr["shop"~"mall|department_store"]({{bbox}});']},
+  {tag:"flowers",service:true,re:/цвет[ыов](?![а-я])|букет|флорист/,queries:["цветы","доставка букетов"],osm:['nwr["shop"="florist"]({{bbox}});']},
+  {tag:"gifts",service:true,re:/подар|сувенир/,queries:["подарки","сувениры"],osm:['nwr["shop"~"gift|souvenir"]({{bbox}});']},
+  {tag:"books",service:true,re:/книжн|(?<![а-я])книг/,queries:["книжный магазин"],osm:['nwr["shop"="books"]({{bbox}});']},
+  {tag:"hotel",service:true,re:/отел[ья]|гостиниц|хостел|переночевать|апартамент/,queries:["отель","хостел"],osm:['nwr["tourism"~"hotel|hostel|guest_house"]({{bbox}});']},
 
   // ---- Поводы (не место, а сценарий) ----
   {tag:"date",re:/свидан|романт|вдвоем|вдвоём/,queries:["ресторан","винный бар","коктейльный бар"]},
@@ -106,11 +106,15 @@ const CATEGORIES=[
 // Регэкспы для определения тегов у найденного места по его названию и описанию.
 const CATEGORY_MATCHERS=CATEGORIES.map(c=>[c.tag,c.re]);
 
+// Услуги подтверждает только категория из самого источника, а не текст названия:
+// «Аптекарский огород» — это парк, сколько бы раз в имени ни встретилось «аптек».
+const SERVICE_TAGS=new Set(CATEGORIES.filter(c=>c.service).map(c=>c.tag));
+
 function categoryTags(text){
   const out=[];
   for(const c of CATEGORIES)if(c.re.test(text))out.push(c.tag,...(c.extraTags||[]));
   return [...new Set(out)];
 }
 
-root.FreeCategories={CATEGORIES,CATEGORY_MATCHERS,categoryTags};
+root.FreeCategories={CATEGORIES,CATEGORY_MATCHERS,SERVICE_TAGS,categoryTags};
 })(typeof globalThis!=="undefined"?globalThis:this);
