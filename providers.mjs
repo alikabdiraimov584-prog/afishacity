@@ -328,7 +328,12 @@ function normalize2gisItem(x,plan){
   const site=(contacts.find(c=>text(c.type).toLowerCase()==="website")||{}).url||null;
   return {
     id:`2gis:place:${x.id}`,provider:"2GIS",live:true,kind:"venue",name:x.name||"Заведение",organizer:x.name||"",
-    cat:rubrics[0]||"Заведение",tags:inferTags(hay),cat_tags:rubricTags(rubrics),area:x.address_name||x.full_address_name||"Москва",metro:"",
+    cat:rubrics[0]||"Заведение",tags:inferTags(hay),cat_tags:rubricTags(rubrics),
+    // 2GIS ставит основную рубрику первой. Без этого различия ресторан с
+    // баром выглядел ровно как бар: на «бар» выдача была из дорогих
+    // ресторанов, у которых бар — сопутствующая рубрика.
+    primary_tags:rubricTags(rubrics.slice(0,1)),
+    area:x.address_name||x.full_address_name||"Москва",metro:"",
     date_start:null,date_end:null,times:[],hours_label:schedule,price_label:null,price_min:null,free:false,
     availability:null,rating,rating_count,closed,aggregator_image:photo,aggregator_name:photo?"2GIS":null,
     source:`https://2gis.ru/moscow/firm/${encodeURIComponent(x.id)}`,

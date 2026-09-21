@@ -323,3 +323,33 @@ test("параметры запроса к 2GIS не выходят за пре�
     assert.ok(seen.length>=3);
   }finally{globalThis.fetch=real}
 });
+
+test("ресторан с баром не выдаётся за бар", async () => {
+  const {search2GIS,buildSearchPlan}=await import("../providers.mjs");
+  const {rankLive}=await import("../live_ranker.mjs");
+  // Живой прогон на «бар» дал сплошные дорогие рестораны: 2GIS ставит
+  // основную рубрику первой, а все рубрики сваливались в одну кучу — ресторан
+  // с баром выглядел ровно как бар и выигрывал за счёт рейтинга.
+  const mk=(id,name,rubrics,rating)=>({id,name,address_name:"Москва",
+    rubrics:rubrics.map(n=>({name:n})),point:{lat:55.75,lon:37.62},
+    schedule:{comment:"Пн-Вс 12:00-00:00"},reviews:{general_rating:rating,general_review_count:500}});
+  const real=globalThis.fetch;
+  globalThis.fetch=async()=>({ok:true,status:200,json:async()=>({meta:{code:200},result:{items:[
+    mk(1,"White Rabbit",["Рестораны","Бары"],4.9),
+    mk(2,"Ровесник",["Бары","Кафе"],4.5),
+    mk(3,"The Black Swan Pub",["Пабы","Рестораны"],4.9)]}})});
+  try{
+    const plan=buildSearchPlan({query:"бар"});
+    const out=await search2GIS(plan,"k");
+    assert.deepEqual(out.items.map(x=>x.primary_tags),
+      [["food"],["bar","nightlife"],["bar","nightlife"]],"основная рубрика различается");
+    const ranked=rankLive(out.items,{query:"бар"},plan);
+    const names=ranked.map(x=>x.name);
+    assert.ok(names.indexOf("White Rabbit")>names.indexOf("Ровесник"),
+      `ресторан с баром должен быть ниже настоящего бара: ${names}`);
+    const wr=ranked.find(x=>x.name==="White Rabbit");
+    assert.ok(wr._reasons.includes("по сопутствующей рубрике"),"человеку видно, почему место ниже");
+    // Но из выдачи не исчезает: если баров рядом нет, ресторан с баром лучше пустоты.
+    assert.ok(names.includes("White Rabbit"));
+  }finally{globalThis.fetch=real}
+});

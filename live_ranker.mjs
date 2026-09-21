@@ -273,6 +273,14 @@ export function rankLive(items,args={},plan={}){
     if(x.live)s+=8;if(x.provider==="2GIS")s+=5;
     const quality=qualityScore(x);
     s+=quality;
+    // Место подходит по сопутствующей рубрике, а не по основной: ресторан,
+    // где есть бар, — это ресторан. Ранг ниже настоящего бара, но в выдаче
+    // остаётся: если баров рядом нет, ресторан с баром лучше пустоты.
+    if(strong.size&&Array.isArray(x.primary_tags)&&x.primary_tags.length){
+      const primary=new Set(x.primary_tags);
+      const asMain=[...strong].some(t=>primary.has(t));
+      if(!asMain&&strongHit>0){s-=26;reasons.push("по сопутствующей рубрике")}
+    }
     const chain=chainPenalty(x,tags,ctags);
     if(chain===null)continue;
     s+=chain;
