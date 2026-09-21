@@ -468,6 +468,11 @@ export function osmFilters(plan){
   const q=norm(plan.raw||plan.safeQuery||"");
   const filters=[];
   for(const r of OSM_RULES) if(r.re.test(q)) filters.push(...r.filters);
+  // Фильтры строились только по тексту запроса. Вечерний план по умолчанию
+  // («куда сходить вечером») задаёт теги, но ни одному регэкспу не отвечает —
+  // и живой поиск не шёл вовсе: ноль мест молча, без единой ошибки.
+  if(!filters.length&&(plan.tags||[]).length)
+    for(const r of OSM_RULES) if(plan.tags.includes(r.tag)) filters.push(...r.filters);
   // Категория не распознана, но место всё равно ищут: пробуем найти по названию (бренд, конкретное заведение).
   if(!filters.length&&plan.coreQuery&&plan.coreQuery.length>=4){
     const safe=plan.coreQuery.replace(/[^а-яa-z0-9 ]/gi,"").trim().split(" ").filter(w=>w.length>=4).slice(0,2).join("|");

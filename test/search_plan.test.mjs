@@ -99,3 +99,12 @@ test("точка человека сужает поиск только по пр
   assert.equal(plan("планетарий",{user_location:kuz}).near,false);
   assert.equal(plan("бар рядом",{user_location:kuz}).near,true);
 });
+
+test("вечерний план по умолчанию даёт фильтры живого поиска", async ()=>{
+  const {osmFilters}=await import("../providers.mjs");
+  // Фильтры строились только по тексту запроса: общий план задавал теги, но
+  // ни одному регэкспу не отвечал — живой поиск не шёл, ноль мест молча.
+  const p=plan("куда сходить вечером");
+  assert.equal(p.generic,true);
+  assert.ok(osmFilters(p).length>0,"по тегам плана фильтры должны находиться");
+});
