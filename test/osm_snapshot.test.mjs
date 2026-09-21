@@ -241,3 +241,39 @@ test("состояние снимка объясняет, чего не хват
     assert.ok("last_build" in st,"виден отчёт последней сборки, если он есть");
   }
 });
+
+test("сборка продолжается с недостроенного снимка, а не начинается заново", async () => {
+  const {createSnapshot}=await import("../osm_snapshot.mjs");
+  const {mkdtempSync,rmSync,existsSync}=await import("node:fs");
+  const {tmpdir}=await import("node:os");const {join}=await import("node:path");
+  const dir=mkdtempSync(join(tmpdir(),"free-snap-"));
+  const file=join(dir,"snap.db");
+  const el=(id,name,tags)=>({type:"node",id,lat:55.75,lon:37.62,tags:{name,...tags}});
+  try{
+    // Первый заход: собрали две категории и упали на третьей.
+    const a=createSnapshot(file,{resume:true});
+    assert.equal(a.reused,false,"начинаем с чистого листа");
+    a.put([el(1,"Бар",{amenity:"bar"})],"bar");a.markDone("bar");
+    a.put([el(2,"Кальянная",{amenity:"hookah_lounge"})],"hookah");a.markDone("hookah");
+    a.close();                                   // упали: недострой сохраняем
+    assert.ok(existsSync(file+".building"),"недострой остаётся на диске");
+    assert.ok(!existsSync(file),"готового снимка ещё нет");
+
+    // Второй заход: продолжаем, а не повторяем двадцать минут работы.
+    const b=createSnapshot(file,{resume:true});
+    assert.equal(b.reused,true);
+    assert.deepEqual([...b.done()].sort(),["bar","hookah"]);
+    assert.equal(b.places(),2,"собранные места на месте");
+    b.put([el(3,"Кафе",{amenity:"cafe"})],"food");b.markDone("food");
+    const res=b.finish({source:"overpass"});
+    assert.equal(res.places,3);
+    assert.ok(existsSync(file));
+    assert.ok(!existsSync(file+".building"),"после готовности недостроя не остаётся");
+
+    // Без resume — начинаем с нуля, как и раньше.
+    const c=createSnapshot(file);
+    assert.equal(c.reused,false);
+    assert.equal(c.places(),0);
+    c.abort();
+  }finally{rmSync(dir,{recursive:true,force:true})}
+});

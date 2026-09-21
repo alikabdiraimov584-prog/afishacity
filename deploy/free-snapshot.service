@@ -12,10 +12,12 @@ WorkingDirectory=/opt/afishacity
 ExecStart=/usr/bin/node --no-warnings=ExperimentalWarning scripts/build_osm_snapshot.mjs
 # Сборка идёт десятки минут и не должна висеть вечно.
 TimeoutStartSec=3600
-# Упало (зеркала Overpass легли, сеть моргнула) — повторяем через полчаса,
-# а не ждём следующей ночи: без снимка поиск идёт вживую и куда медленнее.
+# Упало (зеркала Overpass легли, сеть моргнула) — повторяем: каждый заход
+# теперь продолжает недостроенный снимок, а не начинает заново, поэтому
+# работа накапливается. Пять минут паузы — чтобы дать сети отдышаться.
 Restart=on-failure
-RestartSec=1800
+RestartSec=300
+StartLimitIntervalSec=0
 Nice=10
 IOSchedulingClass=idle
 NoNewPrivileges=true

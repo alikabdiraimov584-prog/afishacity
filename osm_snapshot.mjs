@@ -70,7 +70,13 @@ export function splitBox(b){
  * Категория, упёршаяся в потолок ответа, означает, что в рамке её больше, чем
  * нам отдали: делим рамку, иначе половина города теряется молча.
  */
-export async function collectCategory(cat,box,{fetchCell,cap=3000,maxDepth=2,pause=async()=>{},depth=0}={}){
+/* onBatch — отдать клетку сразу, как только она пришла.
+   Большая категория делится на клетки, и каждую Overpass считает под минуту.
+   Раньше результат возвращался одним куском в самом конце: обрыв на
+   предпоследней клетке уничтожал всё, что успели собрать за двадцать минут.
+   Теперь клетка уходит в базу сразу, и незаконченная категория оставляет
+   после себя работу, а не пустоту. */
+export async function collectCategory(cat,box,{fetchCell,cap=3000,maxDepth=2,pause=async()=>{},depth=0,onBatch=null}={}){
   let els;
   try{els=await fetchCell(cat,box)}
   catch(e){
@@ -78,11 +84,14 @@ export async function collectCategory(cat,box,{fetchCell,cap=3000,maxDepth=2,pau
     await pause();
     els=await fetchCell(cat,box);                        // одна повторная попытка
   }
-  if(els.length<cap||depth>=maxDepth)return els;
+  if(els.length<cap||depth>=maxDepth){
+    if(onBatch&&els.length)await onBatch(els);
+    return els;
+  }
   const out=[];
   for(const q of splitBox(box)){
     await pause();
-    out.push(...await collectCategory(cat,q,{fetchCell,cap,maxDepth,pause,depth:depth+1}));
+    out.push(...await collectCategory(cat,q,{fetchCell,cap,maxDepth,pause,depth:depth+1,onBatch}));
   }
   return out;
 }
@@ -100,18 +109,44 @@ function ensureDir(file){try{mkdirSync(dirname(file),{recursive:true})}catch{}}
 
 /** Открывает снимок для записи. Пишем во временный файл и подменяем по готовности,
  *  чтобы работающий сервер ни секунды не видел наполовину собранную базу. */
-export function createSnapshot(file){
+/* resume — продолжить недостроенную базу, а не начинать заново.
+   Сборка города идёт десятки минут, и одна большая категория вроде «еды»
+   может занять двадцать. Раньше каждый перезапуск стирал недострой: после
+   пяти попыток подряд снимка по-прежнему не было, потому что работа каждый
+   раз начиналась с нуля. Теперь готовые категории помечаются в самой базе,
+   и следующий запуск берётся за оставшиеся. */
+export function createSnapshot(file,{resume=false}={}){
   ensureDir(file);
   const tmp=file+".building";
-  for(const f of [tmp,tmp+"-wal",tmp+"-shm"])try{rmSync(f,{force:true})}catch{}
+  let reused=false;
+  if(resume&&existsSync(tmp)){
+    try{
+      const probe=new DatabaseSync(tmp);
+      probe.prepare("select count(*) n from place").get();   // база цела?
+      probe.close();reused=true;
+    }catch{reused=false}
+  }
+  if(!reused)for(const f of [tmp,tmp+"-wal",tmp+"-shm"])try{rmSync(f,{force:true})}catch{}
   const db=new DatabaseSync(tmp);
   db.exec(SCHEMA);
   const ins=db.prepare("insert or replace into place(pid,otype,oid,name,name_norm,lat,lon,tags_json,updated_at) values(?,?,?,?,?,?,?,?,?)");
   const insTag=db.prepare("insert or replace into ptag(tag,pid,lat,lon) values(?,?,?,?)");
   const insFts=db.prepare("insert into place_fts(name_norm,pid) values(?,?)");
   const setMeta=db.prepare("insert or replace into meta(k,v) values(?,?)");
-  let stored=0;
+  let stored=Number(db.prepare("select count(*) n from place").get().n)||0;
+  const doneKey="done_tags";
+  const readDone=()=>{
+    try{const r=db.prepare("select v from meta where k=?").get(doneKey);
+      return new Set(String(r&&r.v||"").split(",").filter(Boolean))}catch{return new Set()}
+  };
   return {
+    reused,
+    /** Категории, уже собранные в этой недостроенной базе. */
+    done(){return readDone()},
+    markDone(tag){
+      const d=readDone();d.add(String(tag));
+      setMeta.run(doneKey,[...d].join(","));
+    },
     /** elements — сырые элементы Overpass. tag — категория, под которую их запросили. */
     put(elements,tag=null,now=Date.now()){
       db.exec("begin");
@@ -133,7 +168,9 @@ export function createSnapshot(file){
       }catch(e){try{db.exec("rollback")}catch{};throw e}
       return stored;
     },
+    places(){return Number(db.prepare("select count(*) n from place").get().n)||0},
     finish({source="overpass",now=Date.now()}={}){
+      setMeta.run(doneKey,"");                              // собран целиком
       setMeta.run("built_at",String(now));
       setMeta.run("source",String(source));
       setMeta.run("places",String(db.prepare("select count(*) n from place").get().n));
@@ -143,7 +180,10 @@ export function createSnapshot(file){
       renameSync(tmp,file);
       return {file,places:stored};
     },
-    abort(){try{db.close()}catch{};for(const f of [tmp,tmp+"-wal",tmp+"-shm"])try{rmSync(f,{force:true})}catch{}}
+    abort(){try{db.close()}catch{};for(const f of [tmp,tmp+"-wal",tmp+"-shm"])try{rmSync(f,{force:true})}catch{}},
+    /* Закрыть, сохранив недострой: собранные категории помечены, и следующий
+       запуск продолжит с них. Отличается от abort() именно этим. */
+    close(){try{db.exec("pragma wal_checkpoint(truncate)")}catch{};try{db.close()}catch{}}
   };
 }
 
