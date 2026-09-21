@@ -192,7 +192,62 @@ async function pageMeta(raw){
 }
 // Прокси картинок: многие сайты блокируют хотлинки и отдают http, а страница у нас https.
 const IMG_MAX=3*1024*1024;
+/* Кеш байтов картинок на диске.
+   Прокси /api/img ходил за кадром заново на каждый показ карточки: карточка
+   открывалась медленно, а сайты заведений видели с нашего адреса очередь
+   одинаковых запросов и начинали отвечать заглушками. Теперь один раз в
+   неделю на картинку; объём ограничен, старое вытесняется по времени. */
+const IMG_DIR=join(DATA_DIR,"img");
+const IMG_TTL_MS=7*24*3600e3,IMG_MAX_FILES=4000;
+let imgWrites=0;
+function imgKey(url){return createHmac("sha1","img").update(String(url)).digest("hex")}
+export function readImgCache(url,{dir=IMG_DIR,now=Date.now}={}){
+  const k=imgKey(url);
+  try{
+    const meta=JSON.parse(readFileSyncFs(join(dir,k+".json"),"utf8"));
+    if(!meta||!meta.type||now()-(meta.at||0)>IMG_TTL_MS)return null;
+    const body=readFileSyncFs(join(dir,k+".bin"));
+    return {type:meta.type,body};
+  }catch{return null}
+}
+export function writeImgCache(url,type,body,{dir=IMG_DIR,now=Date.now}={}){
+  const k=imgKey(url);
+  try{
+    mkdirSync(dir,{recursive:true});
+    writeFileSyncFs(join(dir,k+".bin"),body);
+    writeFileSyncFs(join(dir,k+".json"),JSON.stringify({type,at:now(),len:body.length,url:String(url).slice(0,300)}));
+  }catch{return false}
+  // Прибираемся не на каждой записи: перечислить каталог дороже, чем записать файл.
+  if(++imgWrites%200===0)pruneImgCache({dir,now});
+  return true;
+}
+export function pruneImgCache({dir=IMG_DIR,now=Date.now,max=IMG_MAX_FILES}={}){
+  let metas=[];
+  try{metas=readdirSync(dir).filter(f=>f.endsWith(".json"))}catch{return 0}
+  const entries=[];
+  for(const f of metas){
+    let at=0;try{at=Number(JSON.parse(readFileSyncFs(join(dir,f),"utf8")).at)||0}catch{}
+    entries.push({f,at});
+  }
+  const stale=entries.filter(e=>now()-e.at>IMG_TTL_MS);
+  const overflow=entries.length-stale.length>max?entries.filter(e=>!stale.includes(e)).sort((a,b)=>a.at-b.at).slice(0,entries.length-stale.length-max):[];
+  let n=0;
+  for(const e of [...stale,...overflow]){
+    const base=e.f.slice(0,-5);
+    try{unlinkSync(join(dir,e.f))}catch{}
+    try{unlinkSync(join(dir,base+".bin"))}catch{}
+    n++;
+  }
+  return n;
+}
+
 async function proxyImage(res,raw){
+  const hit=process.env.NODE_ENV==="test"?null:readImgCache(raw);
+  if(hit){
+    res.writeHead(200,{"Content-Type":hit.type,"Cache-Control":"public, max-age=86400","X-Img-Cache":"hit",
+      "Content-Length":String(hit.body.length),"X-Content-Type-Options":"nosniff",...corsHeaders(res.req)});
+    return res.end(hit.body);
+  }
   const r=await guardedFetch(raw,{maxBytes:IMG_MAX,timeoutMs:6000,
     accept:t=>/^image\//.test(t),headers:{"Accept":"image/avif,image/webp,image/*,*/*;q=0.5"}});
   if(!r.ok){
@@ -202,7 +257,8 @@ async function proxyImage(res,raw){
     return send(res,502,"image unavailable");
   }
   if(r.truncated)return send(res,413,"too large");
-  res.writeHead(200,{"Content-Type":r.type,"Cache-Control":"public, max-age=86400",
+  if(process.env.NODE_ENV!=="test")writeImgCache(raw,r.type,r.body);
+  res.writeHead(200,{"Content-Type":r.type,"Cache-Control":"public, max-age=86400","X-Img-Cache":"miss",
     "Content-Length":String(r.body.length),"X-Content-Type-Options":"nosniff",...corsHeaders(res.req)});
   return res.end(r.body);
 }

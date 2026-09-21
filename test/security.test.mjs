@@ -88,3 +88,28 @@ test("поле-объект вместо строки отвергается, а
     assert.equal(parseMoney(bad),null,"нестрока ценой быть не может");
   }
 });
+
+test("кеш картинок: попадание, срок, уборка", async () => {
+  const {readImgCache,writeImgCache,pruneImgCache}=await import("../server.mjs");
+  const {mkdtempSync,rmSync}=await import("node:fs");
+  const {tmpdir}=await import("node:os");
+  const {join}=await import("node:path");
+  const dir=mkdtempSync(join(tmpdir(),"free-img-"));
+  let t=1_000_000;const now=()=>t;
+  try{
+    // Прокси ходил за кадром заново на каждый показ карточки.
+    assert.equal(readImgCache("https://x/a.jpg",{dir,now}),null,"пусто до записи");
+    assert.equal(writeImgCache("https://x/a.jpg","image/jpeg",Buffer.from("JPEG"),{dir,now}),true);
+    const hit=readImgCache("https://x/a.jpg",{dir,now});
+    assert.equal(hit.type,"image/jpeg");assert.equal(hit.body.toString(),"JPEG");
+    assert.equal(readImgCache("https://x/b.jpg",{dir,now}),null,"другой адрес — другой ключ");
+    t+=8*24*3600e3;                                        // неделя прошла
+    assert.equal(readImgCache("https://x/a.jpg",{dir,now}),null,"просроченное не отдаём");
+    assert.equal(pruneImgCache({dir,now}),1,"просроченное убирается с диска");
+    // Переполнение: остаются самые свежие.
+    for(let i=0;i<6;i++){t+=1000;writeImgCache("https://x/"+i,"image/png",Buffer.from("p"),{dir,now})}
+    assert.equal(pruneImgCache({dir,now,max:4}),2);
+    assert.equal(readImgCache("https://x/0",{dir,now}),null,"самое старое вытеснено");
+    assert.ok(readImgCache("https://x/5",{dir,now}),"свежее на месте");
+  }finally{rmSync(dir,{recursive:true,force:true})}
+});

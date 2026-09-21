@@ -157,3 +157,27 @@ test("сайт заведения и теги остаются выше живо
   assert.equal(out.origin,"venue_site");
   assert.equal(asked,false,"когда фото уже есть, в сеть за Викискладом не ходим");
 });
+
+test("2GIS: фото и рейтинг берутся из ответа, заглушек нет", async () => {
+  const {search2GIS}=await import("../providers.mjs");
+  const item={id:"70000001",name:"Ровесник",address_name:"Лубянский пр., 15",rubrics:[{name:"Бары"}],
+    point:{lat:55.75,lon:37.63},schedule:{},contact_groups:[],
+    external_content:[{type:"photo_album",main_photo_url:"https://i.2gis.com/photo/1.jpg",count:12}],
+    reviews:{general_rating:4.7,general_review_count:312}};
+  let seenUrl=null;
+  const realFetch=globalThis.fetch;
+  globalThis.fetch=async(u)=>{seenUrl=String(u);return {ok:true,status:200,json:async()=>({result:{items:[item]}})}};
+  try{
+    const out=await search2GIS({placeQueries:["бар"],area:null,userLocation:{lat:55.69,lon:37.79},near:true},"key");
+    assert.equal(out.items.length,1);
+    const x=out.items[0];
+    assert.equal(x.aggregator_image,"https://i.2gis.com/photo/1.jpg");
+    assert.equal(x.aggregator_name,"2GIS");
+    assert.equal(x.rating,4.7);assert.equal(x.rating_count,312);
+    assert.equal(x.hours_label,null,"«часы работы в 2GIS» — не часы");
+    assert.equal(x.price_label,null);
+    assert.match(seenUrl,/external_content/);assert.match(seenUrl,/reviews/);
+    assert.match(seenUrl,/point=37\.79%2C55\.69|point=37\.79,55\.69/,"ищем вокруг человека");
+    assert.match(seenUrl,/radius=4000/);
+  }finally{globalThis.fetch=realFetch}
+});

@@ -168,3 +168,13 @@ test("настоящий бар сети штрафа не получает", ()
   assert.equal(out.length,1);
   assert.ok(out[0]._score>50);
 });
+
+test("рейтинг 2GIS с отзывами двигает выдачу, без отзывов — нет", ()=>{
+  const good=bare("g","Хороший",{provider:"2GIS",rating:4.8,rating_count:200});
+  const bad=bare("b","Плохой",{provider:"2GIS",rating:3.4,rating_count:200});
+  const few=bare("f","Пятёрка от троих",{provider:"2GIS",rating:5,rating_count:3});
+  const out=run([bad,few,good],{query:"хочу выпить"});
+  assert.equal(out[0].id,"g");
+  assert.ok(out.find(x=>x.id==="b")._quality<out.find(x=>x.id==="g")._quality);
+  assert.equal(out.find(x=>x.id==="f")._quality,0,"три отзыва — не сигнал");
+});

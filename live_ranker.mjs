@@ -174,7 +174,14 @@ export function qualityScore(x){
   if(x.has_description||(x.desc&&x.desc.length>40))q+=3;
   if(x.image_raw||x.wikimedia_commons)q+=3;          // есть настоящее фото
   if(x.booking_kind==="telegram"||x.booking_kind==="whatsapp"||x.booking_kind==="site")q+=3;
-  return q;                                          // до 37
+  // Рейтинг с отзывами — единственный настоящий голос людей среди всех
+  // сигналов. Считается только при заметном числе отзывов: пятёрка от трёх
+  // человек ничего не значит. Низкий рейтинг — минус, а не ноль.
+  if(Number.isFinite(x.rating)&&x.rating>0&&(x.rating_count||0)>=20){
+    const weight=Math.min(1,(x.rating_count||0)/150);
+    q+=Math.round((x.rating-4)*14*weight);            // 4.7 при 150+ отзывах ≈ +10, 3.5 ≈ −7
+  }
+  return q;
 }
 
 // Сетевой общепит на просьбу «выпить»/«вечером» — не ответ. Эти места честно

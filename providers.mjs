@@ -307,13 +307,21 @@ function bookingFromContacts(contacts=[]){
 function normalize2gisItem(x,plan){
   const contacts=contactList2gis(x),book=bookingFromContacts(contacts);
   const rubrics=(x.rubrics||[]).map(r=>r.name||"");const text=[x.name,x.address_name,rubrics.join(" ")].join(" ");
-  let schedule="часы работы в 2GIS";
-  if(x.schedule?.comment)schedule=x.schedule.comment;
+  // Те же заглушки, что были у OSM: «часы работы в 2GIS», «цены в карточке
+  // заведения» уходили модели как факты. Чего нет — того нет.
+  const schedule=x.schedule?.comment||null;
+  // Фото и рейтинг 2GIS отдаёт, но их никто не просил: поля external_content
+  // и reviews не запрашивались. Рейтинг — единственный настоящий сигнал
+  // качества из всех источников; фото подписывается как кадр агрегатора.
+  const photo=(x.external_content||[]).find(c=>c&&c.main_photo_url)?.main_photo_url||null;
+  const rating=Number(x.reviews?.general_rating)||null;
+  const rating_count=Number(x.reviews?.general_review_count)||0;
   return {
     id:`2gis:place:${x.id}`,provider:"2GIS",live:true,kind:"venue",name:x.name||"Заведение",organizer:x.name||"",
     cat:rubrics[0]||"Заведение",tags:inferTags(text),cat_tags:rubricTags(rubrics),area:x.address_name||x.full_address_name||"Москва",metro:"",
-    date_start:null,date_end:null,times:[],hours_label:schedule,price_label:"цены в карточке заведения",price_min:null,free:false,
-    availability:"действующая организация по данным 2GIS",source:`https://2gis.ru/moscow/firm/${encodeURIComponent(x.id)}`,
+    date_start:null,date_end:null,times:[],hours_label:schedule,price_label:null,price_min:null,free:false,
+    availability:null,rating,rating_count,aggregator_image:photo,aggregator_name:photo?"2GIS":null,
+    source:`https://2gis.ru/moscow/firm/${encodeURIComponent(x.id)}`,
     point_source:`https://2gis.ru/moscow/firm/${encodeURIComponent(x.id)}`,official_source:null,
     image_url:null,booking_url:book.url,booking_kind:book.kind,booking_provider:book.provider,
     phone:contacts.find(c=>text(c.type).toLowerCase()==="phone")?.value||null,
@@ -325,7 +333,12 @@ export async function search2GIS(plan,key){
   const out=[],errors=[];
   for(const q of plan.placeQueries.slice(0,4)){
     try{
-      const u=new URL("https://catalog.api.2gis.com/3.0/items");u.searchParams.set("key",key);u.searchParams.set("q",q);u.searchParams.set("type","branch");u.searchParams.set("point",MOSCOW_POINT);u.searchParams.set("radius",wantsCenter(plan.area)?"6000":"50000");u.searchParams.set("page_size","50");u.searchParams.set("locale","ru_RU");u.searchParams.set("fields","items.point,items.rubrics,items.schedule,items.full_address_name,items.contact_groups");
+      const u=new URL("https://catalog.api.2gis.com/3.0/items");u.searchParams.set("key",key);u.searchParams.set("q",q);u.searchParams.set("type","branch");
+      // Ищем вокруг человека, если знаем, где он; иначе — по всему городу.
+      const pt=plan.userLocation?`${plan.userLocation.lon},${plan.userLocation.lat}`:MOSCOW_POINT;
+      u.searchParams.set("point",pt);u.searchParams.set("radius",plan.userLocation&&plan.near?"4000":centerFor(plan)?"6000":"50000");
+      u.searchParams.set("page_size","50");u.searchParams.set("locale","ru_RU");
+      u.searchParams.set("fields","items.point,items.rubrics,items.schedule,items.full_address_name,items.contact_groups,items.external_content,items.reviews");
       const d=await fetchJson(u);for(const x of (d.result?.items||[]))out.push(normalize2gisItem(x,plan));
     }catch(e){errors.push(`2GIS: ${e.message}`)}
   }
