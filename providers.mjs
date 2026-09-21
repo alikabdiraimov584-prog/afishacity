@@ -306,7 +306,7 @@ function bookingFromContacts(contacts=[]){
 
 function normalize2gisItem(x,plan){
   const contacts=contactList2gis(x),book=bookingFromContacts(contacts);
-  const rubrics=(x.rubrics||[]).map(r=>r.name||"");const text=[x.name,x.address_name,rubrics.join(" ")].join(" ");
+  const rubrics=(x.rubrics||[]).map(r=>r.name||"");const hay=[x.name,x.address_name,rubrics.join(" ")].join(" ");
   // Те же заглушки, что были у OSM: «часы работы в 2GIS», «цены в карточке
   // заведения» уходили модели как факты. Чего нет — того нет.
   const schedule=x.schedule?.comment||null;
@@ -318,14 +318,14 @@ function normalize2gisItem(x,plan){
   const rating_count=Number(x.reviews?.general_review_count)||0;
   return {
     id:`2gis:place:${x.id}`,provider:"2GIS",live:true,kind:"venue",name:x.name||"Заведение",organizer:x.name||"",
-    cat:rubrics[0]||"Заведение",tags:inferTags(text),cat_tags:rubricTags(rubrics),area:x.address_name||x.full_address_name||"Москва",metro:"",
+    cat:rubrics[0]||"Заведение",tags:inferTags(hay),cat_tags:rubricTags(rubrics),area:x.address_name||x.full_address_name||"Москва",metro:"",
     date_start:null,date_end:null,times:[],hours_label:schedule,price_label:null,price_min:null,free:false,
     availability:null,rating,rating_count,aggregator_image:photo,aggregator_name:photo?"2GIS":null,
     source:`https://2gis.ru/moscow/firm/${encodeURIComponent(x.id)}`,
     point_source:`https://2gis.ru/moscow/firm/${encodeURIComponent(x.id)}`,official_source:null,
     image_url:null,booking_url:book.url,booking_kind:book.kind,booking_provider:book.provider,
     phone:contacts.find(c=>text(c.type).toLowerCase()==="phone")?.value||null,
-    desc:rubrics.length?rubrics.join(" · "):"Карточка действующей организации из 2GIS",keywords:norm(text),coords:x.point||null
+    desc:rubrics.length?rubrics.join(" · "):"Карточка действующей организации из 2GIS",keywords:norm(hay),coords:x.point||null
   };
 }
 export async function search2GIS(plan,key){
@@ -350,7 +350,7 @@ const MOSCOW_BBOX = "55.49,37.30,55.96,37.99";
 const OVERPASS_TIMEOUT_S=12;
 // Версия формата карточки. Поднимайте её, когда меняется то, что кладут
 // normalize*-функции: это разом обесценивает файловый кеш.
-const ITEM_SCHEMA=2;
+const ITEM_SCHEMA=3;
 // Центр — примерно кольцо радиусом 5 км вокруг Кремля: Садовое и ближние районы.
 const CENTER_BBOX = "55.71,37.55,55.80,37.69";
 export function wantsCenter(area){return /центр/.test(text(area).toLowerCase())}
@@ -409,10 +409,13 @@ function normalizeOsmItem(x,plan){
   const reservation=safeLink(t.reservation);
   const telegram=messagingUrl(t["contact:telegram"]||t.telegram,"telegram");
   const whatsapp=messagingUrl(t["contact:whatsapp"]||t.whatsapp,"whatsapp");
+  // Локальная переменная раньше звалась text и затеняла модульную функцию
+  // text(): вызов text(phone) строкой выше попадал в TDZ, и любое место с
+  // телефоном роняло весь ответ OpenStreetMap — ноль мест, «нет данных».
   const directBook=telegram||whatsapp||reservation||(phone?`tel:${text(phone).replace(/[^\d+]/g,"")}`:null);
   const name=t.name||t["name:ru"]||t.brand||"Заведение";
   const amenity=t.amenity||t.leisure||t.sport||"place";
-  const text=[name,t.brand,t.cuisine,amenity,t.description,t["description:ru"],t["smoking"],t["opening_hours"]].filter(Boolean).join(" ");
+  const hay=[name,t.brand,t.cuisine,amenity,t.description,t["description:ru"],t["smoking"],t["opening_hours"]].filter(Boolean).join(" ");
   const site=safeLink(t.website)||safeLink(t["contact:website"])||osmSource(x);
   const cats={
     hookah_lounge:"Кальянная",bar:"Бар",pub:"Паб",biergarten:"Бар",nightclub:"Ночной клуб",
@@ -422,8 +425,8 @@ function normalizeOsmItem(x,plan){
     id:`osm:${x.type}:${x.id}`,provider:"OpenStreetMap",live:true,kind:"venue",name,organizer:t.brand||name,
     // Раньше всё, кроме десятка знакомых значений, называлось «Заведение».
     // Теперь название берётся из справочника по структурному тегу места.
-    cat:cats[amenity]||(/караоке|karaoke/i.test(text)?"Караоке":placeTitle(t))||"Заведение",
-    tags:inferTags(text),cat_tags:structuralTags(t),area:osmAddress(t),metro:"",
+    cat:cats[amenity]||(/караоке|karaoke/i.test(hay)?"Караоке":placeTitle(t))||"Заведение",
+    tags:inferTags(hay),cat_tags:structuralTags(t),area:osmAddress(t),metro:"",
     // Эти теги приходят в том же ответе и раньше терялись: из них берётся
     // фотография места без обращения к агрегатору.
     wikidata:t.wikidata||null,brand_wikidata:t["brand:wikidata"]||null,
@@ -443,7 +446,7 @@ function normalizeOsmItem(x,plan){
     booking_url:directBook||((site!==osmSource(x))?site:null),booking_kind:telegram?"telegram":whatsapp?"whatsapp":reservation?"site":phone?"phone":(site!==osmSource(x)?"site":null),
     booking_provider:telegram?"Telegram":whatsapp?"WhatsApp":phone?"телефон":(site!==osmSource(x)?"официальный сайт":null),phone,
     desc:clampText(t.description||t["description:ru"]||[t.cuisine,t["opening_hours"]].filter(Boolean).join(" · ")),
-    keywords:norm(text),coords:{lat:x.lat||x.center?.lat||null,lon:x.lon||x.center?.lon||null}
+    keywords:norm(hay),coords:{lat:x.lat||x.center?.lat||null,lon:x.lon||x.center?.lon||null}
   };
 }
 export function osmFilters(plan){

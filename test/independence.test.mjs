@@ -181,3 +181,20 @@ test("2GIS: фото и рейтинг берутся из ответа, заг�
     assert.match(seenUrl,/radius=4000/);
   }finally{globalThis.fetch=realFetch}
 });
+
+test("место с телефоном не роняет ответ источника", async () => {
+  const {searchOSM,search2GIS}=await import("../providers.mjs");
+  // Локальная переменная text затеняла функцию text(): любое место с
+  // телефоном бросало ReferenceError, и весь ответ OSM превращался в ноль мест.
+  const el={type:"node",id:1,lat:55.75,lon:37.62,tags:{amenity:"bar",name:"Бар",phone:"+7 495 000-00-00",website:"https://bar.ru"}};
+  // Подставной снимок: нормализация та же, а сеть не нужна.
+  const out=await searchOSM({query:"бар",raw:"бар",placeQueries:["бар"],tags:["bar"],placeIntent:true},
+    {snapshot:{search:()=>[el]}});
+  assert.equal(out.items.length,1,out.errors.join());
+  assert.equal(out.items[0].phone,"+7 495 000-00-00");
+  assert.equal(out.items[0].booking_kind,"phone");
+  const realFetch=globalThis.fetch;
+  globalThis.fetch=async()=>({ok:true,status:200,json:async()=>({result:{items:[{id:"1",name:"X",rubrics:[{name:"Бары"}],point:{lat:1,lon:1},contact_groups:[{contacts:[{type:"phone",value:"+7"}]}]}]}})});
+  try{const o=await search2GIS({placeQueries:["бар"]},"k");assert.equal(o.items.length,1,o.errors.join());assert.equal(o.items[0].phone,"+7")}
+  finally{globalThis.fetch=realFetch}
+});
