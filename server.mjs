@@ -940,6 +940,11 @@ const server=http.createServer(async(req,res)=>{
         // заведений — по одному этому полю видно, почему места «так себе».
         dgis:{enabled:Boolean(process.env.DGIS_API_KEY||process.env.TWOGIS_API_KEY),
           gives:["рейтинг и число отзывов","фотографии заведений","признак закрытия","телефон и часы"]},
+        // Партнёрская ссылка на такси: ref считает заказы, пришедшие от нас.
+        // Держим на сервере, чтобы подключение к программе Яндекс Go не
+        // требовало правки клиентского кода.
+        taxi:{ref:process.env.YANDEX_GO_REF||"free",
+          tracking_id:process.env.YANDEX_GO_TRACKING_ID||"1178268795219780156"},
         provider_health:providerHealth(),
         osm_snapshot:snapshotStatus()
       });
