@@ -5,7 +5,7 @@ import {createCache,withBreaker,breakerStatus} from "./cache.mjs";
 import {CATEGORIES,SERVICE_TAGS,categoryTags} from "./categories.mjs";
 import {structuralTags,placeTitle} from "./osm_tags.mjs";
 import {openSnapshot} from "./osm_snapshot.mjs";
-import {statSync} from "node:fs";
+import {statSync,readFileSync} from "node:fs";
 export {structuralTags};
 
 const MOSCOW_POINT = "37.6173,55.7558";
@@ -470,6 +470,7 @@ export function osmFilters(plan){
 // следим за временем изменения и переоткрываем — иначе сервер продолжал бы
 // читать удалённый файл по старому дескриптору до перезапуска.
 const SNAPSHOT_FILE=process.env.OSM_SNAPSHOT||join(fileURLToPath(new URL(".",import.meta.url)),"data","osm_moscow.db");
+export const SNAPSHOT_STATUS_FILE=SNAPSHOT_FILE.replace(/\.db$/,"")+".status.json";
 let snapCache={handle:null,mtime:0,checked:0};
 export function getSnapshot({now=Date.now,file=SNAPSHOT_FILE}={}){
   const t=now();
@@ -482,11 +483,21 @@ export function getSnapshot({now=Date.now,file=SNAPSHOT_FILE}={}){
   snapCache={handle:mtime?openSnapshot(file):null,mtime,checked:t};
   return snapCache.handle;
 }
+// Отчёт последней сборки пишет scripts/build_osm_snapshot.mjs — без него
+// «ready:false» не отличить от «файла нет», «повреждён» и «сборка упала».
+function lastBuild(){
+  try{return JSON.parse(readFileSync(SNAPSHOT_STATUS_FILE,"utf8"))}catch{return null}
+}
 export function snapshotStatus(){
   const h=getSnapshot();
-  if(!h)return {ready:false};
+  const last=lastBuild();
+  if(!h){
+    let reason="missing";
+    try{statSync(SNAPSHOT_FILE);reason="unreadable"}catch{}
+    return {ready:false,reason,file:SNAPSHOT_FILE,last_build:last};
+  }
   return {ready:true,places:h.places,built_at:new Date(h.builtAt).toISOString(),
-    age_hours:Math.round(h.ageMs()/36e5),stale:h.stale()};
+    age_hours:Math.round(h.ageMs()/36e5),stale:h.stale(),file:SNAPSHOT_FILE,last_build:last};
 }
 
 // Мгновенный ответ из локального снимка, если он есть; иначе null.

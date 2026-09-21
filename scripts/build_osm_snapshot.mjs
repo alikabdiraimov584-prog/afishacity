@@ -15,6 +15,16 @@ import {CATEGORIES} from "../categories.mjs";
 import {categoryOsmKeys} from "../osm_tags.mjs";
 import {overpassQuery} from "../providers.mjs";
 import {createSnapshot,collectCategory,snapshotAcceptable,MOSCOW_BBOX} from "../osm_snapshot.mjs";
+import {SNAPSHOT_STATUS_FILE} from "../providers.mjs";
+import {writeFileSync,mkdirSync} from "node:fs";
+import {dirname} from "node:path";
+
+// Отчёт о сборке рядом со снимком. Без него /api/health показывает голое
+// «ready:false», и почему снимка нет — не понять ни с сервера, ни отсюда.
+function report(o){
+  try{mkdirSync(dirname(SNAPSHOT_STATUS_FILE),{recursive:true});
+    writeFileSync(SNAPSHOT_STATUS_FILE,JSON.stringify(o,null,1));}catch{}
+}
 import {join} from "node:path";
 import {fileURLToPath} from "node:url";
 
@@ -76,6 +86,9 @@ for(const cat of targets){
 const verdict=snapshotAcceptable({total,failed:failed.length,targets:targets.length});
 if(!verdict.ok){
   snap.abort();
+  report({ok:false,reason:verdict.reason,places:total,
+    duration_s:Math.round((Date.now()-started)/1000),
+    failed:failed.slice(0,20),targets:targets.length});
   console.error(`\nСнимок НЕ заменён: ${verdict.reason}.`);
   console.error("Прежний снимок остался на месте. Причины:");
   for(const f of failed.slice(0,10))console.error(`  ${f.tag}: ${f.error}`);
@@ -84,5 +97,7 @@ if(!verdict.ok){
 
 const res=snap.finish({source:"overpass"});
 const mins=((Date.now()-started)/60000).toFixed(1);
+report({ok:true,places:res.places,duration_s:Math.round((Date.now()-started)/1000),
+  failed:failed.slice(0,20),targets:targets.length});
 console.log(`\nГотово за ${mins} мин: ${res.places} мест → ${res.file}`);
 if(failed.length)console.log(`Не собрались: ${failed.map(f=>f.tag).join(", ")}`);

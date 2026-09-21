@@ -228,3 +228,16 @@ test("категория места берётся из справочника, 
   assert.equal(placeTitle({shop:"car_repair"}),"Автосервис");
   assert.equal(placeTitle({amenity:"нечто-неизвестное"}),null,"не выдумываем");
 });
+
+test("состояние снимка объясняет, чего не хватает", async () => {
+  const {snapshotStatus}=await import("../providers.mjs");
+  const st=snapshotStatus();
+  // «ready:false» без причины не отличить от «файла нет», «повреждён» и
+  // «сборка упала» — по нему невозможно понять, почему поиск медленный.
+  assert.equal(typeof st.ready,"boolean");
+  if(!st.ready){
+    assert.ok(["missing","unreadable"].includes(st.reason),`причина: ${st.reason}`);
+    assert.ok(st.file,"видно, какой файл искали");
+    assert.ok("last_build" in st,"виден отчёт последней сборки, если он есть");
+  }
+});
