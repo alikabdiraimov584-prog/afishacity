@@ -89,6 +89,40 @@ test("поле-объект вместо строки отвергается, а
   }
 });
 
+test("кеш картинок вытесняет по объёму, а не только по числу файлов", async () => {
+  const {writeImgCache,pruneImgCache,readImgCache}=await import("../server.mjs");
+  const {mkdtempSync,rmSync}=await import("node:fs");
+  const {tmpdir}=await import("node:os");const {join}=await import("node:path");
+  const dir=mkdtempSync(join(tmpdir(),"free-img-b-"));
+  let t=1_000_000;const now=()=>t;
+  try{
+    // Счёт файлов ничего не говорит о занятом месте: четыре тысячи картинок
+    // по три мегабайта — двенадцать гигабайт на диске.
+    const big=Buffer.alloc(50_000,1);
+    for(let i=0;i<10;i++){t+=1000;writeImgCache("https://x/"+i,"image/jpeg",big,{dir,now})}
+    assert.ok(pruneImgCache({dir,now,max:1000,maxBytes:200_000})>0,"по объёму должно вытеснять");
+    let left=0;for(let i=0;i<10;i++)if(readImgCache("https://x/"+i,{dir,now}))left++;
+    assert.ok(left<=4,`осталось ${left} — должно уместиться в предел`);
+    assert.ok(readImgCache("https://x/9",{dir,now}),"свежее остаётся");
+  }finally{rmSync(dir,{recursive:true,force:true})}
+});
+
+test("прокси картинок не отдаёт SVG и запрещает исполнение", async () => {
+  const {readImgCache,writeImgCache}=await import("../server.mjs");
+  const {mkdtempSync,rmSync}=await import("node:fs");
+  const {tmpdir}=await import("node:os");const {join}=await import("node:path");
+  const dir=mkdtempSync(join(tmpdir(),"free-img-s-"));
+  const now=()=>1_000_000;
+  try{
+    // SVG — документ со скриптами: отданный с нашего адреса, он выполнялся бы
+    // в нашем origin. Из кеша такой тип тоже не должен возвращаться.
+    writeImgCache("https://evil/x.svg","image/svg+xml",Buffer.from("<svg onload=alert(1)>"),{dir,now});
+    assert.equal(readImgCache("https://evil/x.svg",{dir,now}),null);
+    writeImgCache("https://ok/x.jpg","image/jpeg",Buffer.from("JPEG"),{dir,now});
+    assert.ok(readImgCache("https://ok/x.jpg",{dir,now}),"растровое отдаётся");
+  }finally{rmSync(dir,{recursive:true,force:true})}
+});
+
 test("кеш картинок: попадание, срок, уборка", async () => {
   const {readImgCache,writeImgCache,pruneImgCache}=await import("../server.mjs");
   const {mkdtempSync,rmSync}=await import("node:fs");

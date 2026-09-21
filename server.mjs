@@ -197,15 +197,23 @@ const IMG_MAX=3*1024*1024;
    открывалась медленно, а сайты заведений видели с нашего адреса очередь
    одинаковых запросов и начинали отвечать заглушками. Теперь один раз в
    неделю на картинку; объём ограничен, старое вытесняется по времени. */
+const RASTER_IMAGE=/^image\/(jpeg|png|webp|gif|avif)\b/;
+// Даже у растровой картинки браузер не должен исполнять ничего: заголовки
+// ниже запрещают это на случай, если тип окажется подделан.
+const IMG_SAFE_HEADERS={"X-Content-Type-Options":"nosniff",
+  "Content-Security-Policy":"default-src 'none'; sandbox","Content-Disposition":"inline"};
 const IMG_DIR=join(DATA_DIR,"img");
 const IMG_TTL_MS=7*24*3600e3,IMG_MAX_FILES=4000;
+// Предел по объёму: счёт файлов ничего не говорит о занятом месте — четыре
+// тысячи картинок по три мегабайта это двенадцать гигабайт на диске.
+const IMG_MAX_BYTES=Number(process.env.IMG_CACHE_MAX_BYTES||400*1024*1024);
 let imgWrites=0;
 function imgKey(url){return createHmac("sha1","img").update(String(url)).digest("hex")}
 export function readImgCache(url,{dir=IMG_DIR,now=Date.now}={}){
   const k=imgKey(url);
   try{
     const meta=JSON.parse(readFileSyncFs(join(dir,k+".json"),"utf8"));
-    if(!meta||!meta.type||now()-(meta.at||0)>IMG_TTL_MS)return null;
+    if(!meta||!meta.type||!RASTER_IMAGE.test(meta.type)||now()-(meta.at||0)>IMG_TTL_MS)return null;
     const body=readFileSyncFs(join(dir,k+".bin"));
     // Прерванная запись оставляет целый .json и усечённый .bin: без сверки
     // длины обрезанная картинка отдавалась бы неделю с кодом 200.
@@ -222,19 +230,29 @@ export function writeImgCache(url,type,body,{dir=IMG_DIR,now=Date.now}={}){
     writeFileSyncFs(join(dir,k+".json"),JSON.stringify({type,at:now(),len:body.length,url:String(url).slice(0,300)}));
   }catch{return false}
   // Прибираемся не на каждой записи: перечислить каталог дороже, чем записать файл.
-  if(++imgWrites%200===0)pruneImgCache({dir,now});
+  if(++imgWrites%100===0)pruneImgCache({dir,now});
   return true;
 }
-export function pruneImgCache({dir=IMG_DIR,now=Date.now,max=IMG_MAX_FILES}={}){
+export function pruneImgCache({dir=IMG_DIR,now=Date.now,max=IMG_MAX_FILES,maxBytes=IMG_MAX_BYTES}={}){
   let metas=[];
   try{metas=readdirSync(dir).filter(f=>f.endsWith(".json"))}catch{return 0}
   const entries=[];
   for(const f of metas){
-    let at=0;try{at=Number(JSON.parse(readFileSyncFs(join(dir,f),"utf8")).at)||0}catch{}
-    entries.push({f,at});
+    let at=0,len=0;
+    try{const m=JSON.parse(readFileSyncFs(join(dir,f),"utf8"));at=Number(m.at)||0;len=Number(m.len)||0}catch{}
+    entries.push({f,at,len});
   }
-  const stale=entries.filter(e=>now()-e.at>IMG_TTL_MS);
-  const overflow=entries.length-stale.length>max?entries.filter(e=>!stale.includes(e)).sort((a,b)=>a.at-b.at).slice(0,entries.length-stale.length-max):[];
+  const stale=new Set(entries.filter(e=>now()-e.at>IMG_TTL_MS));
+  const live=entries.filter(e=>!stale.has(e)).sort((a,b)=>a.at-b.at);
+  const doomed=[...stale];
+  // Сначала по количеству, потом по объёму — вытесняем самое давнее.
+  let bytes=live.reduce((a,e)=>a+(e.len||0),0);
+  let i=0;
+  while(live.length-i>max||bytes>maxBytes){
+    if(i>=live.length)break;
+    bytes-=live[i].len||0;doomed.push(live[i++]);
+  }
+  const overflow=doomed.filter(e=>!stale.has(e));
   let n=0;
   for(const e of [...stale,...overflow]){
     const base=e.f.slice(0,-5);
@@ -249,11 +267,13 @@ async function proxyImage(res,raw){
   const hit=process.env.NODE_ENV==="test"?null:readImgCache(raw);
   if(hit){
     res.writeHead(200,{"Content-Type":hit.type,"Cache-Control":"public, max-age=86400","X-Img-Cache":"hit",
-      "Content-Length":String(hit.body.length),"X-Content-Type-Options":"nosniff",...corsHeaders(res.req)});
+      "Content-Length":String(hit.body.length),...IMG_SAFE_HEADERS,...corsHeaders(res.req)});
     return res.end(hit.body);
   }
+  // Только растровые форматы: SVG — это документ со скриптами, и отданный с
+  // нашего адреса он выполнялся бы в нашем origin.
   const r=await guardedFetch(raw,{maxBytes:IMG_MAX,timeoutMs:6000,
-    accept:t=>/^image\//.test(t),headers:{"Accept":"image/avif,image/webp,image/*,*/*;q=0.5"}});
+    accept:t=>RASTER_IMAGE.test(t),headers:{"Accept":"image/avif,image/webp,image/*;q=0.8"}});
   if(!r.ok){
     if(r.reason==="too_large")return send(res,413,"too large");
     if(r.reason==="bad_type")return send(res,415,"not an image");
@@ -263,7 +283,7 @@ async function proxyImage(res,raw){
   if(r.truncated)return send(res,413,"too large");
   if(process.env.NODE_ENV!=="test")writeImgCache(raw,r.type,r.body);
   res.writeHead(200,{"Content-Type":r.type,"Cache-Control":"public, max-age=86400","X-Img-Cache":"miss",
-    "Content-Length":String(r.body.length),"X-Content-Type-Options":"nosniff",...corsHeaders(res.req)});
+    "Content-Length":String(r.body.length),...IMG_SAFE_HEADERS,...corsHeaders(res.req)});
   return res.end(r.body);
 }
 /* Фото из Викиданных и Викисклада — живьём, с кешем на диске.
@@ -274,7 +294,7 @@ async function proxyImage(res,raw){
 const PHOTO_CACHE=(()=>{
   const file=process.env.NODE_ENV==="test"?null:join(DATA_DIR,"photo_cache.json");
   if(file){try{mkdirSync(DATA_DIR,{recursive:true})}catch{}}
-  const c=createCache({file,ttlMs:30*24*3600e3,staleMs:90*24*3600e3,max:50000});
+  const c=createCache({file,ttlMs:30*24*3600e3,staleMs:90*24*3600e3,max:8000,debounceMs:5000});
   try{const n=c.load();if(n)console.log(`Кеш фото: ${n} записей`)}catch{}
   return c;
 })();
@@ -290,15 +310,19 @@ async function wikiJson(url){
   if(!r.ok)return null;
   try{return JSON.parse(r.body.toString("utf8"))}catch{return null}
 }
-async function photoByWikidata(qid){
+async function photoByWikidata(qid,{brand=false}={}){
   const d=await wikiJson(`https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${encodeURIComponent(qid)}&props=claims&format=json`);
   const claims=d&&d.entities&&d.entities[qid]&&d.entities[qid].claims;
   const p18=claims&&claims.P18&&claims.P18[0]&&claims.P18[0].mainsnak&&claims.P18[0].mainsnak.datavalue;
   const file=p18&&p18.value;
   if(!file)return null;
-  const url=commonsFileUrl(file);
+  // Викиданные отдают голое имя файла («Bolshoi Theatre Moscow.jpg»), а
+  // преобразователь ждёт «File:…» — без префикса ветка не срабатывала ни разу.
+  const url=commonsFileUrl(`File:${file}`);
   if(!url)return null;
-  return {url,origin:"commons",confidence:"medium",...commonsCredit(`https://commons.wikimedia.org/wiki/File:${encodeURIComponent(String(file).replace(/ /g,"_"))}`)};
+  const page=`https://commons.wikimedia.org/wiki/File:${encodeURIComponent(String(file).replace(/ /g,"_"))}`;
+  // Картинка бренда — это логотип сети, а не снимок конкретного места.
+  return {url,origin:brand?"brand_logo":"commons",confidence:brand?"low":"medium",...commonsCredit(page)};
 }
 async function photoByGeo(lat,lon){
   const u=`https://commons.wikimedia.org/w/api.php?action=query&generator=geosearch&ggscoord=${lat}|${lon}&ggsradius=60&ggsnamespace=6&ggslimit=8&prop=imageinfo&iiprop=url|size|mime|extmetadata&iiurlwidth=1280&format=json`;
@@ -327,9 +351,9 @@ async function photoLookup(place){
   }
   let found=null;
   try{
-    for(const qid of [place.wikidata,place.brand_wikidata]){
+    for(const [qid,brand] of [[place.wikidata,false],[place.brand_wikidata,true]]){
       if(!qid||!/^Q\d+$/.test(qid))continue;
-      found=await photoByWikidata(qid);if(found)break;
+      found=await photoByWikidata(qid,{brand});if(found)break;
     }
     if(!found&&place.coords&&Number.isFinite(+place.coords.lat)&&Number.isFinite(+place.coords.lon))
       found=await photoByGeo(+place.coords.lat,+place.coords.lon);

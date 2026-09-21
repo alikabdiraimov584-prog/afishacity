@@ -206,3 +206,12 @@ test("закрытые по тегам OSM места помечаются", asy
   const out=await searchOSM({placeQueries:["бар"],tags:["bar"],placeIntent:true},{snapshot:{search:()=>els}});
   assert.deepEqual(out.items.map(x=>Boolean(x.closed)),[false,true,true,true,true]);
 });
+
+test("фото из Викиданных: голое имя файла превращается в ссылку", async () => {
+  const {commonsFileUrl}=await import("../photos.mjs");
+  // P18 отдаёт «Bolshoi Theatre Moscow.jpg» без префикса — без него ветка
+  // Викиданных не срабатывала ни разу, хотя запрос в сеть уходил.
+  assert.equal(commonsFileUrl("Bolshoi Theatre Moscow.jpg"),null,"голое имя само по себе не ссылка");
+  const url=commonsFileUrl("File:Bolshoi Theatre Moscow.jpg");
+  assert.match(url,/Special:FilePath\/Bolshoi_Theatre_Moscow\.jpg/);
+});
