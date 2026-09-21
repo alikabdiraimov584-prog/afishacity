@@ -125,3 +125,46 @@ test("близость и центр — разные вещи", ()=>{
   assert.equal(asked[0].id,"centre");
   assert.ok(!asked.some(x=>x.id==="here"),"далёкое от центра при просьбе о центре отсеивается");
 });
+
+// ---- Качество вместо случайности ----
+// Жалоба: «присылает реально плохие заведения, а не лучшие». У OpenStreetMap
+// нет рейтингов, и бар без единого тега, сетевая кофейня и точка без описания
+// получали одинаковый балл — порядок задавала база.
+
+const bare=(id,name,x={})=>({id,name,kind:"venue",cat:"Бар",tags:["bar"],cat_tags:["bar"],area:"Москва",times:[],
+  hours_label:null,price_label:null,price_min:null,provider:"OpenStreetMap",live:true,desc:"",keywords:"бар",
+  coords:{lat:55.75,lon:37.62},...x});
+
+test("полнота карточки поднимает место выше пустого", ()=>{
+  const out=run([bare("empty","Бар без всего"),
+    bare("full","Бар с сайтом",{official_source:"https://b.bar",hours_label:"до 02:00",phone:"+7",cuisine:"burger"})],
+    {query:"хочу выпить"});
+  assert.equal(out[0].id,"full");
+  assert.ok(out[0]._quality>out[1]._quality);
+});
+
+test("сетевая кофейня на «выпить» не проходит, на «кофе» — проходит", ()=>{
+  const shoko=bare("s","Шоколадница",{brand:"Шоколадница",cat:"Кафе",tags:["cafe","bar"],cat_tags:["food","coffee"],
+    official_source:"https://shoko.ru",hours_label:"до 23:00",keywords:"кафе кофе бар"});
+  const realBar=bare("r","Ровесник",{official_source:"https://rovesnik.bar",hours_label:"до 04:00"});
+  const drink=run([shoko,realBar],{query:"хочу выпить"});
+  assert.equal(drink[0].id,"r");
+  assert.ok(!drink.some(x=>x.id==="s"),"кофейная сеть — не ответ на «выпить»");
+  const coffee=run([shoko,realBar],{query:"кофе"});
+  assert.ok(coffee.some(x=>x.id==="s"),"а на «кофе» она уместна");
+});
+
+test("кафе, совпавшее по слову «бар», не обгоняет настоящий бар за счёт разнообразия", ()=>{
+  const out=run([bare("cafe","Кафе-бар у дома",{cat:"Кафе",tags:["cafe","bar"],cat_tags:["food"]}),
+    bare("b1","Бар с вики",{wikidata:"Q1",official_source:"https://e.bar",hours_label:"до 06:00"}),
+    bare("b2","Просто бар")],{query:"хочу выпить"});
+  const ids=out.map(x=>x.id);
+  assert.ok(ids.indexOf("b2")<ids.indexOf("cafe")||!ids.includes("cafe"),`порядок: ${ids}`);
+});
+
+test("настоящий бар сети штрафа не получает", ()=>{
+  // Сетевой бар (например, бар при сети отелей) — всё равно бар.
+  const out=run([bare("chainbar","Бар «Шоколадница»",{brand:"Шоколадница",cat_tags:["bar"]})],{query:"хочу выпить"});
+  assert.equal(out.length,1);
+  assert.ok(out[0]._score>50);
+});

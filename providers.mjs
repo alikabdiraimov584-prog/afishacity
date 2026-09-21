@@ -396,9 +396,16 @@ function normalizeOsmItem(x,plan){
     // фотография места без обращения к агрегатору.
     wikidata:t.wikidata||null,brand_wikidata:t["brand:wikidata"]||null,
     wikimedia_commons:t.wikimedia_commons||null,image_raw:t.image||null,
-    date_start:null,date_end:null,times:[],hours_label:t.opening_hours||"часы работы не указаны в OSM",
-    price_label:"цены у заведения",price_min:null,free:false,
-    availability:"объект из актуальной базы OpenStreetMap; часы лучше перепроверить",
+    // Раньше здесь стояли заглушки: «часы работы не указаны в OSM», «цены у
+    // заведения», «часы лучше перепроверить». Они уходили и на карточку, и
+    // модели — та честно зачитывала их вслух, и человек слышал «у сервиса нет
+    // данных», хотя место найдено. Чего нет — того нет: поле пустое.
+    date_start:null,date_end:null,times:[],hours_label:t.opening_hours||null,
+    price_label:null,price_min:null,free:false,
+    availability:null,
+    // Сигналы качества для ранжирования: у OSM нет рейтингов, и полнота
+    // карточки — честный заменитель репутации.
+    brand:t.brand||null,cuisine:t.cuisine||null,has_description:Boolean(t.description||t["description:ru"]),
     source:osmSource(x),point_source:osmSource(x),official_source:site!==osmSource(x)?site:null,
     image_url:null,
     booking_url:directBook||((site!==osmSource(x))?site:null),booking_kind:telegram?"telegram":whatsapp?"whatsapp":reservation?"site":phone?"phone":(site!==osmSource(x)?"site":null),

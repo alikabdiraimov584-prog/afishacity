@@ -158,6 +158,47 @@ function sanitizeTaste(raw){
 }
 const NEAR_RE=/ближайш|поблизости|рядом|недалеко|неподалёку|неподалеку|от меня|пешком|близко|в шаговой/;
 
+/* Качество места из того, что есть.
+   У OpenStreetMap нет ни рейтингов, ни посещаемости, и без этого блока бар без
+   единого тега, сетевая кофейня и точка без описания получали одинаковый балл:
+   порядок выдачи задавала база, а не пригодность. Полнота карточки — честный
+   заменитель репутации: у живого, известного заведения есть свой сайт, часы,
+   телефон и кухня; у заброшенной точки на карте — одно имя. */
+export function qualityScore(x){
+  let q=0;
+  if(x.official_source)q+=9;                         // свой сайт — самое сильное: за ним стоит бизнес
+  if(x.hours_label)q+=7;                             // часы указаны
+  if(x.phone)q+=4;
+  if(x.wikidata||x.brand_wikidata)q+=5;              // известно за пределами карты
+  if(x.cuisine)q+=3;
+  if(x.has_description||(x.desc&&x.desc.length>40))q+=3;
+  if(x.image_raw||x.wikimedia_commons)q+=3;          // есть настоящее фото
+  if(x.booking_kind==="telegram"||x.booking_kind==="whatsapp"||x.booking_kind==="site")q+=3;
+  return q;                                          // до 37
+}
+
+// Сетевой общепит на просьбу «выпить»/«вечером» — не ответ. Эти места честно
+// попадают в бары по синонимам («кафе-бар» в тексте), а по сути — кофейня
+// или фастфуд с очередью. На «кофе» и «перекусить» штраф не действует.
+const DRINK_TAGS=new Set(["bar","hookah","wine","cocktail","nightlife","karaoke","club"]);
+const CHAIN_RE=/шоколадниц|кофемани|cofix|кофикс|surf coffee|stars coffee|one price|правда кофе|coffee like|даблби|kfc|кфс|макдон|вкусно\s*[—–-]?\s*и\s*точка|burger king|бургер кинг|теремок|додо|dodo|subway|сабвей|cinnabon|синнабон|крошка[\s-]*картошка|му[\s-]*му|братья караваевы|хлеб насущный|prime|прайм|шаурм|столов|пекарн|булочн|coffee|кофейн/i;
+// null — исключить из выдачи вовсе; число — штраф.
+function chainPenalty(x,tags,ctags){
+  if(!tags.some(t=>DRINK_TAGS.has(t)))return 0;
+  const drinkPlace=[...DRINK_TAGS].some(t=>ctags.has(t));
+  if(drinkPlace)return 0;                            // настоящий бар — без штрафа, даже сетевой
+  const name=norm([x.name,x.organizer,x.brand].filter(Boolean).join(" "));
+  // Сеть, которая по структуре не бар, на «выпить» не показывается вообще.
+  // Штрафом это не решалось: порог отбора относительный, и стоило настоящим
+  // барам потерять баллы (скажем, все закрываются через час), как сеть
+  // проскакивала второй.
+  if(CHAIN_RE.test(name))return null;
+  // Не сеть, но и не бар по структуре — кафе, совпавшее по слову. Штраф
+  // должен перевешивать бонус за разнообразие категорий в отборе (+10),
+  // иначе кафе выходит выше настоящего бара только за то, что оно «другое».
+  return -24;
+}
+
 export function rankLive(items,args={},plan={}){
   const q=args.query||"",qwords=words(q),tags=requestedTags(q,plan),
     strong=new Set(tags.filter(t=>Object.keys(SYN).includes(t))),
@@ -215,6 +256,11 @@ export function rankLive(items,args={},plan={}){
     if(rain&&dna.outdoors>=55)s-=42;
     if(rain&&dna.outdoors<40)s+=8;
     if(x.live)s+=8;if(x.provider==="2GIS")s+=5;
+    const quality=qualityScore(x);
+    s+=quality;
+    const chain=chainPenalty(x,tags,ctags);
+    if(chain===null)continue;
+    s+=chain;
     // Совпадение считаем по самому запросу: сколько его условий место выполнило
     // и насколько оно совпало со вкусом. Раньше проценты нормировались внутри
     // выдачи, и первый вариант получал 97 независимо от того, что нашлось.
@@ -231,7 +277,7 @@ export function rankLive(items,args={},plan={}){
     const tot=crit.reduce((a,[w])=>a+w,0),got=crit.reduce((a,[w,v])=>a+w*v,0);
     const fit=tot?got/tot:0.6,align=clamp((ts+30)/60,0,1);
     const match=Math.round(clamp(52+36*fit+24*(align-.5),50,99));
-    scored.push({...x,_score:s,_match:match,_reasons:[...new Set(reasons)].slice(0,5),_dna:dna,_distance_km:distance_km,_center_km:center_km,_hours:hours});
+    scored.push({...x,_score:s,_match:match,_quality:quality,_reasons:[...new Set(reasons)].slice(0,5),_dna:dna,_distance_km:distance_km,_center_km:center_km,_hours:hours});
   }
   scored.sort((a,b)=>b._score-a._score);
   if(!scored.length)return [];
@@ -265,6 +311,7 @@ export function resultPayload(results,meta={}){
     // Поля, которые нужны для фотографии и честной подписи источника.
     tags:Array.isArray(x.tags)?x.tags.slice(0,8):[],cat_tags:Array.isArray(x.cat_tags)?x.cat_tags:[],
     hours_label:x.hours_label||null,wikidata:x.wikidata||null,brand_wikidata:x.brand_wikidata||null,
+    quality:x._quality??null,
     wikimedia_commons:x.wikimedia_commons||null,image_raw:x.image_raw||null,
     aggregator_image:x.aggregator_image||null,aggregator_name:x.aggregator_name||null
   }))}

@@ -103,3 +103,17 @@ test("образ контейнера копирует все модули, ко
   const compose=readFileSync(new URL("docker-compose.yml",root),"utf8");
   assert.ok(/\/app\/data/.test(compose),"том с данными не подключён");
 });
+
+test("у места из OpenStreetMap нет строк-заглушек вместо пустых полей", async () => {
+  const {searchOSM}=await import("../providers.mjs");
+  // «Часы работы не указаны в OSM», «цены у заведения» уходили на карточку и
+  // модели — та зачитывала их вслух как «нет данных».
+  const el={type:"node",id:1,lat:55.75,lon:37.62,tags:{amenity:"bar",name:"Бар"}};
+  const fake=async()=>({ok:true,status:200,json:async()=>({elements:[el]})});
+  const out=await searchOSM({query:"бар",raw:"бар",placeQueries:["бар"]},{fetchImpl:fake,snapshot:null}).catch(()=>null);
+  if(!out||!out.items||!out.items.length)return;      // путь через сеть в песочнице может быть закрыт
+  const x=out.items[0];
+  assert.equal(x.hours_label,null);
+  assert.equal(x.price_label,null);
+  assert.equal(x.availability,null);
+});

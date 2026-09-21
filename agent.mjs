@@ -104,6 +104,9 @@ export function agentSystem({voice=false,context=""}={}){
     "Закрываешь любой городской запрос, а не только еду и бары: услуги, здоровье, покупки, транспорт, детское.",
     "«Ближайшее», «рядом», «поблизости» — это near:true, то есть рядом с человеком. Центр города тут ни при чём:",
     "человек может стоять в Кузьминках, и центр для него — другой конец Москвы.",
+    "О том, чего в результатах нет, не говоришь вовсе. Нет цены — не упоминаешь цену. Нет часов — не упоминаешь часы.",
+    "Имени и категории достаточно, чтобы предложить место. Фразы «у меня нет данных», «информация недоступна», «не могу сказать» запрещены:",
+    "человек слышит их как «сервис сломан», хотя место найдено и карточка перед ним.",
     "",
     "КАК ТЫ ГОВОРИШЬ.",
     "На «ты». Коротко и просто — как пишут приятелю, а не как отвечает поддержка.",
@@ -218,16 +221,28 @@ function sliceBalanced(text){
  */
 export function toolResultForAgent(name,payload){
   if(name==="recommend_free"){
-    const list=(payload&&payload.results||[]).slice(0,5).map(r=>({
-      name:r.name,категория:r.category,район:r.area||r.metro||null,
-      цена:r.price||null,часы:r.time||null,
-      открыто_сейчас:r.open_now===null||r.open_now===undefined?"неизвестно":r.open_now,
-      закрывается:r.closes_at||null,
-      от_центра_км:r.distance_km===null||r.distance_km===undefined?null:Math.round(r.distance_km*10)/10,
-      почему:(r.reasons||[]).slice(0,3)
-    }));
-    return JSON.stringify({найдено:list.length,места:list,
-      примечание:payload&&payload.note||null});
+    // Модели отдаём только то, что известно. У большинства мест из
+    // OpenStreetMap нет ни цены, ни часов, ни метро — и когда эти поля
+    // уходили как null и «неизвестно», модель, которой запрещено выдумывать,
+    // честно пересказывала пустоты: «у меня нет данных о часах работы». Для
+    // человека это звучало как «у сервиса нет данных», хотя место найдено.
+    // Чего в объекте нет — о том и говорить нечего.
+    const list=(payload&&payload.results||[]).slice(0,5).map(r=>{
+      const o={name:r.name,категория:r.category};
+      const area=r.area||r.metro;if(area)o.район=area;
+      if(r.price)o.цена=r.price;
+      if(r.time)o.часы=r.time;
+      if(r.open_now===true)o.открыто_сейчас=true;
+      else if(r.open_now===false)o.открыто_сейчас=false;
+      if(r.closes_at)o.закрывается=r.closes_at;
+      if(Number.isFinite(r.distance_km))o.от_вас_км=Math.round(r.distance_km*10)/10;
+      const why=(r.reasons||[]).slice(0,3);if(why.length)o.почему=why;
+      return o;
+    });
+    // Примечание про источники — служебное: оно про то, что KudaGo или
+    // Timepad не ответили, а не про найденные места. Модели оно ни к чему,
+    // она из него делала «источники недоступны, данных нет».
+    return JSON.stringify({найдено:list.length,места:list});
   }
   if(name==="plan_evening"){
     const stops=(payload&&payload.stops||[]).map(s=>({

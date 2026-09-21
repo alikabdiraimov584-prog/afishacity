@@ -280,3 +280,29 @@ test("реплика без поиска произносится сразу", a
     emit:(t,d)=>{if(t==="delta")seen.push(d)},deps:{}});
   assert.deepEqual(seen.map(d=>d.interim),[false],"тут нечего ждать — это и есть ответ");
 });
+
+test("модели уходят только известные факты, без пустот и служебного примечания", async () => {
+  const {toolResultForAgent}=await import("../agent.mjs");
+  // Жалоба: «постоянно говорит, что у него нет данных». Модели уходили
+  // цена:null, часы:null, открыто:"неизвестно" и примечание про источники —
+  // и она, которой запрещено выдумывать, честно пересказывала пустоты.
+  const bare={name:"Бар на Пятницкой",category:"Бар",area:null,metro:null,price:null,time:null,
+    open_now:null,closes_at:null,distance_km:2.3,reasons:["бар"]};
+  const seen=JSON.parse(toolResultForAgent("recommend_free",{results:[bare],note:"Часть источников временно недоступна."}));
+  const place=seen.места[0];
+  for(const k of ["цена","часы","открыто_сейчас","закрывается","район"])assert.ok(!(k in place),`${k} не должно быть в объекте`);
+  assert.ok(!("примечание" in seen),"служебное примечание модели ни к чему");
+  assert.ok(!JSON.stringify(seen).includes("null"),"ни одного null");
+  assert.ok(!JSON.stringify(seen).includes("неизвестно"));
+  // А известное — на месте.
+  const full={...bare,price:"1500 ₽",time:"до 04:00",open_now:true,area:"Китай-город"};
+  const p2=JSON.parse(toolResultForAgent("recommend_free",{results:[full]})).места[0];
+  assert.equal(p2.цена,"1500 ₽");assert.equal(p2.открыто_сейчас,true);assert.equal(p2.район,"Китай-город");
+});
+
+test("агенту запрещены фразы про отсутствие данных", async () => {
+  const {agentSystem}=await import("../agent.mjs");
+  const t=agentSystem({voice:true});
+  assert.match(t,/«у меня нет данных»/);
+  assert.match(t,/Имени и категории достаточно/);
+});
