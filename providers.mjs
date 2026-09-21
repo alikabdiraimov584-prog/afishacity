@@ -111,8 +111,11 @@ export function buildSearchPlan(args={}){
   // бары, еда, кальян, клуб — а дальше ранкер и вкус решат.
   const GENERIC_RE=/заняться|развлеч|интересн|посоветуй|порекоменд|провести|скучно|сходить|потусить|отдохнуть/;
   const fromRules=tags.length>0;               // хоть одно правило узнало категорию
+  // Слово «посоветуй» не делает запрос общим: в «посоветуй суши» есть суть.
+  // Общий — тот, где кроме этих слов не осталось ничего.
+  const restCore=coreQuery.split(" ").filter(w=>w&&!GENERIC_RE.test(w)).join(" ");
   let generic=false;
-  if(!fromRules&&q.trim()&&(!coreQuery||GENERIC_RE.test(q))){
+  if(!fromRules&&q.trim()&&!restCore){
     generic=true;
     placeQueries.length=0;eventQueries.length=0;  // «заняться» как имя места искать бессмысленно
     placeQueries.push("бар","ресторан","кальянная");
@@ -203,7 +206,9 @@ function normalizeKudagoPlace(p,plan){
     id:`kudago:place:${p.id}`,provider:"KudaGo",live:true,kind:"venue",name:p.title||"Место",organizer:p.title||"",
     cat:(p.categories||[])[0]?.name||"Место",
     tags:inferTags(text),cat_tags:rubricTags((p.categories||[]).map(x=>x.name)),area:p.address||"Москва",metro:p.subway||"",
-    date_start:null,date_end:null,times:[],hours_label:p.timetable||"часы работы на сайте",price_label:"цены на сайте",price_min:null,free:false,
+    // Те же заглушки, что убраны у OSM и 2GIS: модель зачитывала их как факты,
+    // а качество карточки считало «часы указаны».
+    date_start:null,date_end:null,times:[],hours_label:p.timetable||null,price_label:null,price_min:null,free:false,
     availability:p.is_closed?"закрыто":"действующее место",source:p.site_url||p.foreign_url||"https://kudago.com/msk/",
     point_source:p.site_url||p.foreign_url||"https://kudago.com/msk/",official_source:p.foreign_url||null,
     aggregator_image:p.images?.[0]?.image||null,aggregator_name:"KudaGo",image_source:p.images?.[0]?.source?.link||null,
@@ -335,8 +340,9 @@ export async function search2GIS(plan,key){
     try{
       const u=new URL("https://catalog.api.2gis.com/3.0/items");u.searchParams.set("key",key);u.searchParams.set("q",q);u.searchParams.set("type","branch");
       // Ищем вокруг человека, если знаем, где он; иначе — по всему городу.
-      const pt=plan.userLocation?`${plan.userLocation.lon},${plan.userLocation.lat}`:MOSCOW_POINT;
-      u.searchParams.set("point",pt);u.searchParams.set("radius",plan.userLocation&&plan.near?"4000":centerFor(plan)?"6000":"50000");
+      const near=searchPoint(plan);
+      u.searchParams.set("point",near?`${near.lon},${near.lat}`:MOSCOW_POINT);
+      u.searchParams.set("radius",near?"4000":centerFor(plan)?"6000":"50000");
       u.searchParams.set("page_size","50");u.searchParams.set("locale","ru_RU");
       u.searchParams.set("fields","items.point,items.rubrics,items.schedule,items.full_address_name,items.contact_groups,items.external_content,items.reviews");
       const d=await fetchJson(u);for(const x of (d.result?.items||[]))out.push(normalize2gisItem(x,plan));
@@ -355,6 +361,10 @@ const ITEM_SCHEMA=3;
 const CENTER_BBOX = "55.71,37.55,55.80,37.69";
 export function wantsCenter(area){return /центр/.test(text(area).toLowerCase())}
 function centerFor(plan){return wantsCenter(plan.area)&&!(plan.near&&plan.userLocation)}
+// Точка человека сужает область поиска только когда он сам попросил «рядом».
+// Иначе «бар в центре» из Кузьминок искался вокруг Кузьминок, а «планетарий»
+// с окраины — в шести километрах от дома, где его нет.
+function searchPoint(plan){return plan.near&&plan.userLocation?plan.userLocation:null}
 // Overpass — не один сервис, а несколько независимых зеркал одного API.
 // С единственным URL мы просто меняли зависимость от агрегатора на зависимость
 // от overpass-api.de: он регулярно перегружен и отвечает 429/504.
@@ -506,7 +516,8 @@ function snapshotFirst(plan,opts){
   const snap=getSnapshot();
   if(!snap)return null;
   try{
-    const els=snap.search(plan,{center:centerFor(plan),limit:plan.userLocation?160:120,point:plan.userLocation});
+    const els=snap.search(plan,{center:centerFor(plan),limit:plan.userLocation?160:120,
+      point:searchPoint(plan),order:plan.userLocation});
     const items=els.map(x=>normalizeOsmItem(x,plan)).filter(x=>x.name!=="Заведение");
     return items.length?{items,errors:[],from_cache:false,degraded:false,disabled:false,from_snapshot:true}:null;
   }catch{return null}
@@ -516,7 +527,8 @@ export async function searchOSM(plan,opts={}){
   const snap=opts.snapshot!==undefined?opts.snapshot:getSnapshot();
   if(snap){
     try{
-      const els=snap.search(plan,{center:centerFor(plan),limit:plan.userLocation?160:120,point:plan.userLocation});
+      const els=snap.search(plan,{center:centerFor(plan),limit:plan.userLocation?160:120,
+        point:searchPoint(plan),order:plan.userLocation});
       const items=els.map(x=>normalizeOsmItem(x,plan)).filter(x=>x.name!=="Заведение");
       // Снимок ответил — в сеть не идём вовсе. Пусто в снимке ещё не значит
       // «пусто в городе», поэтому на этот случай ниже остаётся Overpass.
@@ -527,7 +539,7 @@ export async function searchOSM(plan,opts={}){
   if(!filters.length) return {items:[],errors:[],disabled:false};
   // Просят центр — сужаем область поиска, иначе Overpass отдаёт всю Москву.
   // Знаем, где человек, — ищем вокруг него (~6 км), а не по всей Москве.
-  const u=plan.userLocation;
+  const u=searchPoint(plan);
   const bbox=u?`${(u.lat-0.055).toFixed(4)},${(u.lon-0.095).toFixed(4)},${(u.lat+0.055).toFixed(4)},${(u.lon+0.095).toFixed(4)}`
     :centerFor(plan)?CENTER_BBOX:MOSCOW_BBOX;
   // Overpass просили считать до 18 с, а клиент обрывал на 6.5 с: тяжёлые запросы
@@ -586,7 +598,7 @@ function cacheKeyFor(name,plan,hasKey){
   // Точка округлена до ~1 км: соседние запросы из одного двора делят кеш,
   // а выдача другого района в него не попадает.
   const pt=plan.userLocation?[Math.round(plan.userLocation.lat*100)/100,Math.round(plan.userLocation.lon*60)/60]:null;
-  const base={v:ITEM_SCHEMA,t:plan.tags,c:centerFor(plan),p:pt};
+  const base={v:ITEM_SCHEMA,t:plan.tags,c:centerFor(plan),loc:searchPoint(plan)?pt:null,n:Boolean(searchPoint(plan))};
   const part={
     kudago:{e:plan.eventQueries.slice(0,3),p:plan.placeQueries.slice(0,3),f:plan.freeOnly,d:plan.targetDate},
     timepad:{e:plan.eventQueries.length?plan.eventQueries.slice(0,3):[plan.coreQuery||""],d:plan.targetDate,f:plan.freeOnly,m:plan.maxPrice},

@@ -124,3 +124,19 @@ test("Overpass: таймаут в поле remark — это сбой, а не �
   const failed=out.thrown||(out.errors||[]).some(e=>/timed out/.test(e));
   assert.ok(failed,`ожидали ошибку, получили ${JSON.stringify(out).slice(0,120)}`);
 });
+
+test("ключ кеша различает район и «рядом»", async ()=>{
+  const {searchLiveInventory}=await import("../providers.mjs");
+  const seen=[];
+  const providers={kudago:emptyProvider,timepad:emptyProvider,osm:emptyProvider,
+    dgis:async(plan)=>{seen.push(plan);return {items:[venue("d1","Бар")],errors:[]}}};
+  const cache=createCache({now:()=>1});
+  const run=(args)=>searchLiveInventory(args,{...env,DGIS_API_KEY:"k"},{providers,cache,now:()=>1});
+  // Поле точки в ключе перетиралось списком запросов, а «рядом» в ключ не
+  // входило вовсе: 2GIS ищет в радиусе 4 км и 50 км — записи делились.
+  await run({query:"бар рядом",user_location:{lat:55.55,lon:37.55}});
+  await run({query:"бар рядом",user_location:{lat:55.90,lon:37.45}});
+  assert.equal(seen.length,2,"разные районы не должны делить кеш");
+  await run({query:"посоветуй бар",user_location:{lat:55.55,lon:37.55}});
+  assert.equal(seen.length,3,"«рядом» и обычный поиск — разные запросы");
+});

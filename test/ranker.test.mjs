@@ -190,3 +190,17 @@ test("при равных баллах порядок устойчив и не �
   const o2=run([c,b,a],{query:"хочу выпить"}).map(x=>x.id);
   assert.deepEqual(o1,o2,"порядок не должен задаваться порядком базы");
 });
+
+test("«выпить кофе» не выбрасывает кофейни, а событие не считается сетью", ()=>{
+  // Штраф сетям включался по тегу bar («выпить»), и кофейни вылетали все.
+  const shoko=bare("s","Шоколадница",{brand:"Шоколадница",cat:"Кафе",tags:["cafe","bar"],cat_tags:["food","coffee"],keywords:"кофе кафе"});
+  const cafe=bare("c","Кофейня у дома",{cat:"Кофейня",tags:["cafe"],cat_tags:["coffee","food"],keywords:"кофе"});
+  const coffee=run([shoko,cafe],{query:"хочу выпить кофе"});
+  assert.ok(coffee.length>=1,"на «выпить кофе» кофейни должны остаться");
+  // Событие — не заведение: «Джаз в Пекарне» исключался как сетевая пекарня.
+  const ev={id:"e",kind:"event",name:"Джаз в Пекарне",cat:"Концерт",tags:["bar","music"],cat_tags:[],
+    area:"Москва",date_start:shift(1),date_end:shift(1),times:["20:00"],price_label:"",price_min:null,
+    provider:"KudaGo",live:true,desc:"",keywords:"джаз концерт"};
+  const out=run([ev],{query:"хочу выпить"});
+  assert.equal(out.length,1,"событие не должно отсеиваться как сеть");
+});

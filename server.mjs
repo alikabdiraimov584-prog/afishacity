@@ -207,11 +207,15 @@ export function readImgCache(url,{dir=IMG_DIR,now=Date.now}={}){
     const meta=JSON.parse(readFileSyncFs(join(dir,k+".json"),"utf8"));
     if(!meta||!meta.type||now()-(meta.at||0)>IMG_TTL_MS)return null;
     const body=readFileSyncFs(join(dir,k+".bin"));
+    // Прерванная запись оставляет целый .json и усечённый .bin: без сверки
+    // длины обрезанная картинка отдавалась бы неделю с кодом 200.
+    if(!body.length||(Number.isFinite(meta.len)&&body.length!==meta.len))return null;
     return {type:meta.type,body};
   }catch{return null}
 }
 export function writeImgCache(url,type,body,{dir=IMG_DIR,now=Date.now}={}){
   const k=imgKey(url);
+  if(!body||!body.length)return false;
   try{
     mkdirSync(dir,{recursive:true});
     writeFileSyncFs(join(dir,k+".bin"),body);

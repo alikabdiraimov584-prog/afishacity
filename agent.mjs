@@ -245,13 +245,21 @@ export function toolResultForAgent(name,payload){
     return JSON.stringify({найдено:list.length,места:list});
   }
   if(name==="plan_evening"){
-    const stops=(payload&&payload.stops||[]).map(s=>({
-      время:`${s.slot_start}–${s.slot_end}`,
-      место:s.place?s.place.name:`${s.query} — не найдено`,
-      район:s.place?(s.place.area||s.place.metro||null):null,
-      переход:s.travel||null
-    }));
-    return JSON.stringify({точек:stops.length,план:stops,итог:payload&&payload.summary||null});
+    // Поля s.travel и payload.summary не существуют — планировщик отдаёт
+    // travel_in/travel_to_next и считает итог отдельно. Модель получала
+    // сплошные null и рассказывала, что данных нет.
+    const stops=(payload&&payload.stops||[]).map(s=>{
+      const o={время:`${s.slot_start}–${s.slot_end}`,
+        место:s.place?s.place.name:`${s.query} — не найдено`};
+      const area=s.place&&(s.place.area||s.place.metro);if(area)o.район=area;
+      const move=s.travel_in||s.travel_to_next;
+      if(move&&move.minutes)o.переход=`${move.minutes} мин${move.mode?" "+move.mode:""}`;
+      return o;
+    });
+    const total=payload&&payload.total;
+    const out={точек:stops.length,план:stops};
+    if(total&&total.start&&total.end)out.итог=`${total.start}–${total.end}`;
+    return JSON.stringify(out);
   }
   return JSON.stringify(payload||{});
 }

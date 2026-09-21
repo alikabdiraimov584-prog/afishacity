@@ -190,7 +190,13 @@ export function qualityScore(x){
 const DRINK_TAGS=new Set(["bar","hookah","wine","cocktail","nightlife","karaoke","club"]);
 const CHAIN_RE=/шоколадниц|кофемани|cofix|кофикс|surf coffee|stars coffee|one price|правда кофе|coffee like|даблби|kfc|кфс|макдон|вкусно\s*[—–-]?\s*и\s*точка|burger king|бургер кинг|теремок|додо|dodo|subway|сабвей|cinnabon|синнабон|крошка[\s-]*картошка|му[\s-]*му|братья караваевы|хлеб насущный|prime|прайм|шаурм|столов|пекарн|булочн|coffee|кофейн/i;
 // null — исключить из выдачи вовсе; число — штраф.
+const EAT_TAGS=new Set(["coffee","food","bakery","pastry"]);
 function chainPenalty(x,tags,ctags){
+  // Событие — не заведение: «Джаз в Пекарне» исключался как сетевая пекарня.
+  if(x.kind==="event")return 0;
+  // Просят и выпить, и поесть («хочу выпить кофе», «куда сходить вечером») —
+  // кофейни и рестораны тут уместны, штрафовать их не за что.
+  if(tags.some(t=>EAT_TAGS.has(t)))return 0;
   if(!tags.some(t=>DRINK_TAGS.has(t)))return 0;
   const drinkPlace=[...DRINK_TAGS].some(t=>ctags.has(t));
   if(drinkPlace)return 0;                            // настоящий бар — без штрафа, даже сетевой

@@ -203,16 +203,22 @@ export function openSnapshot(file,{now=Date.now}={}){
     // point — откуда мерить близость: положение человека, если есть.
     // Есть точка — рамка сужается до ~6 км вокруг неё: дальше «ближайшее»
     // не бывает, а ранкеру достаётся больше кандидатов из нужного района.
-    search(plan={},{limit=80,center=false,point=null}={}){
-      const p=point&&Number.isFinite(+point.lat)&&Number.isFinite(+point.lon)?{lat:+point.lat,lon:+point.lon}:null;
+    // point — сузить рамку вокруг этой точки (только когда просили «рядом»).
+    // order — откуда мерить близость для сортировки: положение человека, если
+    // оно известно, даже когда рамка остаётся городской.
+    search(plan={},{limit=80,center=false,point=null,order=null}={}){
+      const ok=(c)=>c&&Number.isFinite(+c.lat)&&Number.isFinite(+c.lon)?{lat:+c.lat,lon:+c.lon}:null;
+      const p=ok(point);
       const box=p?{south:p.lat-0.055,north:p.lat+0.055,west:p.lon-0.095,east:p.lon+0.095}
         :center?CENTER_BBOX:MOSCOW_BBOX;
-      const at=p||{lat:(CENTER_BBOX.south+CENTER_BBOX.north)/2,lon:(CENTER_BBOX.west+CENTER_BBOX.east)/2};
+      const at=p||ok(order)||{lat:(CENTER_BBOX.south+CENTER_BBOX.north)/2,lon:(CENTER_BBOX.west+CENTER_BBOX.east)/2};
       const seen=new Map();
       const tags=(plan.tags||[]).filter(t=>CATEGORY_KEYS.has(t));
+      // Лимит делится между тегами: раньше первый тег забирал его целиком, и
+      // «куда сходить вечером» (бары, еда, кальян) давало одни бары.
+      const per=tags.length?Math.max(20,Math.ceil(limit/tags.length)):limit;
       for(const t of tags){
-        if(seen.size>=limit)break;
-        for(const r of byTag.all(t,box.south,box.north,box.west,box.east,at.lat,at.lat,at.lon,at.lon,limit))
+        for(const r of byTag.all(t,box.south,box.north,box.west,box.east,at.lat,at.lat,at.lon,at.lon,per))
           if(!seen.has(r.pid))seen.set(r.pid,row(r));
       }
       // Категория не опознана, но место всё равно ищут по названию — как и в

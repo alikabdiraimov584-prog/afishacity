@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {buildSearchPlan} from "../providers.mjs";
 
-const plan=q=>buildSearchPlan({query:q});
+const plan=(q,extra={})=>buildSearchPlan({query:q,...extra});
 
 test("распознаёт основные намерения", ()=>{
   assert.deepEqual(plan("хочу на стендап сегодня вечером").eventQueries,["стендап"]);
@@ -81,4 +81,21 @@ test("незнакомое название ищется по имени в Open
   const named=buildSearchPlan({query:"вкусвилл"});
   const f2=osmFilters(named);
   assert.ok(f2.some(x=>x.includes('"name"~')),"поиск по названию: "+f2.join(" "));
+});
+
+test("«посоветуй» не делает запрос общим, если в нём есть суть", ()=>{
+  // «посоветуй суши» превращалось в поиск баров и кальянных.
+  for(const [q,want] of [["посоветуй суши",false],["посоветуй хинкальную",false],
+                         ["куда сходить вечером",true],["чем заняться",true]])
+    assert.equal(plan(q).generic,want,q);
+  assert.deepEqual(plan("посоветуй суши").placeQueries,["суши"]);
+});
+
+test("точка человека сужает поиск только по просьбе «рядом»", ()=>{
+  const kuz={lat:55.700,lon:37.765};
+  // «Бар в центре» из Кузьминок искался вокруг Кузьминок, а «планетарий» —
+  // в шести километрах от дома, где его нет.
+  assert.equal(plan("бар в центре",{area:"центр",user_location:kuz}).near,false);
+  assert.equal(plan("планетарий",{user_location:kuz}).near,false);
+  assert.equal(plan("бар рядом",{user_location:kuz}).near,true);
 });
