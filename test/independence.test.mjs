@@ -269,3 +269,35 @@ test("2GIS помечает закрытые организации, и таки
     assert.deepEqual(rankLive(out.items,{query:"бар"},plan).map(x=>x.name),["Живой бар"]);
   }finally{globalThis.fetch=realFetch}
 });
+
+test("отказ 2GIS не выглядит как «мест нет»", async () => {
+  const {search2GIS,buildSearchPlan,DGIS_MAX_RADIUS}=await import("../providers.mjs");
+  const real=globalThis.fetch;
+  // 2GIS отвечает HTTP 200 и кладёт отказ внутрь тела. Проверялся только
+  // статус, поэтому неверный параметр давал ноль мест и ноль ошибок:
+  // на живом ключе приложение разобрало 0 мест там, где ответ содержал 5.
+  globalThis.fetch=async()=>({ok:true,status:200,json:async()=>({
+    meta:{code:400,error:{type:"validationError",message:"radius: value must be <= 40000"}}})});
+  try{
+    const out=await search2GIS(buildSearchPlan({query:"бар"}),"k");
+    assert.equal(out.items.length,0);
+    assert.ok(out.errors.length>0,"отказ должен стать ошибкой, а не пустотой");
+    assert.match(out.errors[0],/2GIS ответил 400/);
+    assert.match(out.errors[0],/radius/);
+  }finally{globalThis.fetch=real}
+});
+
+test("радиус поиска по городу не превышает предел Catalog API", async () => {
+  const {search2GIS,buildSearchPlan,DGIS_MAX_RADIUS}=await import("../providers.mjs");
+  const seen=[];const real=globalThis.fetch;
+  globalThis.fetch=async(u)=>{seen.push(new URL(u));return {ok:true,status:200,
+    json:async()=>({meta:{code:200},result:{items:[]}})}};
+  try{
+    await search2GIS(buildSearchPlan({query:"бар"}),"k");
+    await search2GIS(buildSearchPlan({query:"бар",area:"центр"}),"k");
+    await search2GIS(buildSearchPlan({query:"бар рядом",user_location:{lat:55.7,lon:37.6}}),"k");
+    for(const u of seen)assert.ok(Number(u.searchParams.get("radius"))<=DGIS_MAX_RADIUS,
+      `радиус ${u.searchParams.get("radius")} больше предела ${DGIS_MAX_RADIUS}`);
+    assert.equal(Number(seen[0].searchParams.get("radius")),DGIS_MAX_RADIUS,"по городу — максимум");
+  }finally{globalThis.fetch=real}
+});

@@ -338,6 +338,22 @@ function normalize2gisItem(x,plan){
     desc:rubrics.length?rubrics.join(" · "):"Карточка действующей организации из 2GIS",keywords:norm(hay),coords:x.point||null
   };
 }
+// Сорок километров от центра накрывают Москву целиком; больше API не примет.
+export const DGIS_MAX_RADIUS=40000;
+
+/* Отказ 2GIS приходит с кодом HTTP 200 и ошибкой внутри тела.
+   Без этой проверки любой отказ — неверный параметр, исчерпанный лимит,
+   ключ не от того продукта — выглядел как честное «ничего не нашлось»:
+   ноль мест, ноль ошибок, и ни следа в логах. Ровно та же ловушка, что у
+   Overpass с его полем remark. */
+function dgisResult(d){
+  const code=Number(d&&d.meta&&d.meta.code);
+  if(Number.isFinite(code)&&code!==200){
+    const e=d.meta.error||{};
+    throw new Error(`2GIS ответил ${code}${e.type?` (${e.type})`:""}: ${String(e.message||"без объяснения").slice(0,160)}`);
+  }
+  return d;
+}
 export async function search2GIS(plan,key){
   if(!key)return {items:[],errors:[],disabled:true};
   const out=[],errors=[],seen=new Set();
@@ -347,10 +363,13 @@ export async function search2GIS(plan,key){
       // Ищем вокруг человека, если знаем, где он; иначе — по всему городу.
       const near=searchPoint(plan);
       u.searchParams.set("point",near?`${near.lon},${near.lat}`:MOSCOW_POINT);
-      u.searchParams.set("radius",near?"4000":centerFor(plan)?"6000":"50000");
+      // Предел радиуса у Catalog API — сорок километров. Мы просили полсотни
+      // при поиске по городу, и 2GIS отвечал отказом, который выглядел как
+      // «мест нет»: пять заведений на пробном запросе и ноль в приложении.
+      u.searchParams.set("radius",String(near?4000:centerFor(plan)?6000:DGIS_MAX_RADIUS));
       u.searchParams.set("page_size","50");u.searchParams.set("locale","ru_RU");
       u.searchParams.set("fields","items.point,items.rubrics,items.schedule,items.full_address_name,items.contact_groups,items.external_content,items.reviews,items.flags,items.org");
-      const d=await fetchJson(u);
+      const d=dgisResult(await fetchJson(u));
       // «бар», «паб», «коктейльный бар» возвращают почти один и тот же список:
       // без отсева одно место попадало в выдачу до четырёх раз.
       for(const x of (d.result?.items||[])){

@@ -107,11 +107,18 @@ console.log(`\nПосле ранжирования: ${payload.results.length}`);
 for(const r of payload.results)
   console.log(`  ${String(r.name).slice(0,26).padEnd(28)} совпадение ${r.match}%  оценка ${r.rating??"—"}  качество ${r.quality}`);
 
-const withRating=out.items.filter(x=>Number.isFinite(x.rating)&&x.rating>0).length;
-const withPhoto=out.items.filter(x=>x.aggregator_image).length;
+// Считаем по сырому ответу, а не по разобранному: если разбор сломан, итог
+// «рейтингов нет» противоречил бы строке «рейтинг есть» двумя абзацами выше.
+const rawRating=has(x=>x.reviews&&x.reviews.general_rating);
+const rawPhoto=has(x=>(x.external_content||[]).some(c=>c&&c.main_photo_url));
 console.log("\nИтог:");
-if(!withRating)console.log("  Рейтингов нет. На этом тарифе поле reviews недоступно — порядок выдачи будет считаться без оценок людей.");
-else console.log(`  Рейтинги приходят у ${withRating} из ${out.items.length} — они уже влияют на порядок и видны на карточке.`);
-if(!withPhoto)console.log("  Фотографий нет. Поле external_content недоступно — карточки останутся с обложками.");
-else console.log(`  Фотографии приходят у ${withPhoto} из ${out.items.length}.`);
+if(!out.items.length){
+  console.log(`  ПРИЛОЖЕНИЕ НЕ РАЗОБРАЛО НИ ОДНОГО МЕСТА, хотя ответ пришёл (${items.length}).`);
+  console.log("  Ключ при этом рабочий — дело в коде или в параметрах запроса.");
+  console.log("  Пришлите этот вывод: по нему видно, что именно разошлось.");
+}
+if(!rawRating)console.log("  Рейтингов нет. На этом тарифе поле reviews недоступно — порядок выдачи будет считаться без оценок людей.");
+else console.log(`  Рейтинги приходят у ${rawRating} из ${items.length}${out.items.length?" — они уже влияют на порядок и видны на карточке.":"."}`);
+if(!rawPhoto)console.log("  Фотографий нет. Поле external_content недоступно — карточки останутся с обложками.");
+else console.log(`  Фотографии приходят у ${rawPhoto} из ${items.length}.`);
 if(raw)console.log("\nСырой ответ:\n"+JSON.stringify(body.result?.items?.[0]||body,null,1).slice(0,4000));
