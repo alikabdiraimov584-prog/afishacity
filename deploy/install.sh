@@ -110,11 +110,22 @@ systemctl enable -q free-snapshot.timer
 systemctl start free-snapshot.timer
 if [ -s "$DIR/data/osm_moscow.db" ]; then
   echo "   снимок на месте: $(du -h "$DIR/data/osm_moscow.db" | cut -f1)"
+elif systemctl is-active --quiet free-snapshot.service; then
+  # Повторная установка во время сборки начинала её заново, и снимок не
+  # успевал собраться никогда: десятки минут работы отбрасывались каждым
+  # запуском обновления. Идёт — пусть идёт.
+  echo "   сборка уже идёт — не трогаю (запущена $(systemctl show -p ActiveEnterTimestamp --value free-snapshot.service))"
+  echo "   следить: journalctl -u free-snapshot -f"
 else
   # Первая сборка идёт десятки минут, поэтому запускаем её фоном: сервер уже
   # отвечает, просто места пока ищутся через Overpass.
+  if [ -s "$DIR/data/osm_moscow.status.json" ]; then
+    echo "   прошлая сборка не удалась:"
+    sed -n 's/.*"reason": *"\([^"]*\)".*/     \1/p' "$DIR/data/osm_moscow.status.json" | head -1
+  fi
   echo "   снимка ещё нет — собираю в фоне, места пока ищутся напрямую"
   echo "   следить: journalctl -u free-snapshot -f"
+  echo "   ВАЖНО: не запускайте обновление снова, пока сборка не закончится"
   systemctl start --no-block free-snapshot.service || true
 fi
 
