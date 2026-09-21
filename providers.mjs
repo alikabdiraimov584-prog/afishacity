@@ -105,6 +105,19 @@ export function buildSearchPlan(args={}){
   // Ядро запроса без стоп-слов: то, что реально стоит искать в провайдерах.
   const coreQuery=safeQuery.split(" ").filter(w=>w.length>3&&!/[0-9]/.test(w)&&!STOP.has(w)&&!/^бесплат/.test(w)).slice(0,5).join(" ");
   if(!placeQueries.length&&!eventQueries.length&&coreQuery){eventQueries.push(coreQuery);placeQueries.push(coreQuery)}
+  // «Куда сходить вечером», «посоветуй что-нибудь», «чем заняться»: каждое
+  // слово — стоп-слово, план пустой, и поиск не шёл вовсе. Для человека это
+  // выглядело как «у сервиса нет данных». Такой запрос — про вечер в городе:
+  // бары, еда, кальян, клуб — а дальше ранкер и вкус решат.
+  const GENERIC_RE=/заняться|развлеч|интересн|посоветуй|порекоменд|провести|скучно|сходить|потусить|отдохнуть/;
+  const fromRules=tags.length>0;               // хоть одно правило узнало категорию
+  let generic=false;
+  if(!fromRules&&q.trim()&&(!coreQuery||GENERIC_RE.test(q))){
+    generic=true;
+    placeQueries.length=0;eventQueries.length=0;  // «заняться» как имя места искать бессмысленно
+    placeQueries.push("бар","ресторан","кальянная");
+    tags.push("bar","food","hookah","nightlife");
+  }
   const placeIntent=placeQueries.length>0;
   const eventIntent=eventQueries.length>0;
   // Аптеку или автосервис в афише событий искать бессмысленно: такие источники
@@ -113,9 +126,14 @@ export function buildSearchPlan(args={}){
   return {
     raw:args.query||"",safeQuery,coreQuery,
     placeQueries:uniq(placeQueries).slice(0,4),eventQueries:uniq(eventQueries).slice(0,4),tags:uniq(tags),
-    placeIntent,eventIntent,serviceOnly,
+    placeIntent,eventIntent,serviceOnly,generic,
     targetDate:args.target_date||null,maxPrice:args.max_price_rub??null,freeOnly:args.max_price_rub===0||/бесплат/.test(q),
     afterTime:args.after_time||null,area:args.area||null,
+    // Положение человека и просьба «рядом»: по ним снимок выбирает ближайшее,
+    // а кеш не подсовывает выдачу другого района.
+    userLocation:args.user_location&&Number.isFinite(+args.user_location.lat)&&Number.isFinite(+args.user_location.lon)
+      ?{lat:+args.user_location.lat,lon:+args.user_location.lon}:null,
+    near:args.near===true||/ближайш|поблизости|рядом|недалеко|неподалёку|неподалеку|от меня|пешком|близко|в шаговой/.test(q),
     heavyDrinkingPhrase:/выпить.*(много|сильно)|напиться|в хлам/.test(q)
   };
 }
@@ -323,6 +341,7 @@ const ITEM_SCHEMA=2;
 // Центр — примерно кольцо радиусом 5 км вокруг Кремля: Садовое и ближние районы.
 const CENTER_BBOX = "55.71,37.55,55.80,37.69";
 export function wantsCenter(area){return /центр/.test(text(area).toLowerCase())}
+function centerFor(plan){return wantsCenter(plan.area)&&!(plan.near&&plan.userLocation)}
 // Overpass — не один сервис, а несколько независимых зеркал одного API.
 // С единственным URL мы просто меняли зависимость от агрегатора на зависимость
 // от overpass-api.de: он регулярно перегружен и отвечает 429/504.
@@ -454,7 +473,7 @@ export async function searchOSM(plan,opts={}){
   const snap=opts.snapshot!==undefined?opts.snapshot:getSnapshot();
   if(snap){
     try{
-      const els=snap.search(plan,{center:wantsCenter(plan.area),limit:80});
+      const els=snap.search(plan,{center:centerFor(plan),limit:plan.userLocation?160:120,point:plan.userLocation});
       const items=els.map(x=>normalizeOsmItem(x,plan)).filter(x=>x.name!=="Заведение");
       // Снимок ответил — в сеть не идём вовсе. Пусто в снимке ещё не значит
       // «пусто в городе», поэтому на этот случай ниже остаётся Overpass.
@@ -464,7 +483,7 @@ export async function searchOSM(plan,opts={}){
   const filters=osmFilters(plan);
   if(!filters.length) return {items:[],errors:[],disabled:false};
   // Просят центр — сужаем область поиска, иначе Overpass отдаёт всю Москву.
-  const bbox=wantsCenter(plan.area)?CENTER_BBOX:MOSCOW_BBOX;
+  const bbox=centerFor(plan)?CENTER_BBOX:MOSCOW_BBOX;
   // Overpass просили считать до 18 с, а клиент обрывал на 6.5 с: тяжёлые запросы
   // всегда падали по таймауту и накручивали предохранителю отказы. Сводим вместе.
   const query=`[out:json][timeout:${OVERPASS_TIMEOUT_S}];(${filters.map(s=>s.replaceAll("{{bbox}}",bbox)).join("")});out center tags 80;`;
@@ -513,7 +532,10 @@ function cacheKeyFor(name,plan,hasKey){
   // Область входит в ключ: у центра и всей Москвы результаты разные.
   // Версия формата — тоже: файловый кеш переживает перезапуск, и после обновления
   // сервер иначе продолжал бы отдавать карточки, собранные прежним кодом.
-  const base={v:ITEM_SCHEMA,t:plan.tags,c:wantsCenter(plan.area)};
+  // Точка округлена до ~1 км: соседние запросы из одного двора делят кеш,
+  // а выдача другого района в него не попадает.
+  const pt=plan.userLocation?[Math.round(plan.userLocation.lat*100)/100,Math.round(plan.userLocation.lon*60)/60]:null;
+  const base={v:ITEM_SCHEMA,t:plan.tags,c:centerFor(plan),p:pt};
   const part={
     kudago:{e:plan.eventQueries.slice(0,3),p:plan.placeQueries.slice(0,3),f:plan.freeOnly,d:plan.targetDate},
     timepad:{e:plan.eventQueries.length?plan.eventQueries.slice(0,3):[plan.coreQuery||""],d:plan.targetDate,f:plan.freeOnly,m:plan.maxPrice},
@@ -559,11 +581,21 @@ export async function searchLiveInventory(args={},env=process.env,opts={}){
   const items=dedupe([...(d.items||[]),...(o.items||[]),...(k.items||[]),...(t.items||[])]);
   const degraded={kudago:k.degraded,timepad:t.degraded,osm:o.degraded,dgis:d.degraded};
   const from_cache={kudago:k.from_cache,timepad:t.from_cache,osm:o.from_cache,dgis:d.from_cache};
-  const anyDegraded=Object.values(degraded).some(Boolean);
-  const anyStale=[k,t,o,d].some(x=>x.degraded&&x.from_cache);
+  // Примечание про источники — только когда не ответил источник, который
+  // этому запросу нужен, и найденного мало. Раньше оно вставало, стоило
+  // любому из четырёх не ответить: на «бар рядом» человек читал «часть
+  // источников недоступна» из-за афиши событий, которая тут ни при чём, —
+  // и каждый ответ выглядел как сбой, хотя места найдены.
+  const relevant=[];
+  if(plan.eventIntent)relevant.push(k,t);
+  if(plan.placeIntent||!plan.eventIntent)relevant.push(o);
+  if(!d.disabled)relevant.push(d);
+  const relevantDegraded=relevant.filter(x=>x.degraded);
+  const thin=items.length<3;
+  const anyStale=relevantDegraded.some(x=>x.from_cache);
   const notes=[];
   if(plan.heavyDrinkingPhrase)notes.push("Запрос интерпретирован как поиск баров/пабов/ночных заведений; FREE не ранжирует места по количеству алкоголя.");
-  if(anyDegraded)notes.push(anyStale?"Часть источников временно недоступна, показываю сохранённые результаты.":"Часть источников временно недоступна.");
+  if(relevantDegraded.length&&thin)notes.push(anyStale?"Часть источников не ответила — показываю сохранённое.":"Часть источников не ответила — показываю, что нашлось.");
   return {
     plan,items,
     errors:[...(k.errors||[]),...(t.errors||[]),...(o.errors||[]),...(d.errors||[])],

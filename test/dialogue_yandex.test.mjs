@@ -53,7 +53,7 @@ test("отказ поиска агент озвучивает, а не зама�
   const r=await runYandexDialogue("бар",[],{cfg:CFG,fetchImpl:m.fetchImpl,
     deps:{recommend_free:async()=>{throw new Error("Overpass 504")}}});
   assert.match(r.text,/недоступен/);
-  assert.ok(m.seen[1].some(x=>/поиск не удался: Overpass 504/.test(x.text)),
+  assert.ok(m.seen[1].some(x=>/поиск сейчас не сработал/.test(x.text)&&!/Overpass 504/.test(x.text)),
     "модель должна узнать причину отказа");
 });
 
@@ -87,7 +87,10 @@ test("цикл не может зациклиться на инструмент�
   const r=await runYandexDialogue("бар",[],{cfg:CFG,fetchImpl:m.fetchImpl,
     deps:{recommend_free:async()=>{runs++;return PLACES}}});
   assert.ok(runs<=3,`инструмент вызван ${runs} раз`);
-  assert.ok(m.seen.length<=3,"обращений к модели не больше числа раундов");
+  // Раунды плюс один заключительный ход без инструментов: иначе, если модель
+  // на последнем раунде снова просит поиск, ответа по нему не прозвучит.
+  assert.ok(m.seen.length<=4,"обращений к модели не больше раундов + один заключительный");
+  assert.match(m.seen.at(-1).at(-1).text,/больше инструментов не будет/);
 });
 
 test("голосовой режим меняет правила речи в подсказке", async () => {
@@ -170,7 +173,10 @@ test("вслух агент не ходит к модели третий раз"
   const m=model(...Array(5).fill(JSON.stringify({say:"ищу",tool:"recommend_free",args:{query:"бар"}})));
   await runYandexDialogue("бар",[],{cfg:CFG,fetchImpl:m.fetchImpl,voice:true,
     deps:{recommend_free:async()=>PLACES}});
-  assert.equal(m.seen.length,2,"вслух — не больше двух обращений к модели");
+  // Два хода с инструментами и один заключительный без них — чтобы человек
+  // услышал ответ, а не только «секунду, смотрю».
+  assert.equal(m.seen.length,3,"вслух — два хода с поиском плюс заключительный ответ");
+  assert.match(m.seen.at(-1).at(-1).text,/больше инструментов не будет/);
 });
 
 const FEMALE_VOICES=new Set(["alena","jane","omazh","dasha","julia","lera","marina","masha"]);

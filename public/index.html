@@ -665,6 +665,10 @@ async function recommend(){
 function reason(r){const a=[...(r.reasons||[])],d=r.dna||{};if(d.quiet>=68)a.push("можно разговаривать");if(d.romantic>=70)a.push("подходит вдвоём");if(d.late>=70)a.push("работает поздно");return [...new Set(a)].slice(0,3).join(" · ")||"лучшее совпадение с вашим контекстом"}
 // Картинки идут через серверный прокси (защита от хотлинков и смешанного контента); в демо без сервера — напрямую.
 function imgSrc(url){if(!url)return "";return chatState.serverOk?API_BASE+"/api/img?u="+encodeURIComponent(url):url}
+// Своя обложка — относительный путь на нашем же сервере: её не надо гнать
+// через прокси картинок, а в нативном приложении надо дописать адрес API.
+function ownUrl(u){return u&&u.startsWith("/")?API_BASE+u:u}
+function mediaSrc(r){const photo=r.photo||{};const url=r.image_url;if(!url)return "";return photo.origin==="generated"||/^\/api\/cover\.svg/.test(url)?ownUrl(url):imgSrc(url)}
 function placeEmoji(r){const c=(window.FreePlanner?FreePlanner.guessCategory([r.category,r.name,(r.tags||[]).join(" ")].join(" ")):"other");
   const map={bar:"🍸",food:"🍽️",hookah:"💨",club:"🪩",karaoke:"🎤",coffee:"☕",culture:"🖼️",active:"🎳",spa:"🧖",walk:"🌳",other:r.kind==="event"?"🎟️":"📍"};
   return {cls:r.kind==="event"&&c==="other"?"c-event":"c-"+c,emoji:map[c]||"📍"}}
@@ -690,7 +694,7 @@ function imageBlock(r){
     :"";
   const cover=r.cover_url||(photo.origin==="generated"?photo.url:"");
   const url=r.image_url||photo.url;
-  if(url)return `<div class="placeMedia ${cls}" data-emoji="${emoji}"${cover?` data-cover="${esc(cover)}"`:""}><img src="${esc(photo.origin==="generated"?url:imgSrc(url))}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="noImg(this)">${credit}</div>`;
+  if(url)return `<div class="placeMedia ${cls}" data-emoji="${emoji}"${cover?` data-cover="${esc(ownUrl(cover))}"`:""}><img src="${esc(mediaSrc(r))}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="noImg(this)">${credit}</div>`;
   return `<div class="placeMedia noimg ${cls}" data-emoji="${emoji}"></div>`;
 }
 function bookingLabel(r){
@@ -1272,7 +1276,7 @@ function toggleSave(id){const r=placeById(id);if(!r)return;const i=saved.findInd
 function openDetail(id){
   const r=placeById(id);if(!r)return;
   $("#detail").innerHTML=`<div class="sheet"><button class="close">×</button>
-    ${r.image_url?`<div class="placeMedia ${placeEmoji(r).cls}" data-emoji="${placeEmoji(r).emoji}" style="margin:0 0 15px"><img src="${esc(imgSrc(r.image_url))}" alt="" referrerpolicy="no-referrer" onerror="noImg(this)"></div>`:""}
+    ${r.image_url?`<div class="placeMedia ${placeEmoji(r).cls}" data-emoji="${placeEmoji(r).emoji}" style="margin:0 0 15px"><img src="${esc(mediaSrc(r))}" alt="" referrerpolicy="no-referrer" onerror="noImg(this)"></div>`:""}
     <div class="eyebrow">${esc(r.kind==="event"?"СОБЫТИЕ":"МЕСТО")}</div><h2>${esc(r.name)}</h2><p>${esc(r.category||"")} · ${esc(r.area||"")}</p>
     <div class="detailGrid"><div class="detail"><b>Цена</b><br>${esc(r.price||"на сайте")}</div><div class="detail"><b>Время</b><br>${esc(r.time||"по расписанию")}</div><div class="detail"><b>Почему вам</b><br>${esc(reason(r))}</div><div class="detail"><b>Бронирование</b><br>${esc(r.booking_provider||"через страницу места")}</div></div>
     <p class="small" style="margin-top:10px;color:var(--muted)">Данные: ${esc(r.provider||"открытые источники")}${r.photo&&r.photo.credit&&r.photo.credit.text?` · фото: ${esc(r.photo.credit.text)}`:r.photo&&r.photo.origin==="generated"?" · обложка нарисована FREE":""}</p>

@@ -42,7 +42,13 @@ test("searchLiveInventory: при сбое источника отдаётся �
   assert.equal(r.degraded.kudago,true);assert.equal(r.from_cache.kudago,true);
   assert.equal(r.items[0].id,"k1","stale-ответ всё ещё отдаётся");
   assert.ok(r.errors.some(e=>/KudaGo: ECONNRESET/.test(e)),r.errors.join());
-  assert.match(r.note,/временно недоступна, показываю сохранённые результаты/);
+  // KudaGo — афиша событий; запросу «бар» она не нужна. Раньше примечание
+  // вставало при любом сбое, и каждый ответ выглядел как поломка.
+  assert.equal(r.note,null,"сбой нерелевантного источника не показываем");
+  // А когда упал нужный источник и найдено мало — примечание есть.
+  const ev=await searchLiveInventory({query:"стендап"},env,{providers,cache,now:c.now});
+  assert.equal(ev.degraded.kudago,true);
+  assert.match(ev.note,/не ответила/,"упал нужный источник, найдено мало — человек об этом знает");
   assert.equal(r.degraded.timepad,false);
 });
 
@@ -54,7 +60,7 @@ test("searchLiveInventory: провайдер, вернувший только �
   for(let i=0;i<3;i++){
     const r=await searchLiveInventory({query:"стендап"},env,{providers,cache,now:c.now,breaker:{failures:3,cooldownMs:1000}});
     assert.equal(r.degraded.timepad,true);assert.equal(r.from_cache.timepad,false);
-    assert.match(r.note,/Часть источников временно недоступна\.$/);
+    assert.match(r.note,/Часть источников не ответила — показываю, что нашлось\.$/);
     assert.ok(r.errors.includes("Timepad: 503 Service Unavailable"));
   }
   assert.equal(calls,3);
@@ -74,7 +80,9 @@ test("searchLiveInventory: заметка о сбое не затирает за
   const cache=createCache({now:()=>1});
   const providers={kudago:async()=>{throw new Error("down")},timepad:emptyProvider,osm:emptyProvider,dgis:emptyProvider};
   const r=await searchLiveInventory({query:"хочу выпить очень много"},env,{providers,cache,now:()=>1});
-  assert.match(r.note,/не ранжирует места по количеству алкоголя\. Часть источников временно недоступна\./);
+  // KudaGo к «выпить» не относится: остаётся только заметка про алкоголь.
+  assert.match(r.note,/не ранжирует места по количеству алкоголя\./);
+  assert.ok(!/не ответила/.test(r.note),"сбой афиши событий тут ни при чём");
   resetBreakers();
 });
 

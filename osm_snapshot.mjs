@@ -167,15 +167,22 @@ export function openSnapshot(file,{now=Date.now}={}){
   const places=Number(meta.places)||0;
   if(!places){try{db.close()}catch{};return null}
 
+  // Без ORDER BY «limit 80» отдавал первые строки индекса — то есть 80 самых
+  // ЮЖНЫХ точек рамки, а не ближайшие и не лучшие: на «бар рядом» из центра
+  // приходили Бутово и Южное Чертаново. Теперь — ближайшие к точке (человеку,
+  // а без него — центру города). Долгота сжата на cos²(55.75°) ≈ 0.32, чтобы
+  // километр на восток весил столько же, сколько километр на север.
   const byTag=db.prepare(`
     select p.pid,p.otype,p.oid,p.lat,p.lon,p.tags_json
     from ptag t join place p on p.pid=t.pid
     where t.tag=? and t.lat between ? and ? and t.lon between ? and ?
+    order by (t.lat-?)*(t.lat-?)+(t.lon-?)*(t.lon-?)*0.32
     limit ?`);
   const byName=db.prepare(`
     select p.pid,p.otype,p.oid,p.lat,p.lon,p.tags_json
     from place_fts f join place p on p.pid=f.pid
     where place_fts match ? and p.lat between ? and ? and p.lon between ? and ?
+    order by (p.lat-?)*(p.lat-?)+(p.lon-?)*(p.lon-?)*0.32
     limit ?`);
 
   const row=(r)=>{
@@ -193,13 +200,19 @@ export function openSnapshot(file,{now=Date.now}={}){
      * чтобы providers.mjs нормализовал их той же функцией, что и живой ответ —
      * иначе карточка из снимка отличалась бы от карточки из сети.
      */
-    search(plan={},{limit=80,center=false}={}){
-      const box=center?CENTER_BBOX:MOSCOW_BBOX;
+    // point — откуда мерить близость: положение человека, если есть.
+    // Есть точка — рамка сужается до ~6 км вокруг неё: дальше «ближайшее»
+    // не бывает, а ранкеру достаётся больше кандидатов из нужного района.
+    search(plan={},{limit=80,center=false,point=null}={}){
+      const p=point&&Number.isFinite(+point.lat)&&Number.isFinite(+point.lon)?{lat:+point.lat,lon:+point.lon}:null;
+      const box=p?{south:p.lat-0.055,north:p.lat+0.055,west:p.lon-0.095,east:p.lon+0.095}
+        :center?CENTER_BBOX:MOSCOW_BBOX;
+      const at=p||{lat:(CENTER_BBOX.south+CENTER_BBOX.north)/2,lon:(CENTER_BBOX.west+CENTER_BBOX.east)/2};
       const seen=new Map();
       const tags=(plan.tags||[]).filter(t=>CATEGORY_KEYS.has(t));
       for(const t of tags){
         if(seen.size>=limit)break;
-        for(const r of byTag.all(t,box.south,box.north,box.west,box.east,limit))
+        for(const r of byTag.all(t,box.south,box.north,box.west,box.east,at.lat,at.lat,at.lon,at.lon,limit))
           if(!seen.has(r.pid))seen.set(r.pid,row(r));
       }
       // Категория не опознана, но место всё равно ищут по названию — как и в
@@ -208,7 +221,7 @@ export function openSnapshot(file,{now=Date.now}={}){
         const q=ftsQuery(plan.coreQuery||plan.safeQuery||plan.raw||"");
         if(q){
           try{
-            for(const r of byName.all(q,box.south,box.north,box.west,box.east,limit))
+            for(const r of byName.all(q,box.south,box.north,box.west,box.east,at.lat,at.lat,at.lon,at.lon,limit))
               if(!seen.has(r.pid))seen.set(r.pid,row(r));
           }catch{/* синтаксис FTS — не повод падать */}
         }

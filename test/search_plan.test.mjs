@@ -26,12 +26,16 @@ test("короткие корни не ловятся внутри чужих с
   assert.ok(!plan("паблик-ток о науке").tags.includes("bar"),"паблик ≠ паб");
 });
 
-test("ядро запроса очищено от стоп-слов", ()=>{
+test("ядро запроса очищено от стоп-слов; общий вопрос получает вечерний план", ()=>{
   const p=plan("куда сходить в Москве");
   assert.equal(p.coreQuery,"");
-  assert.deepEqual(p.eventQueries,[]);
-  assert.deepEqual(p.placeQueries,[]);
+  // Раньше план оставался пустым, поиск не шёл, и человек слышал «ничего не
+  // нашла». «Куда сходить» — это про вечер в городе: бары, еда, кальян.
+  assert.equal(p.generic,true);
+  assert.deepEqual(p.placeQueries,["бар","ресторан","кальянная"]);
+  assert.ok(p.tags.includes("bar")&&p.tags.includes("food"));
   assert.equal(plan("найди что-нибудь про динозавров").coreQuery,"динозавров");
+  assert.equal(plan("найди что-нибудь про динозавров").generic,false,"конкретное слово — не общий вопрос");
 });
 
 test("бесплатно и бюджет", ()=>{

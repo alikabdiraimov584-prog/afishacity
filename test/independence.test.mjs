@@ -117,3 +117,43 @@ test("у места из OpenStreetMap нет строк-заглушек вме
   assert.equal(x.price_label,null);
   assert.equal(x.availability,null);
 });
+
+// ---- Живой ярус фото ----
+// Жалоба: «присылает варианты без фото». У типичного места из OpenStreetMap
+// нет ни тега image, ни сайта, и каскад заканчивался обложкой почти всегда.
+
+test("фото из Викиданных/Викисклада берётся живым запросом и подписывается", async () => {
+  const {resolvePhoto}=await import("../photos.mjs");
+  const bare={id:"osm:node:1",name:"Бар",category:"Бар",coords:{lat:55.74,lon:37.63}};
+  const lookup=async(place)=>({url:"https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Bar.jpg/1280px-Bar.jpg",
+    width:1280,height:853,origin:"commons",confidence:"low",
+    credit:{text:"Иван · Wikimedia Commons",url:"https://commons.wikimedia.org/wiki/File:Bar.jpg"},
+    license:{code:"CC BY-SA 4.0",url:"https://commons.wikimedia.org/wiki/File:Bar.jpg"}});
+  const out=await resolvePhoto(bare,{lookup,coverUrl:()=>"/api/cover.svg?x"});
+  assert.equal(out.origin,"commons");
+  assert.match(out.url,/1280px-Bar\.jpg$/);
+  assert.match(out.credit.text,/Wikimedia Commons/,"чужой кадр без подписи не показываем");
+});
+
+test("живой ярус не мешает: нет ответа или ошибка — обложка", async () => {
+  const {resolvePhoto}=await import("../photos.mjs");
+  const bare={id:"osm:node:2",name:"Бар",category:"Бар",coords:{lat:55.74,lon:37.63}};
+  const none=await resolvePhoto(bare,{lookup:async()=>null,coverUrl:()=>"/api/cover.svg?x"});
+  assert.equal(none.origin,"generated");
+  const boom=await resolvePhoto(bare,{lookup:async()=>{throw new Error("сеть")},coverUrl:()=>"/api/cover.svg?x"});
+  assert.equal(boom.origin,"generated");
+  // Логотип, иконка, крошечная картинка — не фото места.
+  const junk=await resolvePhoto(bare,{lookup:async()=>({url:"https://x/logo.png",width:200,height:200,credit:{text:"x"}}),coverUrl:()=>"/c"});
+  assert.equal(junk.origin,"generated");
+});
+
+test("сайт заведения и теги остаются выше живого яруса", async () => {
+  const {resolvePhoto}=await import("../photos.mjs");
+  let asked=false;
+  const withSite={id:"osm:node:3",name:"Бар",category:"Бар",official_source:"https://rovesnik.bar/",coords:{lat:55.74,lon:37.63}};
+  const out=await resolvePhoto(withSite,{
+    siteMeta:async()=>({image_url:"https://rovesnik.bar/og.jpg",image_width:1200,image_height:800}),
+    lookup:async()=>{asked=true;return null},coverUrl:()=>"/c"});
+  assert.equal(out.origin,"venue_site");
+  assert.equal(asked,false,"когда фото уже есть, в сеть за Викискладом не ходим");
+});

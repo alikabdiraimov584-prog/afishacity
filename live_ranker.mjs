@@ -210,7 +210,9 @@ export function rankLive(items,args={},plan={}){
     near=args.near===true||NEAR_RE.test(norm(q)),
     rain=args.weather_context?.rain===true,moment=hoursMoment(args),
     serviceAsked=tags.some(t=>SERVICE_TAGS.has(t)),
-    centerAsked=/центр/.test(norm(args.area||""));
+    // «Рядом» с известной точкой важнее «центра»: иначе просьба «ближайшее»
+    // из Кузьминок отсекала всё дальше 6 км от Кремля — то есть всё рядом.
+    centerAsked=/центр/.test(norm(args.area||""))&&!(near&&user);
   const scored=[];
   for(const x of items){
     if(!dateOkay(x,args)||!timeOkay(x,args)||!priceOkay(x,args))continue;

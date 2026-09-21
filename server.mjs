@@ -11,12 +11,13 @@ import {mkdirSync,writeFileSync as writeFileSyncFs,readFileSync as readFileSyncF
 import {searchLiveInventory,providerHealth,snapshotStatus} from "./providers.mjs";
 import {renderCover} from "./cover.mjs";
 import {safeRemoteUrl,guardedFetch,USER_AGENT} from "./net_guard.mjs";
-import {resolvePhoto,ownSiteUrl} from "./photos.mjs";
+import {resolvePhoto,ownSiteUrl,commonsFileUrl} from "./photos.mjs";
 import {yandexConfig,yandexStatus,yandexStt,yandexTts,YandexError,STT_MAX_BYTES,ttsEngineState} from "./yandex.mjs";
 import {runYandexDialogue} from "./dialogue_yandex.mjs";
-import {CONCIERGE} from "./agent.mjs";
+import {CONCIERGE,toolResultForAgent} from "./agent.mjs";
 import {rankLive,resultPayload} from "./live_ranker.mjs";
 import {startWarmup} from "./warmup.mjs";
+import {createCache} from "./cache.mjs";
 import {loadDotenv} from "./env.mjs";
 
 const __dirname=fileURLToPath(new URL(".",import.meta.url));
@@ -57,7 +58,8 @@ function authorize(req){
   return {user:v.user};
 }
 // Хранилище: SQLite в data/free.db (FREE_DB переопределяет путь; в тестах — память).
-const store=openStore(process.env.FREE_DB||(process.env.NODE_ENV==="test"?":memory:":join(__dirname,"data","free.db")));
+const DATA_DIR=join(__dirname,"data");
+const store=openStore(process.env.FREE_DB||(process.env.NODE_ENV==="test"?":memory:":join(DATA_DIR,"free.db")));
 // Кто перед нами: пользователь Telegram (после проверки подписи) и/или анонимный клиент из заголовка.
 function identify(req,auth){
   const anon=String(req.headers["x-free-client"]||"").trim();
@@ -147,12 +149,21 @@ function htmlAttr(tag,name){
 }
 async function pageMeta(raw){
   const u=safeRemoteUrl(raw);if(!u)return {};
-  const hit=PAGE_META_CACHE.get(u.href);if(hit&&Date.now()-hit.at<30*60*1000)return hit.value;
+  const hit=PAGE_META_CACHE.get(u.href);if(hit&&Date.now()-hit.at<(hit.value&&hit.value.image_url?30*60*1000:6*3600e3))return hit.value;
+  const remember=(value)=>{if(PAGE_META_CACHE.size>2000)PAGE_META_CACHE.clear();PAGE_META_CACHE.set(u.href,{at:Date.now(),value});return value};
   // 256 КБ хватает на <head> любой страницы; раньше тело читалось целиком.
-  const r=await guardedFetch(u.href,{maxBytes:256*1024,timeoutMs:2200,
-    accept:t=>t.includes("text/html")||t.includes("xhtml"),
-    headers:{"Accept":"text/html,application/xhtml+xml"}});
-  if(!r.ok)return {};
+  // Заголовок браузера: анти-бот заслоны на сайтах ресторанов (DDoS-Guard,
+  // Qrator) отдают ботам заглушку без og:image. Отказ тоже запоминаем — на
+  // шесть часов, чтобы не долбить мёртвые сайты на каждом показе карточки.
+  let r=null;
+  try{
+    r=await guardedFetch(u.href,{maxBytes:256*1024,timeoutMs:2200,
+      accept:t=>t.includes("text/html")||t.includes("xhtml"),
+      headers:{"Accept":"text/html,application/xhtml+xml",
+        "User-Agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+        "Accept-Language":"ru-RU,ru;q=0.9"}});
+  }catch{r=null}
+  if(!r||!r.ok)return remember({});
   const html=r.body.toString("utf8");
   let image=null,image_width=null,image_height=null;
   for(const tag of html.match(/<meta\b[^>]*>/gi)||[]){
@@ -177,10 +188,7 @@ async function pageMeta(raw){
       break;
     }
   }
-  const value={image_url:image,image_width,image_height,booking_url,booking_kind,booking_provider};
-  // Кеш ограничен: раньше Map рос без предела на каждый новый домен.
-  if(PAGE_META_CACHE.size>2000)PAGE_META_CACHE.clear();
-  PAGE_META_CACHE.set(u.href,{at:Date.now(),value});return value;
+  return remember({image_url:image,image_width,image_height,booking_url,booking_kind,booking_provider});
 }
 // Прокси картинок: многие сайты блокируют хотлинки и отдают http, а страница у нас https.
 const IMG_MAX=3*1024*1024;
@@ -198,6 +206,88 @@ async function proxyImage(res,raw){
     "Content-Length":String(r.body.length),"X-Content-Type-Options":"nosniff",...corsHeaders(res.req)});
   return res.end(r.body);
 }
+/* Фото из Викиданных и Викисклада — живьём, с кешем на диске.
+   У типичного места из OpenStreetMap нет ни тега image, ни сайта, и каскад
+   заканчивался сгенерированной обложкой почти всегда. Два источника без
+   ключей закрывают заметную часть: P18 у мест, известных Викиданным, и
+   геопоиск Викисклада — фотографии, снятые в сорока метрах от точки. */
+const PHOTO_CACHE=(()=>{
+  const file=process.env.NODE_ENV==="test"?null:join(DATA_DIR,"photo_cache.json");
+  if(file){try{mkdirSync(DATA_DIR,{recursive:true})}catch{}}
+  const c=createCache({file,ttlMs:30*24*3600e3,staleMs:90*24*3600e3,max:50000});
+  try{const n=c.load();if(n)console.log(`Кеш фото: ${n} записей`)}catch{}
+  return c;
+})();
+const PHOTO_NONE_MS=24*3600e3;                 // отрицательный ответ — сутки, потом ещё попытка
+const WIKI_HEADERS={"Accept":"application/json","User-Agent":"FREE-Moscow/1.0 (https://afishasity.ru; консьерж по городу)"};
+function commonsCredit(page,author,license){
+  return {credit:{text:author?`${author} · Wikimedia Commons`:"Wikimedia Commons",url:page||"https://commons.wikimedia.org/"},
+    license:{code:license||"см. страницу файла",url:page||"https://commons.wikimedia.org/"}};
+}
+async function wikiJson(url){
+  const r=await guardedFetch(url,{maxBytes:512*1024,timeoutMs:1800,headers:WIKI_HEADERS,
+    accept:t=>t.includes("json")});
+  if(!r.ok)return null;
+  try{return JSON.parse(r.body.toString("utf8"))}catch{return null}
+}
+async function photoByWikidata(qid){
+  const d=await wikiJson(`https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${encodeURIComponent(qid)}&props=claims&format=json`);
+  const claims=d&&d.entities&&d.entities[qid]&&d.entities[qid].claims;
+  const p18=claims&&claims.P18&&claims.P18[0]&&claims.P18[0].mainsnak&&claims.P18[0].mainsnak.datavalue;
+  const file=p18&&p18.value;
+  if(!file)return null;
+  const url=commonsFileUrl(file);
+  if(!url)return null;
+  return {url,origin:"commons",confidence:"medium",...commonsCredit(`https://commons.wikimedia.org/wiki/File:${encodeURIComponent(String(file).replace(/ /g,"_"))}`)};
+}
+async function photoByGeo(lat,lon){
+  const u=`https://commons.wikimedia.org/w/api.php?action=query&generator=geosearch&ggscoord=${lat}|${lon}&ggsradius=60&ggsnamespace=6&ggslimit=8&prop=imageinfo&iiprop=url|size|mime|extmetadata&iiurlwidth=1280&format=json`;
+  const d=await wikiJson(u);
+  const pages=d&&d.query&&d.query.pages?Object.values(d.query.pages):[];
+  for(const pg of pages){
+    const ii=pg.imageinfo&&pg.imageinfo[0];if(!ii)continue;
+    if(!/^image\/(jpeg|png|webp)$/.test(ii.mime||""))continue;
+    if((ii.width||0)<600||(ii.height||0)<400)continue;
+    const url=ii.thumburl||ii.url;if(!url)continue;
+    const md=ii.extmetadata||{};
+    const author=(md.Artist&&md.Artist.value||"").replace(/<[^>]*>/g,"").trim().slice(0,60)||null;
+    const lic=(md.LicenseShortName&&md.LicenseShortName.value)||null;
+    return {url,width:ii.thumbwidth||ii.width,height:ii.thumbheight||ii.height,origin:"commons",confidence:"low",
+      ...commonsCredit(ii.descriptionurl||null,author,lic)};
+  }
+  return null;
+}
+async function photoLookup(place){
+  const key=String(place.id||"");if(!key)return null;
+  const hit=PHOTO_CACHE.get(key);
+  if(hit){
+    const v=hit.value;
+    if(v&&v.none){if(Date.now()-(v.at||0)<PHOTO_NONE_MS)return null}
+    else if(v&&v.url)return v;
+  }
+  let found=null;
+  try{
+    for(const qid of [place.wikidata,place.brand_wikidata]){
+      if(!qid||!/^Q\d+$/.test(qid))continue;
+      found=await photoByWikidata(qid);if(found)break;
+    }
+    if(!found&&place.coords&&Number.isFinite(+place.coords.lat)&&Number.isFinite(+place.coords.lon))
+      found=await photoByGeo(+place.coords.lat,+place.coords.lon);
+  }catch(e){found=null}
+  PHOTO_CACHE.set(key,found||{none:true,at:Date.now()});
+  return found;
+}
+
+// Ограничение по времени, которое не бросает работу: не успевшее доделывается
+// в фоне и ложится в кеш — следующий показ этого места уже с фотографией.
+function withDeadline(promise,ms,fallback){
+  let timer=null;
+  const late=new Promise(res=>{timer=setTimeout(()=>res(fallback),ms)});
+  promise.then(()=>clearTimeout(timer),()=>clearTimeout(timer));
+  return Promise.race([promise.catch(()=>fallback),late]);
+}
+const ENRICH_DEADLINE_MS=Number(process.env.ENRICH_DEADLINE_MS||1600);
+
 async function enrichResults(payload){
   const results=payload.results||[];
   const enriched=await Promise.all(results.map(async (x,i)=>{
@@ -205,8 +295,13 @@ async function enrichResults(payload){
     // Раньше обогащение шло по x.source, а у карточек агрегатора это его же
     // домен — код сам углублял зависимость, вытягивая превью с агрегатора.
     const site=i<=4?ownSiteUrl(x):null;
-    const meta=site?await pageMeta(site).catch(()=>({})):{};
-    const photo=await resolvePhoto(x,{siteMeta:async()=>meta,coverUrl});
+    // Один медленный сайт задерживал весь ответ на секунды: каждая карточка
+    // получает свой бюджет, а не успевшее доделывается в фоне.
+    const meta=site?await withDeadline(pageMeta(site),ENRICH_DEADLINE_MS,{}):{};
+    const photo=await withDeadline(
+      resolvePhoto(x,{siteMeta:async()=>meta,coverUrl,lookup:photoLookup}),
+      ENRICH_DEADLINE_MS,
+      {url:coverUrl(x),origin:"generated",confidence:"none",credit:null,license:null});
     const booking=safeHref(x.booking_url)||safeHref(meta.booking_url)||null;
     return {...x,
       photo,
@@ -589,9 +684,10 @@ async function runDialogue(message,conversationId,context={},emit=null,signal=nu
       try{
         const result=await recommend(args);
         latestResults=(result.results||[]).slice(0,5);
-        results.push({type:"tool_result",tool_use_id:call.id,content:JSON.stringify({
-          status:result.status,count:result.count,note:result.note||null,results:latestResults
-        })});
+        // Та же сводка, что у Yandex-пути: только известные поля, без null,
+        // без служебного примечания и без photo/sources/dna. Полные карточки
+        // с пустотами заставляли модель рассказывать, чего она не знает.
+        results.push({type:"tool_result",tool_use_id:call.id,content:toolResultForAgent("recommend_free",result)});
       }catch(e){
         results.push({type:"tool_result",tool_use_id:call.id,is_error:true,content:`providers_unavailable: ${e.message}`});
       }

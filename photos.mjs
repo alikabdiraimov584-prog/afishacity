@@ -160,6 +160,19 @@ export async function resolvePhoto(place,deps={}){
     }
   }
 
+  // T3-live — Викиданные (P18) и Викисклад по координатам, если есть кому
+  // сходить в сеть. Офлайн-индекса у нас нет и не будет: он требует выкачать
+  // Викисклад, а живой запрос с кешем на диске даёт то же самое.
+  if(typeof deps.lookup==="function"){
+    let hit=null;
+    try{hit=await deps.lookup(place)}catch{hit=null}
+    if(hit&&hit.url&&looksLikePhoto(hit.url,{width:hit.width,height:hit.height})){
+      const r=out({url:hit.url,origin:hit.origin||"commons",confidence:hit.confidence||"medium",
+        credit:hit.credit||CREDIT.commons,license:hit.license||CREDIT.commons.license});
+      if(r)return r;
+    }
+  }
+
   // T5 — своя обложка. Этот уровень не может не сработать.
   return {url:typeof coverUrl==="function"?coverUrl(place):null,origin:"generated",confidence:"none",
     credit:null,license:CREDIT.osm.license};
