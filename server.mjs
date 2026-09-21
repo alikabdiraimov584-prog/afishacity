@@ -936,6 +936,10 @@ const server=http.createServer(async(req,res)=>{
         voice_ready:false,
         voice_model:null,
         providers:{kudago:true,timepad:true,osm:true,dgis:Boolean(process.env.DGIS_API_KEY||process.env.TWOGIS_API_KEY)},
+        // Отдельно и явно: без ключа 2GIS у выдачи нет ни рейтингов, ни фото
+        // заведений — по одному этому полю видно, почему места «так себе».
+        dgis:{enabled:Boolean(process.env.DGIS_API_KEY||process.env.TWOGIS_API_KEY),
+          gives:["рейтинг и число отзывов","фотографии заведений","признак закрытия","телефон и часы"]},
         provider_health:providerHealth(),
         osm_snapshot:snapshotStatus()
       });

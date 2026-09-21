@@ -321,13 +321,18 @@ function normalize2gisItem(x,plan){
   const photo=(x.external_content||[]).find(c=>c&&c.main_photo_url)?.main_photo_url||null;
   const rating=Number(x.reviews?.general_rating)||null;
   const rating_count=Number(x.reviews?.general_review_count)||0;
+  // 2GIS знает, что организация закрылась или временно не работает, — у карты
+  // такие точки висят годами. Это самый свежий признак из всех, что у нас есть.
+  const closed=Boolean(x.is_deleted||x.flags?.is_deleted||/закрыт|не работает|ликвидирован/i.test(
+    [x.schedule?.comment,x.org?.name,x.flags?.status].filter(Boolean).join(" ")));
+  const site=(contacts.find(c=>text(c.type).toLowerCase()==="website")||{}).url||null;
   return {
     id:`2gis:place:${x.id}`,provider:"2GIS",live:true,kind:"venue",name:x.name||"Заведение",organizer:x.name||"",
     cat:rubrics[0]||"Заведение",tags:inferTags(hay),cat_tags:rubricTags(rubrics),area:x.address_name||x.full_address_name||"Москва",metro:"",
     date_start:null,date_end:null,times:[],hours_label:schedule,price_label:null,price_min:null,free:false,
-    availability:null,rating,rating_count,aggregator_image:photo,aggregator_name:photo?"2GIS":null,
+    availability:null,rating,rating_count,closed,aggregator_image:photo,aggregator_name:photo?"2GIS":null,
     source:`https://2gis.ru/moscow/firm/${encodeURIComponent(x.id)}`,
-    point_source:`https://2gis.ru/moscow/firm/${encodeURIComponent(x.id)}`,official_source:null,
+    point_source:`https://2gis.ru/moscow/firm/${encodeURIComponent(x.id)}`,official_source:safeLink(site),
     image_url:null,booking_url:book.url,booking_kind:book.kind,booking_provider:book.provider,
     phone:contacts.find(c=>text(c.type).toLowerCase()==="phone")?.value||null,
     desc:rubrics.length?rubrics.join(" · "):"Карточка действующей организации из 2GIS",keywords:norm(hay),coords:x.point||null
@@ -335,7 +340,7 @@ function normalize2gisItem(x,plan){
 }
 export async function search2GIS(plan,key){
   if(!key)return {items:[],errors:[],disabled:true};
-  const out=[],errors=[];
+  const out=[],errors=[],seen=new Set();
   for(const q of plan.placeQueries.slice(0,4)){
     try{
       const u=new URL("https://catalog.api.2gis.com/3.0/items");u.searchParams.set("key",key);u.searchParams.set("q",q);u.searchParams.set("type","branch");
@@ -344,8 +349,14 @@ export async function search2GIS(plan,key){
       u.searchParams.set("point",near?`${near.lon},${near.lat}`:MOSCOW_POINT);
       u.searchParams.set("radius",near?"4000":centerFor(plan)?"6000":"50000");
       u.searchParams.set("page_size","50");u.searchParams.set("locale","ru_RU");
-      u.searchParams.set("fields","items.point,items.rubrics,items.schedule,items.full_address_name,items.contact_groups,items.external_content,items.reviews");
-      const d=await fetchJson(u);for(const x of (d.result?.items||[]))out.push(normalize2gisItem(x,plan));
+      u.searchParams.set("fields","items.point,items.rubrics,items.schedule,items.full_address_name,items.contact_groups,items.external_content,items.reviews,items.flags,items.org");
+      const d=await fetchJson(u);
+      // «бар», «паб», «коктейльный бар» возвращают почти один и тот же список:
+      // без отсева одно место попадало в выдачу до четырёх раз.
+      for(const x of (d.result?.items||[])){
+        if(!x||seen.has(x.id))continue;
+        seen.add(x.id);out.push(normalize2gisItem(x,plan));
+      }
     }catch(e){errors.push(`2GIS: ${e.message}`)}
   }
   return {items:out,errors,disabled:false};
@@ -564,14 +575,35 @@ export async function searchOSM(plan,opts={}){
   }
 }
 
+/* Одно место из двух источников.
+   Раньше вторая находка просто отбрасывалась, а у первой менялась подпись
+   провайдера: место из OpenStreetMap, найденное заодно в 2GIS, теряло рейтинг,
+   фотографию и телефон — то есть ровно то, ради чего 2GIS и подключают.
+   Теперь недостающие поля переносятся, а уже известные не затираются:
+   у OpenStreetMap точнее координаты и структурные теги, у 2GIS — рейтинг,
+   фото, часы и контакты. */
+const FROM_2GIS=["rating","rating_count","aggregator_image","aggregator_name",
+  "hours_label","phone","booking_url","booking_kind","booking_provider","closed"];
+function mergePlaces(a,b){
+  const from2=b.provider==="2GIS"?b:a.provider==="2GIS"?a:null;
+  const base=a.provider==="2GIS"&&b.provider!=="2GIS"?b:a;   // структурные данные — от карты
+  if(!from2)return base;
+  // Ноль — это «отзывов нет», а не значение: иначе счётчик из 2GIS не
+  // переносился, потому что у карты он уже «заполнен» нулём.
+  const empty=(v)=>v===undefined||v===null||v===""||v===0||v===false;
+  const out={...base};
+  for(const k of FROM_2GIS)if(empty(out[k])&&!empty(from2[k]))out[k]=from2[k];
+  if(from2.closed)out.closed=true;                            // 2GIS знает, что закрылось
+  if(!out.official_source&&from2.official_source)out.official_source=from2.official_source;
+  out.provider=base.provider==="2GIS"?"2GIS":`${base.provider}+2GIS`;
+  return out;
+}
 function dedupe(items){
   const seen=new Map();
   for(const x of items){
     const key=norm(`${x.name}|${x.date_start||"venue"}|${x.area||""}`).replace(/\s/g,"");
     if(!seen.has(key))seen.set(key,x);
-    else{
-      const a=seen.get(key);if(a.provider!=="2GIS"&&x.provider==="2GIS")seen.set(key,{...a,provider:`${a.provider}+2GIS`});
-    }
+    else seen.set(key,mergePlaces(seen.get(key),x));
   }
   return [...seen.values()];
 }

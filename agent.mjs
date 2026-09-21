@@ -236,6 +236,11 @@ export function toolResultForAgent(name,payload){
       else if(r.open_now===false)o.открыто_сейчас=false;
       if(r.closes_at)o.закрывается=r.closes_at;
       if(Number.isFinite(r.distance_km))o.от_вас_км=Math.round(r.distance_km*10)/10;
+      // Рейтинг называем только с числом отзывов: «пять звёзд» от трёх
+      // человек — не довод, и произносить его как довод нельзя.
+      if(Number.isFinite(r.rating)&&r.rating>0&&(r.rating_count||0)>=20){
+        o.оценка=r.rating;o.отзывов=r.rating_count;
+      }
       const why=(r.reasons||[]).slice(0,3);if(why.length)o.почему=why;
       return o;
     });

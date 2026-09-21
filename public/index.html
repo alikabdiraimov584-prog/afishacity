@@ -132,6 +132,10 @@ html{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-we
 .inlineCards{display:flex;gap:10px;overflow-x:auto;padding:8px 0 3px;scroll-snap-type:x mandatory}
 .placeCard{min-width:min(330px,85vw);max-width:330px;scroll-snap-align:start;border-radius:23px;background:#fff;border:1px solid rgba(255,255,255,.95);padding:16px;box-shadow:var(--shadow)}
 .placeCard.best{border-color:rgba(17,19,22,.18)}
+.rating{display:flex;align-items:baseline;gap:6px;margin:5px 0 2px}
+.rating .stars{color:#e8a13a;font-size:12px;letter-spacing:.5px}
+.rating b{font-size:13px;letter-spacing:-.02em}
+.rating .small{font-size:11px;color:#8a9098}
 .placeCard .tag{font-size:9px;text-transform:uppercase;letter-spacing:.11em;color:#858b93}.placeCard h3{font-size:20px;letter-spacing:-.035em;margin:6px 0 5px}.reason{font-size:12px;color:#626a74;line-height:1.4}.meta{font-size:11px;color:#8a9098;margin-top:7px}.score{float:right;font-size:20px;font-weight:780;letter-spacing:-.05em}.score small{font-size:8px;text-transform:uppercase;color:#91969d;letter-spacing:.08em;margin-left:3px}
 .cardBtns{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:13px}.cardBtn{border:1px solid var(--line);background:#fff;color:#313740;border-radius:12px;padding:9px;font-size:11px;font-weight:700}.cardBtn.primary{background:#111;color:#fff}.cardBtn.saved{background:#eaf7f0;color:#13724e}
 .actionBox{margin-top:12px;padding:14px;border-radius:18px;background:#111;color:#fff}.actionBox h4{margin:0 0 5px;font-size:15px}.actionBox p{margin:0;color:#adb3bb;font-size:11px;line-height:1.45}.actionBtns{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.actionBtns button,.actionBtns a{border:0;background:#fff;color:#111;border-radius:11px;padding:9px 11px;font-size:11px;font-weight:720;text-decoration:none}.actionBtns .ghost{background:#22262c;color:#fff}
@@ -704,6 +708,22 @@ function bookingLabel(r){
   if(r.booking_kind==="phone")return "Позвонить";
   return "Бронировать";
 }
+/* Оценка людей — единственный такой сигнал в выдаче, и без неё непонятно,
+   почему место первое. Показываем только с числом отзывов: «пять звёзд» от
+   трёх человек — не довод. Появляется вместе с ключом 2GIS. */
+function ratingLine(r){
+  const v=Number(r.rating),n=Number(r.rating_count)||0;
+  if(!Number.isFinite(v)||v<=0||n<20)return "";
+  const full=Math.round(v);
+  return `<div class="rating"><span class="stars" aria-hidden="true">${"★".repeat(full)}${"☆".repeat(Math.max(0,5-full))}</span>`
+    +`<b>${esc(v.toFixed(1))}</b><span class="small">${esc(String(n))} ${plural(n,"отзыв","отзыва","отзывов")}</span></div>`;
+}
+function plural(n,one,few,many){
+  const a=Math.abs(n)%100,b=a%10;
+  if(a>10&&a<20)return many;
+  if(b>1&&b<5)return few;
+  return b===1?one:many;
+}
 function cards(rs){
   currentResults=rs;rememberPlaces(rs);
   return '<div class="inlineCards">'+rs.map((r,i)=>`<div class="placeCard ${i===0?"best":""}">
@@ -711,8 +731,9 @@ function cards(rs){
     <div class="tag">${i===0?"BEST MATCH":esc([r.category,r.area||r.metro].filter(Boolean).join(" · ").slice(0,42))}</div>
     <div class="score">${r.match||94}%<small>match</small></div>
     <h3>${esc(r.name)}</h3><div class="reason">Почему вам: ${esc(reason(r))}</div>
+    ${ratingLine(r)}
     <div class="meta">${esc(r.area||"")}${r.metro?" · м. "+esc(r.metro):""}${r.time?" · "+esc(r.time):""}</div>
-    <div class="meta">${esc(r.price||"цена на сайте")}</div>
+    ${r.price?`<div class="meta">${esc(r.price)}</div>`:""}
     <div class="cardBtns">
       <button class="cardBtn primary bookingBtn" data-book="${esc(r.id)}">${bookingLabel(r)}</button>
       <button class="cardBtn" data-pick="${esc(r.id)}">В план</button>

@@ -204,3 +204,13 @@ test("«выпить кофе» не выбрасывает кофейни, а �
   const out=run([ev],{query:"хочу выпить"});
   assert.equal(out.length,1,"событие не должно отсеиваться как сеть");
 });
+
+test("рейтинг доходит до карточки, а не только до порядка выдачи", ()=>{
+  const {results}=resultPayload(run([bare("a","Бар",{rating:4.6,rating_count:1847})],{query:"хочу выпить"}),{});
+  // Раньше рейтинг влиял на порядок, но не доходил ни до карточки, ни до
+  // модели: человек не понимал, почему место первое.
+  assert.equal(results[0].rating,4.6);
+  assert.equal(results[0].rating_count,1847);
+  const none=resultPayload(run([bare("b","Бар")],{query:"хочу выпить"}),{}).results[0];
+  assert.equal(none.rating,null);assert.equal(none.rating_count,0);
+});

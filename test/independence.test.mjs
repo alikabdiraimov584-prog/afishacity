@@ -215,3 +215,57 @@ test("фото из Викиданных: голое имя файла прев�
   const url=commonsFileUrl("File:Bolshoi Theatre Moscow.jpg");
   assert.match(url,/Special:FilePath\/Bolshoi_Theatre_Moscow\.jpg/);
 });
+
+// ---- Слияние с 2GIS ----
+// Ради рейтинга и фотографий ключ 2GIS и подключают. Раньше при совпадении
+// места из двух источников вторая находка просто отбрасывалась.
+
+test("место из карты дополняется рейтингом и фото из 2GIS", async () => {
+  const {searchLiveInventory}=await import("../providers.mjs");
+  const {createCache}=await import("../cache.mjs");
+  const osmBar={id:"osm:node:7",provider:"OpenStreetMap",kind:"venue",name:"Ровесник",organizer:"Ровесник",
+    cat:"Бар",tags:["bar"],cat_tags:["bar"],area:"Лубянский пр., 15",metro:"",times:[],hours_label:null,
+    price_label:null,price_min:null,availability:null,rating:null,rating_count:0,aggregator_image:null,
+    phone:null,booking_url:null,booking_kind:null,booking_provider:null,official_source:null,
+    source:"https://openstreetmap.org/node/7",point_source:"https://openstreetmap.org/node/7",
+    desc:"",keywords:"ровесник бар",coords:{lat:55.757,lon:37.632},live:true};
+  const gisBar={...osmBar,id:"2gis:place:7",provider:"2GIS",coords:{lat:55.7571,lon:37.6321},
+    rating:4.7,rating_count:312,aggregator_image:"https://i.2gis.com/p.jpg",aggregator_name:"2GIS",
+    hours_label:"Пн-Вс 18:00-04:00",phone:"+7 495 111-11-11",
+    source:"https://2gis.ru/moscow/firm/7",point_source:"https://2gis.ru/moscow/firm/7"};
+  const providers={kudago:async()=>({items:[],errors:[]}),timepad:async()=>({items:[],errors:[]}),
+    osm:async()=>({items:[osmBar],errors:[]}),dgis:async()=>({items:[gisBar],errors:[]})};
+  const out=await searchLiveInventory({query:"бар"},{NODE_ENV:"test",DGIS_API_KEY:"k"},
+    {providers,cache:createCache({now:()=>1}),now:()=>1});
+  assert.equal(out.items.length,1,"одно место, а не два");
+  const x=out.items[0];
+  assert.equal(x.rating,4.7,"рейтинг из 2GIS должен пережить слияние");
+  assert.equal(x.rating_count,312);
+  assert.equal(x.aggregator_image,"https://i.2gis.com/p.jpg","фото из 2GIS должно пережить слияние");
+  assert.equal(x.phone,"+7 495 111-11-11");
+  assert.equal(x.hours_label,"Пн-Вс 18:00-04:00");
+  assert.match(x.provider,/2GIS/,"видно, что данные из двух источников");
+  // Структурные данные остаются от карты: у неё точнее координаты и теги.
+  assert.deepEqual(x.cat_tags,["bar"]);
+  assert.equal(x.id,"osm:node:7");
+});
+
+test("2GIS помечает закрытые организации, и такие места не показываются", async () => {
+  const {search2GIS}=await import("../providers.mjs");
+  const {rankLive}=await import("../live_ranker.mjs");
+  const {buildSearchPlan}=await import("../providers.mjs");
+  const item=(id,name,extra={})=>({id,name,address_name:"Москва",rubrics:[{name:"Бары"}],
+    point:{lat:55.75,lon:37.62},schedule:{},contact_groups:[],...extra});
+  const realFetch=globalThis.fetch;
+  globalThis.fetch=async()=>({ok:true,status:200,json:async()=>({result:{items:[
+    item("1","Живой бар"),
+    item("2","Закрытый бар",{is_deleted:true}),
+    item("3","Ликвидированный",{schedule:{comment:"Организация закрыта"}})
+  ]}})});
+  try{
+    const out=await search2GIS({placeQueries:["бар"]},"k");
+    assert.deepEqual(out.items.map(x=>Boolean(x.closed)),[false,true,true]);
+    const plan=buildSearchPlan({query:"бар"});
+    assert.deepEqual(rankLive(out.items,{query:"бар"},plan).map(x=>x.name),["Живой бар"]);
+  }finally{globalThis.fetch=realFetch}
+});

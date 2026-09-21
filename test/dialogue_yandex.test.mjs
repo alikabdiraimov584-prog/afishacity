@@ -312,3 +312,14 @@ test("агенту запрещены фразы про отсутствие д�
   assert.match(t,/«у меня нет данных»/);
   assert.match(t,/Имени и категории достаточно/);
 });
+
+test("рейтинг попадает модели только с числом отзывов", async () => {
+  const {toolResultForAgent}=await import("../agent.mjs");
+  const base={name:"Бар",category:"Бар"};
+  const say=(r)=>JSON.parse(toolResultForAgent("recommend_free",{results:[{...base,...r}]})).места[0];
+  // «Пять звёзд» от трёх человек — не довод, и произносить его как довод нельзя.
+  assert.equal(say({rating:5,rating_count:3}).оценка,undefined);
+  assert.equal(say({rating:null,rating_count:900}).оценка,undefined);
+  const good=say({rating:4.6,rating_count:1847});
+  assert.equal(good.оценка,4.6);assert.equal(good.отзывов,1847);
+});

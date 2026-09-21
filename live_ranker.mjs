@@ -17,7 +17,7 @@ function norm(s=""){return text(s).toLowerCase().replace(/ё/g,"е").replace(/<[
 function words(s){const stop=new Set(["куда","сходить","пойти","хочу","хочется","сегодня","завтра","вечером","после","москва","москве","очень","сильно","много","какой","какое","что","для","чтобы","можно","найди","место"]);return norm(s).split(" ").filter(w=>w.length>3&&!stop.has(w))}
 // Короткие корни (бар, рок, спа, арт, еда, семь) задаём регэкспами с границами слов:
 // \b в JS не работает для кириллицы, а includes() ловит «барбершоп», «Крокус», «спать», «восемь».
-const BAR_RE=/(?<![а-я])(бар(?!бер|аба|бек|он|ин|сук|рикад)|паб(?!лик)|пив[ао]|вин[оа](?![а-я])|винн|винотек)|(?<![a-z])pub(?!li)|выпить|коктейл/;
+const BAR_RE=/(?<![а-я])(гастробар|гастропаб|рюмочн|наливочн|бар(?!бер|аба|бек|он|ин|сук|рикад)|паб(?!лик)|пив[ао]|пивн(?:ой|ая|ые|ым)|вин[оа](?![а-я])|винн|винотек)|(?<![a-z])pub(?!li)|выпить|коктейл/;
 const ROCK_RE=/(?<![а-я])рок(?![а-я])|(?<![a-z])rock/;
 const SYN={
   hookah:["кальян","кальянная","лаунж","hookah","shisha"],bar:[BAR_RE],food:["ресторан","кафе",/(?<![а-я])ед[аыеу](?![а-я])/,"ужин","поесть","бранч"],
@@ -335,6 +335,10 @@ export function resultPayload(results,meta={}){
     tags:Array.isArray(x.tags)?x.tags.slice(0,8):[],cat_tags:Array.isArray(x.cat_tags)?x.cat_tags:[],
     hours_label:x.hours_label||null,wikidata:x.wikidata||null,brand_wikidata:x.brand_wikidata||null,
     quality:x._quality??null,
+    // Оценка людей — единственный такой сигнал, что у нас есть. Без этих
+    // полей рейтинг влиял на порядок, но не доходил ни до карточки, ни до
+    // модели: человек не понимал, почему место первое.
+    rating:Number.isFinite(x.rating)?x.rating:null,rating_count:x.rating_count||0,
     wikimedia_commons:x.wikimedia_commons||null,image_raw:x.image_raw||null,
     aggregator_image:x.aggregator_image||null,aggregator_name:x.aggregator_name||null
   }))}
