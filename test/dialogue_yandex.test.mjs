@@ -323,3 +323,53 @@ test("рейтинг попадает модели только с числом 
   const good=say({rating:4.6,rating_count:1847});
   assert.equal(good.оценка,4.6);assert.equal(good.отзывов,1847);
 });
+
+test("вслух звучит ответ, даже если модель до конца просит инструмент", async () => {
+  // «Она не разговаривает и не показывает результат»: на экране висел текст
+  // ответа, но вслух не прозвучало ничего, а подсказка так и осталась «Ищу».
+  // Лёгкая модель к каждой реплике прицепляла ещё один поиск — и каждая
+  // уезжала к клиенту как промежуточная, то есть непроизносимая. Запасная
+  // фраза не спасала: она смотрела на число реплик, а реплики-то были.
+  const m=model(...Array(5).fill(JSON.stringify({say:"Ближе всего Ровесник",
+    tool:"recommend_free",args:{query:"бар"}})));
+  const seen=[];
+  await runYandexDialogue("бар рядом",[],{cfg:CFG,fetchImpl:m.fetchImpl,voice:true,
+    emit:(t,d)=>{if(t==="delta")seen.push(d)},
+    deps:{recommend_free:async()=>PLACES}});
+  assert.ok(seen.some(d=>!d.interim),"хоть одна реплика должна быть произносимой");
+});
+
+test("пустой повторный поиск не стирает уже найденное", async () => {
+  // Второй заход модель делает с другим запросом. Если он вернул пусто, это
+  // не значит, что показывать нечего: карточки из первого захода уже верные.
+  const m=model(
+    JSON.stringify({say:"Секунду",tool:"recommend_free",args:{query:"бар"}}),
+    JSON.stringify({say:"Уточню",tool:"recommend_free",args:{query:"бар с едой"}}),
+    JSON.stringify({say:"Ближе всего Ровесник",tool:null}));
+  const out=await runYandexDialogue("бар рядом",[],{cfg:CFG,fetchImpl:m.fetchImpl,voice:true,
+    deps:{recommend_free:async(a)=>a.query==="бар"?PLACES:{results:[]}}});
+  assert.equal(out.results.length,1,"найденное в первом заходе остаётся");
+  assert.equal(out.results[0].name,"Ровесник");
+});
+
+test("обещанием посмотреть разговор не заканчивается", async () => {
+  const {isFiller}=await import("../dialogue_yandex.mjs");
+  for(const t of ["Секунду, смотрю","Сейчас гляну","Щас","Минутку!","Ищу","ок, посмотрю"])
+    assert.ok(isFiller(t),`«${t}» — обещание, а не ответ`);
+  for(const t of ["Ближе всего Ровесник","Сейчас открыт только Ровесник на Китай-городе, идти семь минут","Нашла три бара"])
+    assert.ok(!isFiller(t),`«${t}» — это ответ`);
+});
+
+test("если в конце только обещание, вслух уходит честный итог", async () => {
+  const m=model(
+    JSON.stringify({say:"Секунду",tool:"recommend_free",args:{query:"бар"}}),
+    JSON.stringify({say:"Секунду",tool:"recommend_free",args:{query:"бар"}}),
+    JSON.stringify({say:"Сейчас посмотрю",tool:"recommend_free",args:{query:"бар"}}));
+  const seen=[];
+  const out=await runYandexDialogue("бар",[],{cfg:CFG,fetchImpl:m.fetchImpl,voice:true,
+    emit:(t,d)=>{if(t==="delta")seen.push(d)},deps:{recommend_free:async()=>PLACES}});
+  const spoken=seen.filter(d=>!d.interim);
+  assert.equal(spoken.length,1);
+  assert.equal(spoken[0].text,"Вот что нашлось — смотри карточки.");
+  assert.equal(out.text,"Вот что нашлось — смотри карточки.");
+});

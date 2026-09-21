@@ -256,6 +256,7 @@ async function ask(text){
     });
     if(failed)throw failed;
     await speechIdle();
+    settle();
   }catch(e){
     resetSpeech();
     showSaid("Не получилось: "+(e.message||e));
@@ -279,6 +280,22 @@ async function askPlain(text){
   renderOut(d);
   enqueueSpeech(said);
   await speechIdle();
+  settle();
+}
+
+/**
+ * Конец хода.
+ *
+ * Обычно экран выводит из «думаю» очередь речи: договорила — вернулись в
+ * ожидание и снова слушаем. Но если произносить было нечего, очередь не
+ * запускалась вовсе, и экран оставался в «Ищу» навсегда: шар не реагировал,
+ * разговор без рук не продолжался, и выглядело это как «она не отвечает».
+ * Сервер за это не отвечает — ход закончен, и состояние должно сойтись
+ * независимо от того, что он прислал.
+ */
+function settle(){
+  if(state.phase==="thinking"||state.phase==="speaking")setPhase("idle");
+  maybeResume();
 }
 
 function renderOut(d){

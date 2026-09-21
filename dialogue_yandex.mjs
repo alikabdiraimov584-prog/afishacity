@@ -17,6 +17,24 @@ export const MAX_HISTORY=24;                  // чтобы подсказка �
 
 const TOOL_MARK="[РЕЗУЛЬТАТ ПОИСКА]";
 
+/**
+ * «Секунду, смотрю» — это не ответ, а обещание ответа.
+ *
+ * Такую реплику модель кладёт перед походом в поиск, и в середине хода она
+ * уместна. Но если ею ход заканчивается, вслух прозвучит обещание, за которым
+ * ничего не следует. Отличаем по началу фразы и по длине: развёрнутая реплика,
+ * даже начатая с «сейчас», уже несёт что-то по существу.
+ */
+// \b в JavaScript считает границей только край латиницы, поэтому для русских
+// слов он не срабатывает вовсе: «ищу» в конце строки границей не заканчивалось.
+const FILLER_START=/^(?:ладно[,!. ]*|окей[,!. ]*|ок[,!. ]+)?(?:секунд|минут|момент|сейчас|щас|ща(?![а-яё])|подожд|погод|ищу(?![а-яё])|ищем(?![а-яё])|смотрю(?![а-яё])|гляну|глянем|посмотрю|поищу|поищем|проверю)/i;
+export function isFiller(say){
+  const t=String(say||"").trim();
+  if(!t)return true;
+  if(t.length>60)return false;            // длинная фраза — это уже ответ
+  return FILLER_START.test(t);
+}
+
 /** Обрезаем историю по границе реплики пользователя: иначе можно разорвать
  *  пару «запрос инструмента — его результат» и модель потеряет нить. */
 export function trimHistory(messages,max=MAX_HISTORY){
@@ -45,6 +63,12 @@ export async function runYandexDialogue(message,history=[],{
   const messages=trimHistory([...history,{role:"user",text:String(message||"")}]);
 
   const says=[];let results=[],plan=null,toolUsed=false;
+  // Считаем не реплики, а произнесённое. Реплика с пометкой interim до
+  // динамика не доходит: клиент её показывает, но молчит. Пока здесь стояло
+  // says.length, ход, в котором модель к каждой фразе прицепляла ещё один
+  // поиск, заканчивался полной тишиной — и экран навсегда оставался в «Ищу».
+  let spoken=0;
+  const say=(text,interim)=>{if(!interim)spoken++;send("delta",{text,interim})};
 
   let lastWasTool=false,toolFailed=false;
   for(let round=0;round<maxRounds;round++){
@@ -63,7 +87,7 @@ export async function runYandexDialogue(message,history=[],{
       // Промежуточная реплика — та, после которой агент идёт искать. Вслух её
       // произносить нельзя: модель кладёт туда не «секунду, смотрю», а готовый
       // ответ, и человек слышит одно и то же дважды, будто отвечают по очереди.
-      send("delta",{text:parsed.say,interim:Boolean(parsed.tool)});
+      say(parsed.say,Boolean(parsed.tool));
     }
     if(!parsed.tool)break;
 
@@ -80,8 +104,16 @@ export async function runYandexDialogue(message,history=[],{
     try{
       const out=await runner(parsed.args||{},context);
       toolFailed=false;
-      if(parsed.tool==="plan_evening"){plan=out;results=(out.stops||[]).map(s=>s.place).filter(Boolean)}
-      else results=(out.results||[]).slice(0,5);
+      // Пустой повторный заход не стирает найденное: второй запрос модель
+      // делает уточняющим, и если он не дал ничего, правильные карточки из
+      // первого захода — единственное, что есть показать.
+      if(parsed.tool==="plan_evening"){
+        const stops=(out.stops||[]).map(s=>s.place).filter(Boolean);
+        if(stops.length||!results.length){plan=out;results=stops}
+      }else{
+        const found=(out.results||[]).slice(0,5);
+        if(found.length||!results.length)results=found;
+      }
       messages.push({role:"user",text:`${TOOL_MARK} ${toolResultForAgent(parsed.tool,out)}\nСкажи об этом человеку своими словами. Ничего не добавляй от себя.`});
     }catch(e){
       // Отказ поиска — факт, который агент обязан озвучить, а не замолчать.
@@ -106,9 +138,11 @@ export async function runYandexDialogue(message,history=[],{
       const reply=await yandexComplete([{role:"system",text:system},...messages],{cfg,fetchImpl,signal,voice});
       const parsed=parseAgentReply(reply.text);
       messages.push({role:"assistant",text:reply.text});
-      // Снова просит инструмент — это не ответ: «Секунду, смотрю» прозвучало
-      // бы итогом, и разговор кончился бы на полуслове.
-      if(parsed.say&&!parsed.tool){says.push(parsed.say);send("delta",{text:parsed.say,interim:false})}
+      // Инструмент в заключительном ходе — оплошность формата, а не признак
+      // того, что говорить нечего: модели прямо сказали, что поиска больше не
+      // будет, и она всё равно ответила по найденному. Такой ответ произносим.
+      // Отбрасываем только обещание посмотреть: им разговор кончиться не может.
+      if(parsed.say&&!isFiller(parsed.say)){says.push(parsed.say);say(parsed.say,false)}
     }catch(e){
       // Модель отвалилась на последнем ходу — найденное терять незачем.
       console.error("заключительный ход не удался:",e&&e.message||e);
@@ -116,9 +150,9 @@ export async function runYandexDialogue(message,history=[],{
   }
   // Что бы ни случилось, вслух должно прозвучать хоть что-то: иначе экран
   // остаётся в «думаю» навсегда, а карточки уже показаны.
-  if(voice&&!says.length){
+  if(voice&&!spoken){
     const fallback=results.length?"Вот что нашлось — смотри карточки.":"Пока не нашла. Скажи иначе?";
-    says.push(fallback);send("delta",{text:fallback,interim:false});
+    says.push(fallback);say(fallback,false);
   }
   // Вслух итог — только последняя реплика: предыдущие человек уже услышал,
   // пока шёл поиск. В переписке наоборот, там видно всё сразу.
