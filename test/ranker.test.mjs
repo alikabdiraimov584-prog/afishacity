@@ -178,3 +178,15 @@ test("рейтинг 2GIS с отзывами двигает выдачу, бе�
   assert.ok(out.find(x=>x.id==="b")._quality<out.find(x=>x.id==="g")._quality);
   assert.equal(out.find(x=>x.id==="f")._quality,0,"три отзыва — не сигнал");
 });
+
+test("закрытое по тегам место не показывается", ()=>{
+  const out=run([bare("open","Живой бар"),bare("dead","Мёртвый бар",{closed:true})],{query:"хочу выпить"});
+  assert.deepEqual(out.map(x=>x.id),["open"]);
+});
+
+test("при равных баллах порядок устойчив и не зависит от порядка входа", ()=>{
+  const a=bare("a","Бар А"),b=bare("b","Бар Б"),c=bare("c","Бар В");
+  const o1=run([a,b,c],{query:"хочу выпить"}).map(x=>x.id);
+  const o2=run([c,b,a],{query:"хочу выпить"}).map(x=>x.id);
+  assert.deepEqual(o1,o2,"порядок не должен задаваться порядком базы");
+});

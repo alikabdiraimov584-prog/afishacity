@@ -52,7 +52,8 @@ test("для услуги афиша событий не опрашиваетс�
 
 test("структурные поля OSM дают категорию места", () => {
   assert.deepEqual(structuralTags({amenity:"pharmacy"}),["pharmacy"]);
-  assert.deepEqual(structuralTags({leisure:"park"}),["park"]);
+  // Вместе с extraTags категории: бар с латинским названием иначе терял баллы за nightlife.
+  assert.deepEqual(structuralTags({leisure:"park"}),["park","outdoors"]);
   // Одно значение делят несколько категорий — нужны обе.
   assert.deepEqual(structuralTags({shop:"hairdresser"}).sort(),["barber","beauty"]);
   assert.deepEqual(structuralTags({}),[]);

@@ -441,6 +441,11 @@ function normalizeOsmItem(x,plan){
     // Сигналы качества для ранжирования: у OSM нет рейтингов, и полнота
     // карточки — честный заменитель репутации.
     brand:t.brand||null,cuisine:t.cuisine||null,has_description:Boolean(t.description||t["description:ru"]),
+    // Закрытое место на карте остаётся годами: disused:/abandoned:, end_date,
+    // opening_hours=off или «(закрыт)» в названии. Раньше ничего из этого не
+    // проверялось, и человека звали в заведение, которого нет.
+    closed:Boolean(t["disused:amenity"]||t["abandoned:amenity"]||t.disused==="yes"||t.abandoned==="yes"||t.end_date
+      ||/^(off|closed)$/i.test(t.opening_hours||"")||/закрыт|closed/i.test(t.name||"")),
     source:osmSource(x),point_source:osmSource(x),official_source:site!==osmSource(x)?site:null,
     image_url:null,
     booking_url:directBook||((site!==osmSource(x))?site:null),booking_kind:telegram?"telegram":whatsapp?"whatsapp":reservation?"site":phone?"phone":(site!==osmSource(x)?"site":null),
@@ -484,6 +489,17 @@ export function snapshotStatus(){
     age_hours:Math.round(h.ageMs()/36e5),stale:h.stale()};
 }
 
+// Мгновенный ответ из локального снимка, если он есть; иначе null.
+function snapshotFirst(plan,opts){
+  if(opts&&opts.providers)return null;               // тесты подменяют источники целиком
+  const snap=getSnapshot();
+  if(!snap)return null;
+  try{
+    const els=snap.search(plan,{center:centerFor(plan),limit:plan.userLocation?160:120,point:plan.userLocation});
+    const items=els.map(x=>normalizeOsmItem(x,plan)).filter(x=>x.name!=="Заведение");
+    return items.length?{items,errors:[],from_cache:false,degraded:false,disabled:false,from_snapshot:true}:null;
+  }catch{return null}
+}
 export async function searchOSM(plan,opts={}){
   // opts.snapshot === null отключает снимок (тесты живого пути).
   const snap=opts.snapshot!==undefined?opts.snapshot:getSnapshot();
@@ -499,12 +515,20 @@ export async function searchOSM(plan,opts={}){
   const filters=osmFilters(plan);
   if(!filters.length) return {items:[],errors:[],disabled:false};
   // Просят центр — сужаем область поиска, иначе Overpass отдаёт всю Москву.
-  const bbox=centerFor(plan)?CENTER_BBOX:MOSCOW_BBOX;
+  // Знаем, где человек, — ищем вокруг него (~6 км), а не по всей Москве.
+  const u=plan.userLocation;
+  const bbox=u?`${(u.lat-0.055).toFixed(4)},${(u.lon-0.095).toFixed(4)},${(u.lat+0.055).toFixed(4)},${(u.lon+0.095).toFixed(4)}`
+    :centerFor(plan)?CENTER_BBOX:MOSCOW_BBOX;
   // Overpass просили считать до 18 с, а клиент обрывал на 6.5 с: тяжёлые запросы
   // всегда падали по таймауту и накручивали предохранителю отказы. Сводим вместе.
-  const query=`[out:json][timeout:${OVERPASS_TIMEOUT_S}];(${filters.map(s=>s.replaceAll("{{bbox}}",bbox)).join("")});out center tags 80;`;
+  // «out … 80» без qt отдавал 80 объектов с наименьшими id — самые давно
+  // нанесённые точки, многие давно закрыты. qt и 200 кандидатов: выбирает ранкер.
+  const query=`[out:json][timeout:${OVERPASS_TIMEOUT_S}];(${filters.map(s=>s.replaceAll("{{bbox}}",bbox)).join("")});out center tags qt 200;`;
   try{
-    const d=await overpassQuery(query,{timeoutMs:(OVERPASS_TIMEOUT_S+2)*1000});
+    const d=await overpassQuery(query,{timeoutMs:(OVERPASS_TIMEOUT_S+2)*1000,...(opts.fetchJsonImpl?{fetchJsonImpl:opts.fetchJsonImpl}:{})});
+    // Таймаут и перегрузка приходят как HTTP 200 с пустым elements и полем
+    // remark. Раньше это считалось «мест нет» и кешировалось на часы.
+    if(d&&d.remark&&/timed out|error|too busy|load/i.test(String(d.remark)))throw new Error(`Overpass: ${String(d.remark).slice(0,120)}`);
     const items=(d.elements||[]).map(x=>normalizeOsmItem(x,plan)).filter(x=>x.name!=="Заведение");
     return {items,errors:[],disabled:false};
   }catch(e){
@@ -591,7 +615,9 @@ export async function searchLiveInventory(args={},env=process.env,opts={}){
   const [k,t,o,d]=await Promise.all([
     skipEvents?none:cachedProvider("kudago",cacheKeyFor("kudago",plan),()=>P.kudago(plan),ctx),
     skipEvents?none:cachedProvider("timepad",cacheKeyFor("timepad",plan),()=>P.timepad(plan),ctx),
-    cachedProvider("osm",cacheKeyFor("osm",plan),()=>P.osm(plan),ctx),
+    // Снимок читается до предохранителя: три сбоя сети размыкали цепь, и пять
+    // минут все поиски мест отвечали пустотой, хотя SQLite ответил бы сразу.
+    snapshotFirst(plan,opts)||cachedProvider("osm",cacheKeyFor("osm",plan),()=>P.osm(plan),ctx),
     dgisKey?cachedProvider("dgis",cacheKeyFor("dgis",plan,true),()=>P.dgis(plan,dgisKey),ctx):{items:[],errors:[],from_cache:false,degraded:false,disabled:true}
   ]);
   const items=dedupe([...(d.items||[]),...(o.items||[]),...(k.items||[]),...(t.items||[])]);
@@ -611,7 +637,8 @@ export async function searchLiveInventory(args={},env=process.env,opts={}){
   const anyStale=relevantDegraded.some(x=>x.from_cache);
   const notes=[];
   if(plan.heavyDrinkingPhrase)notes.push("Запрос интерпретирован как поиск баров/пабов/ночных заведений; FREE не ранжирует места по количеству алкоголя.");
-  if(relevantDegraded.length&&thin)notes.push(anyStale?"Часть источников не ответила — показываю сохранённое.":"Часть источников не ответила — показываю, что нашлось.");
+  if(relevantDegraded.length&&thin)notes.push(!items.length?"Источник мест сейчас не отвечает — попробуйте через минуту."
+    :anyStale?"Часть источников не ответила — показываю сохранённое.":"Часть источников не ответила — показываю, что нашлось.");
   return {
     plan,items,
     errors:[...(k.errors||[]),...(t.errors||[]),...(o.errors||[]),...(d.errors||[])],

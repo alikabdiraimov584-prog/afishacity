@@ -223,7 +223,7 @@ export function rankLive(items,args={},plan={}){
   const scored=[];
   for(const x of items){
     if(!dateOkay(x,args)||!timeOkay(x,args)||!priceOkay(x,args))continue;
-    if(x.availability&&/закрыт/.test(norm(x.availability)))continue;
+    if(x.closed||(x.availability&&/закрыт/.test(norm(x.availability))))continue;
     const hours=venueHours(x,moment);
     // Известно, что к нужному времени заведение закрыто — не показываем.
     if(hours&&hours.open_now===false&&args.after_time)continue;
@@ -288,7 +288,12 @@ export function rankLive(items,args={},plan={}){
     const match=Math.round(clamp(52+36*fit+24*(align-.5),50,99));
     scored.push({...x,_score:s,_match:match,_quality:quality,_reasons:[...new Set(reasons)].slice(0,5),_dna:dna,_distance_km:distance_km,_center_km:center_km,_hours:hours});
   }
-  scored.sort((a,b)=>b._score-a._score);
+  // При равных баллах порядок раньше задавала база (2GIS → OSM → KudaGo):
+  // одинаково заполненные места шли в порядке конкатенации. Вторые ключи —
+  // качество, близость, и в самом конце устойчивый хеш, а не случайность.
+  const h=(id)=>{let x=0;for(const ch of String(id||""))x=(x*31+ch.charCodeAt(0))>>>0;return x};
+  scored.sort((a,b)=>b._score-a._score||(b._quality||0)-(a._quality||0)
+    ||((a._distance_km??99)-(b._distance_km??99))||((a._center_km??99)-(b._center_km??99))||h(a.id)-h(b.id));
   if(!scored.length)return [];
   // Абсолютный порог выбрасывал ВСЮ выдачу, когда ни одно слово запроса не нашлось
   // в текстах: на «посоветуй что-нибудь» человек получал пустой ответ при живых
@@ -298,7 +303,10 @@ export function rankLive(items,args={},plan={}){
   while(pool.length&&out.length<5){
     let best=null,bestAdj=-Infinity;
     for(const x of pool){
-      let p=0;for(const y of out){if(norm(x.cat)===norm(y.cat))p+=10;if(norm(x.organizer)===norm(y.organizer))p+=12;if(x.provider===y.provider)p+=2}
+      // Одинаковая категория штрафуется только если её не просили: на «выпить»
+      // второй бар — это то, что нужно, а не повод подсунуть кафе.
+      const asked=tags.some(t=>(x.cat_tags||[]).includes(t));
+      let p=0;for(const y of out){if(!asked&&norm(x.cat)===norm(y.cat))p+=10;if(norm(x.organizer)===norm(y.organizer))p+=12;if(x.provider===y.provider)p+=2}
       const a=x._score-p;if(a>bestAdj){best=x;bestAdj=a}
     }
     out.push(best);pool.splice(pool.indexOf(best),1);

@@ -48,7 +48,7 @@ test("searchLiveInventory: при сбое источника отдаётся �
   // А когда упал нужный источник и найдено мало — примечание есть.
   const ev=await searchLiveInventory({query:"стендап"},env,{providers,cache,now:c.now});
   assert.equal(ev.degraded.kudago,true);
-  assert.match(ev.note,/не ответила/,"упал нужный источник, найдено мало — человек об этом знает");
+  assert.match(ev.note,/не ответила|не отвечает/,"упал нужный источник, найдено мало — человек об этом знает");
   assert.equal(r.degraded.timepad,false);
 });
 
@@ -60,7 +60,7 @@ test("searchLiveInventory: провайдер, вернувший только �
   for(let i=0;i<3;i++){
     const r=await searchLiveInventory({query:"стендап"},env,{providers,cache,now:c.now,breaker:{failures:3,cooldownMs:1000}});
     assert.equal(r.degraded.timepad,true);assert.equal(r.from_cache.timepad,false);
-    assert.match(r.note,/Часть источников не ответила — показываю, что нашлось\.$/);
+    assert.match(r.note,/Источник мест сейчас не отвечает/,"ноль находок — нечего «показывать»");
     assert.ok(r.errors.includes("Timepad: 503 Service Unavailable"));
   }
   assert.equal(calls,3);
@@ -111,4 +111,16 @@ test("прогрев: стартует по таймеру и повторяет
   w.stop();
   assert.ok(w.runs>=2,"runs="+w.runs);
   assert.ok(n>=4);
+});
+
+test("Overpass: таймаут в поле remark — это сбой, а не «мест нет»", async ()=>{
+  const {searchOSM}=await import("../providers.mjs");
+  const {buildSearchPlan}=await import("../providers.mjs");
+  const plan=buildSearchPlan({query:"бар"});
+  // Overpass отвечает HTTP 200 с пустым elements и remark: раньше это
+  // считалось честной пустотой и кешировалось на часы.
+  const out=await searchOSM(plan,{snapshot:null,
+    fetchJsonImpl:async()=>({elements:[],remark:"runtime error: Query timed out in \"query\" at line 1 after 12 seconds."})}).catch(e=>({thrown:e.message}));
+  const failed=out.thrown||(out.errors||[]).some(e=>/timed out/.test(e));
+  assert.ok(failed,`ожидали ошибку, получили ${JSON.stringify(out).slice(0,120)}`);
 });

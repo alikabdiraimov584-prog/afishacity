@@ -198,3 +198,11 @@ test("место с телефоном не роняет ответ источн
   try{const o=await search2GIS({placeQueries:["бар"]},"k");assert.equal(o.items.length,1,o.errors.join());assert.equal(o.items[0].phone,"+7")}
   finally{globalThis.fetch=realFetch}
 });
+
+test("закрытые по тегам OSM места помечаются", async () => {
+  const {searchOSM}=await import("../providers.mjs");
+  const mk=(id,tags)=>({type:"node",id,lat:55.75,lon:37.62,tags:{amenity:"bar",name:"Бар "+id,...tags}});
+  const els=[mk(1,{}),mk(2,{"disused:amenity":"bar"}),mk(3,{opening_hours:"off"}),mk(4,{end_date:"2024-01-01"}),mk(5,{name:"Бар (закрыт)"})];
+  const out=await searchOSM({placeQueries:["бар"],tags:["bar"],placeIntent:true},{snapshot:{search:()=>els}});
+  assert.deepEqual(out.items.map(x=>Boolean(x.closed)),[false,true,true,true,true]);
+});

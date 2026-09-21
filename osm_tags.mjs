@@ -16,7 +16,9 @@ const OSM_TAG_MAP=(()=>{
       // beauty), поэтому копим все, иначе последняя затирает предыдущие.
       for(const v of (op==="~"?vals.split("|"):[vals])){
         const k=`${key}=${v}`;
-        m.set(k,uniq([...(m.get(k)||[]),c.tag]));
+        // Вместе с extraTags категории («nightlife» у бара): иначе бар с латинским
+        // названием, чьё имя не ловится регэкспом, терял баллы за эти теги.
+        m.set(k,uniq([...(m.get(k)||[]),c.tag,...(c.extraTags||[])]));
       }
     }
   return m;
