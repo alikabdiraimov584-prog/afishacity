@@ -13,7 +13,7 @@
 import {join,dirname} from "node:path";
 import {fileURLToPath} from "node:url";
 import {loadDotenv} from "../env.mjs";
-import {search2GIS,buildSearchPlan} from "../providers.mjs";
+import {search2GIS,buildSearchPlan,DGIS_MAX_RADIUS,DGIS_PAGE_SIZE} from "../providers.mjs";
 import {rankLive,resultPayload} from "../live_ranker.mjs";
 
 const ROOT=join(dirname(fileURLToPath(import.meta.url)),"..");
@@ -32,8 +32,11 @@ console.log(`Ключ: ${key.slice(0,8)}…${key.slice(-4)}  |  запрос: «
 
 // Первый запрос — сырой, чтобы увидеть форму ответа своими глазами.
 const u=new URL("https://catalog.api.2gis.com/3.0/items");
-for(const [k,v] of Object.entries({key,q:query,type:"branch",point:"37.6173,55.7558",radius:"4000",
-  page_size:"5",locale:"ru_RU",
+// Параметры ровно те же, что шлёт приложение: пробный запрос с другими
+// значениями проходил там, где приложение получало отказ, и расхождение
+// пряталось до самого живого прогона.
+for(const [k,v] of Object.entries({key,q:query,type:"branch",point:"37.6173,55.7558",
+  radius:String(DGIS_MAX_RADIUS),page_size:String(DGIS_PAGE_SIZE),locale:"ru_RU",
   fields:"items.point,items.rubrics,items.schedule,items.full_address_name,items.contact_groups,items.external_content,items.reviews,items.flags,items.org"}))
   u.searchParams.set(k,v);
 

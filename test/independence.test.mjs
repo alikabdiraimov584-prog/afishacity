@@ -301,3 +301,25 @@ test("радиус поиска по городу не превышает пре
     assert.equal(Number(seen[0].searchParams.get("radius")),DGIS_MAX_RADIUS,"по городу — максимум");
   }finally{globalThis.fetch=real}
 });
+
+test("параметры запроса к 2GIS не выходят за пределы Catalog API", async () => {
+  const {search2GIS,buildSearchPlan,DGIS_MAX_RADIUS,DGIS_PAGE_SIZE}=await import("../providers.mjs");
+  // Живой ключ отклонял каждый запрос: page_size=50 при разрешённых десяти,
+  // radius=50000 при разрешённых сорока тысячах. И то и другое выглядело как
+  // «мест нет», пока отказ не стали читать.
+  assert.ok(DGIS_PAGE_SIZE>=1&&DGIS_PAGE_SIZE<=10,`page_size ${DGIS_PAGE_SIZE} вне 1..10`);
+  assert.ok(DGIS_MAX_RADIUS<=40000);
+  const seen=[];const real=globalThis.fetch;
+  globalThis.fetch=async(u)=>{seen.push(new URL(u));return {ok:true,status:200,
+    json:async()=>({meta:{code:200},result:{items:[]}})}};
+  try{
+    for(const args of [{query:"бар"},{query:"бар",area:"центр"},{query:"бар рядом",user_location:{lat:55.7,lon:37.6}}])
+      await search2GIS(buildSearchPlan(args),"k");
+    for(const u of seen){
+      const ps=Number(u.searchParams.get("page_size")),r=Number(u.searchParams.get("radius"));
+      assert.ok(ps>=1&&ps<=10,`page_size=${ps}`);
+      assert.ok(r>=1&&r<=40000,`radius=${r}`);
+    }
+    assert.ok(seen.length>=3);
+  }finally{globalThis.fetch=real}
+});

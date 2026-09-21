@@ -340,6 +340,11 @@ function normalize2gisItem(x,plan){
 }
 // Сорок километров от центра накрывают Москву целиком; больше API не примет.
 export const DGIS_MAX_RADIUS=40000;
+// Страница у Catalog API — не больше десяти позиций («Length of parameter
+// 'page_size' should be from 1 to 10»). Просили пятьдесят, и каждый запрос
+// отклонялся целиком. Кандидатов набираем несколькими запросами: «бар»,
+// «паб», «коктейльный бар» дают разные списки, дубликаты отсеиваются.
+export const DGIS_PAGE_SIZE=10;
 
 /* Отказ 2GIS приходит с кодом HTTP 200 и ошибкой внутри тела.
    Без этой проверки любой отказ — неверный параметр, исчерпанный лимит,
@@ -367,7 +372,7 @@ export async function search2GIS(plan,key){
       // при поиске по городу, и 2GIS отвечал отказом, который выглядел как
       // «мест нет»: пять заведений на пробном запросе и ноль в приложении.
       u.searchParams.set("radius",String(near?4000:centerFor(plan)?6000:DGIS_MAX_RADIUS));
-      u.searchParams.set("page_size","50");u.searchParams.set("locale","ru_RU");
+      u.searchParams.set("page_size",String(DGIS_PAGE_SIZE));u.searchParams.set("locale","ru_RU");
       u.searchParams.set("fields","items.point,items.rubrics,items.schedule,items.full_address_name,items.contact_groups,items.external_content,items.reviews,items.flags,items.org");
       const d=dgisResult(await fetchJson(u));
       // «бар», «паб», «коктейльный бар» возвращают почти один и тот же список:
