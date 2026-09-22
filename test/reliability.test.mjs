@@ -140,3 +140,40 @@ test("ключ кеша различает район и «рядом»", async 
   await run({query:"посоветуй бар",user_location:{lat:55.55,lon:37.55}});
   assert.equal(seen.length,3,"«рядом» и обычный поиск — разные запросы");
 });
+
+test("каталог карточек не растёт без предела", async (t) => {
+  // Прежде файл удалялся, только если план выпал из базы, а база держит пять
+  // тысяч планов: потолка у каталога не было вовсе. Кончившееся место видно
+  // не как ошибка приложения, а как «сервер не пускает по SSH».
+  const {mkdtempSync,writeFileSync,readdirSync,utimesSync}=await import("node:fs");
+  const {join}=await import("node:path");
+  const {tmpdir}=await import("node:os");
+  const {sweepCards}=await import("../server.mjs");
+
+  const dir=mkdtempSync(join(tmpdir(),"free-cards-"));
+  const kb=(n)=>Buffer.alloc(n*1024,1);
+  // Десять карточек по 100 КБ, все «живые» и свежие — удалять их по старому
+  // правилу было не за что.
+  for(let i=0;i<10;i++){
+    const f=join(dir,`card${i}0000.png`);
+    writeFileSync(f,kb(100));
+    const at=1_700_000_000+i*60;                 // чем больше i, тем новее
+    utimesSync(f,at,at);
+  }
+  const removed=sweepCards({dir,now:()=>1_700_000_000_000,maxBytes:500*1024,alive:()=>true});
+  const left=readdirSync(dir).filter(f=>f.endsWith(".png"));
+  assert.ok(removed>=5,`лишнее должно вытесняться, удалено ${removed}`);
+  assert.ok(left.length<=5,`в каталоге осталось ${left.length} файлов сверх предела`);
+  assert.ok(left.includes("card90000.png"),"вытесняется самое давнее, а не самое свежее");
+});
+
+test("уборка карточек не трогает то, что влезает", async () => {
+  const {mkdtempSync,writeFileSync,readdirSync}=await import("node:fs");
+  const {join}=await import("node:path");
+  const {tmpdir}=await import("node:os");
+  const {sweepCards}=await import("../server.mjs");
+  const dir=mkdtempSync(join(tmpdir(),"free-cards-ok-"));
+  for(let i=0;i<3;i++)writeFileSync(join(dir,`keep${i}0000.png`),Buffer.alloc(1024,1));
+  assert.equal(sweepCards({dir,maxBytes:10*1024*1024,alive:()=>true}),0);
+  assert.equal(readdirSync(dir).length,3);
+});

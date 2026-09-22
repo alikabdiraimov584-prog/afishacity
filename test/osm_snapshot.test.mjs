@@ -302,3 +302,57 @@ test("сборка продолжается с недостроенного сн
     c.abort();
   }finally{rmSync(dir,{recursive:true,force:true})}
 });
+
+test("отменённый сбор перестаёт ходить в сеть", async () => {
+  // Бюджет категории бросал ожидание, но не саму работу: рекурсия продолжала
+  // качать Overpass и писать в базу — уже под именем следующей категории,
+  // потому что счётчик мест общий. Отмена должна останавливать именно работу.
+  const ctrl=new AbortController();
+  let calls=0;
+  const fetchCell=async()=>{calls++;if(calls===2)ctrl.abort();return [1,2,3]};
+  const batches=[];
+  await assert.rejects(
+    ()=>collectCategory({tag:"food"},MOSCOW_BBOX,{fetchCell,cap:3,maxDepth:2,
+      onBatch:(e)=>{batches.push(e.length)},signal:ctrl.signal}),
+    (e)=>e.name==="AbortError");
+  assert.equal(calls,2,"после отмены ни одного нового запроса");
+  assert.equal(batches.length,0,"и ни одной новой записи в базу");
+});
+
+test("отмена не превращается в повторную попытку", async () => {
+  // Отказ сети повторяется один раз — но отменённое повторять нельзя,
+  // иначе отмена стоит лишнего похода в сеть вместо того, чтобы экономить.
+  const ctrl=new AbortController();
+  let calls=0;
+  const fetchCell=async()=>{calls++;ctrl.abort();throw Object.assign(new Error("отменено"),{name:"AbortError"})};
+  await assert.rejects(
+    ()=>collectCategory({tag:"bar"},MOSCOW_BBOX,{fetchCell,cap:10,onBatch:()=>{},signal:ctrl.signal}),
+    (e)=>e.name==="AbortError");
+  assert.equal(calls,1);
+});
+
+test("сигнал отмены доходит до самого запроса", async () => {
+  let seen=null;
+  const fetchCell=async(_cat,_box,signal)=>{seen=signal;return [1]};
+  const ctrl=new AbortController();
+  await collectCategory({tag:"bar"},MOSCOW_BBOX,{fetchCell,cap:10,onBatch:()=>{},signal:ctrl.signal});
+  assert.equal(seen,ctrl.signal,"иначе оборвать скачивание нечем");
+});
+
+test("дубли в индексе не съедают выдачу поиска по названию", async () => {
+  // Кофейня приходит и под «едой», и под «кофе»; при возобновлении сборки —
+  // ещё раз. place заменяется по ключу, а FTS5 — обычная вставка без
+  // уникальности, и место получало столько строк в индексе, сколько раз его
+  // записали. В выдаче они не двоятся: поиск схлопывает их по pid. Но limit
+  // стоит в самом запросе, ДО схлопывания, — и десять запрошенных строк
+  // превращались в три-четыре места. Выдача молча беднела втрое.
+  const d=dir(),f=join(d,"dup.db");
+  const snap=createSnapshot(f);
+  const places=Array.from({length:12},(_,i)=>el(i+1,{name:`Скуратов ${i+1}`,amenity:"cafe"},55.75+i*0.001,37.62));
+  snap.put(places,"food");
+  snap.put(places,"coffee");        // те же места под второй категорией
+  snap.finish({source:"test"});
+  const found=openSnapshot(f).search({coreQuery:"скуратов"},{limit:10});
+  const names=new Set(found.map(r=>r.tags.name));
+  assert.equal(names.size,10,`из десяти запрошенных строк должно выйти десять мест, вышло ${names.size}`);
+});

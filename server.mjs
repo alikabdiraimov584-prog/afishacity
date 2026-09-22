@@ -38,16 +38,37 @@ const profileLimiter=createRateLimiter({limit:Number(process.env.PROFILE_RATE_LI
 // Речь дороже текста: каждый вызов — обращение в SpeechKit.
 const voiceLimiter=createRateLimiter({limit:Number(process.env.VOICE_RATE_LIMIT||120),windowMs:10*60*1000});
 setInterval(()=>{try{dialogueLimiter.sweep();shareLimiter.sweep();imageLimiter.sweep();profileLimiter.sweep();voiceLimiter.sweep()}catch(e){console.error("уборка лимитов:",e&&e.message||e)}},5*60*1000).unref();
-// X-Forwarded-For присылает клиент, и подделка заголовка обнуляла лимит запросов
-// вместе с защитой ключа Claude. Доверяем ему, только когда соединение пришло от
-// собственного обратного прокси (TRUST_PROXY, по умолчанию — петля).
+/* Чей это запрос — для счёта лимитов.
+ *
+ * Проверять, что соединение пришло от собственного прокси, мало. nginx ставит
+ * X-Forwarded-For через $proxy_add_x_forwarded_for, а это значит «допиши
+ * настоящий адрес к тому, что прислал клиент». Заголовок от клиента остаётся
+ * в начале списка — и первый элемент, который мы брали, был ровно той строкой,
+ * какую клиент захотел. Соединение при этом честно приходило от петли, так что
+ * проверка прокси ничего не ловила.
+ *
+ * Отсюда две беды сразу. Лимит обходится в одно действие: новый выдуманный
+ * адрес на каждый запрос — новый счётчик, и никакого предела; счётчик диалогов
+ * сторожит расход ключа Yandex, то есть деньги. И каждый выдуманный адрес
+ * заводит запись в таблице лимитов, которая живёт десять минут: миллион
+ * запросов — миллион записей на машине, где памяти гигабайт.
+ *
+ * X-Real-IP тот же nginx ставит из $remote_addr, к нему клиент дописать
+ * ничего не может. Его и берём; из X-Forwarded-For — последний элемент,
+ * тот, что дописал прокси, а не первый, который прислали нам.
+ */
 const TRUSTED_PROXIES=new Set(String(process.env.TRUST_PROXY||"127.0.0.1,::1,::ffff:127.0.0.1").split(",").map(x=>x.trim()).filter(Boolean));
+// Ключом может быть только то, что похоже на адрес: длина под контролем, и
+// произвольная строка из заголовка в таблицу лимитов не попадает.
+const IP_RE=/^[0-9a-fA-F:.]{3,45}$/;
 function clientKey(req){
   const peer=req.socket?.remoteAddress||"unknown";
-  if(TRUSTED_PROXIES.has(peer)){
-    const fwd=String(req.headers["x-forwarded-for"]||"").split(",")[0].trim();
-    if(fwd)return fwd;
-  }
+  if(!TRUSTED_PROXIES.has(peer))return peer;
+  const real=String(req.headers["x-real-ip"]||"").trim();
+  if(IP_RE.test(real))return real;
+  const chain=String(req.headers["x-forwarded-for"]||"").split(",");
+  const last=String(chain[chain.length-1]||"").trim();
+  if(IP_RE.test(last))return last;
   return peer;
 }
 // Возвращает {user} либо {error} для ответа. Без токена бота (локальная разработка) пропускает всех.
@@ -493,6 +514,9 @@ function coverFromQuery(url){
 }
 const CARD_DIR=join(__dirname,"data","cards");
 const CARD_MAX=900*1024;
+// Предел на весь каталог, а не на файл: на диске 8.5 ГБ, и отдать треть под
+// картинки предпросмотра — уже много, а отдать всё — потерять сервер.
+const CARD_MAX_BYTES=Number(process.env.CARD_DIR_MAX_BYTES||300*1024*1024);
 function saveCard(id,dataUrl){
   const m=/^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl||""));if(!m)return false;
   const buf=Buffer.from(m[1],"base64");if(!buf.length||buf.length>CARD_MAX)return false;
@@ -517,17 +541,41 @@ function safeHref(raw){
   return "";
 }
 // Уборка: план мог быть вытеснен из базы, а файл карточки остаться. Чистим раз в сутки.
-function sweepCards(){
+/* Уборка карточек общих планов.
+ *
+ * Прежде она удаляла файл, только если план выпал из базы, — а база держит
+ * пять тысяч последних планов. Значит потолка у каталога не было вовсе:
+ * пять тысяч картинок по девятьсот килобайт — это больше четырёх гигабайт
+ * при четырёх с половиной свободных. Кончившееся место выглядит не как
+ * ошибка приложения: sqlite перестаёт писать, nginx — логи, а sshd не может
+ * развернуть сессию, и до сервера не достучаться.
+ *
+ * Поэтому здесь, как и у кэша картинок, жёсткий предел по объёму: сверх него
+ * вытесняется самое давнее, независимо от того, жив ли план. Потерянная
+ * картинка предпросмотра — это всего лишь предпросмотр; кончившееся место —
+ * это весь сервер.
+ */
+export function sweepCards({dir=CARD_DIR,now=Date.now,maxBytes=CARD_MAX_BYTES,alive=(id)=>Boolean(store.getShared(id))}={}){
   try{
-    if(!existsSync(CARD_DIR))return 0;
-    let removed=0;const dayAgo=Date.now()-24*60*60*1000;
-    for(const f of readdirSync(CARD_DIR)){
+    if(!existsSync(dir))return 0;
+    let removed=0;const dayAgo=now()-24*60*60*1000;
+    const kept=[];
+    for(const f of readdirSync(dir)){
       const m=/^([a-z0-9]{6,20})\.png$/.exec(f);if(!m)continue;
-      const p=join(CARD_DIR,f);
+      const p=join(dir,f);
       try{
-        if(statSync(p).mtimeMs>dayAgo)continue;
-        if(!store.getShared(m[1])){unlinkSync(p);removed++}
+        const st=statSync(p);
+        if(st.mtimeMs<=dayAgo&&!alive(m[1])){unlinkSync(p);removed++;continue}
+        kept.push({p,at:st.mtimeMs,size:st.size});
       }catch(_){}
+    }
+    let bytes=kept.reduce((a,e)=>a+e.size,0);
+    if(bytes>maxBytes){
+      kept.sort((a,b)=>a.at-b.at);                       // самое давнее уходит первым
+      for(const e of kept){
+        if(bytes<=maxBytes)break;
+        try{unlinkSync(e.p);bytes-=e.size;removed++}catch(_){}
+      }
     }
     return removed;
   }catch(e){console.error("cards sweep:",e.message);return 0}
@@ -616,6 +664,10 @@ function everyMs(ms,fn,label){
 }
 everyMs(10*60*1000,()=>store.sweepConversations(CONVERSATION_TTL_MS),"уборка диалогов");
 everyMs(24*60*60*1000,sweepCards,"уборка карточек");
+// setInterval впервые срабатывает только через сутки, а free.service
+// перезапускается по Restart=always — при перезапуске чаще раза в день уборка
+// не отрабатывала бы никогда. Один заход сразу, на старте.
+if(process.env.NODE_ENV!=="test")try{sweepCards()}catch(e){console.error("уборка карточек:",e&&e.message||e)}
 
 function dialogueContextSummary(context={}){
   const selected=context.selected_place?{
@@ -1125,7 +1177,7 @@ const server=http.createServer(async(req,res)=>{
   }
 });
 
-export {runDialogue,conversationTrim,recommendTool,planTool,dialogueSystem,sharePlan,sharedPlanPage,planEvening,server,store,identify};
+export {runDialogue,conversationTrim,recommendTool,planTool,dialogueSystem,sharePlan,sharedPlanPage,planEvening,server,store,identify,clientKey};
 
 if(process.env.NODE_ENV!=="test"){
   server.listen(PORT,HOST,()=>{

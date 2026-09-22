@@ -56,21 +56,42 @@ const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
 const bboxStr=(b)=>`${b.south},${b.west},${b.north},${b.east}`;
 
 // Запрос по одной категории в одной рамке. Возвращает элементы либо бросает.
-async function fetchCell(cat,box){
+async function fetchCell(cat,box,signal){
   const filters=(cat.osm||[]).map(f=>f.replaceAll("{{bbox}}",bboxStr(box))).join("");
   if(!filters)return [];
   const q=`[out:json][timeout:${TIMEOUT_S}];(${filters});out center tags ${CAP};`;
-  const d=await overpassQuery(q,{timeoutMs:(TIMEOUT_S+10)*1000});
+  const d=await overpassQuery(q,{timeoutMs:(TIMEOUT_S+10)*1000,signal});
   // Перегрузка приходит как обычный ответ с полем remark — без проверки это
   // выглядело бы как «в этой клетке пусто».
   if(d&&d.remark&&/timed out|error|too busy|load/i.test(String(d.remark)))
     throw new Error(`Overpass: ${String(d.remark).slice(0,100)}`);
   return d.elements||[];
 }
-// Часы на бюджет категории: обрываем ожидание, а не саму сборку.
-function withBudget(promise,ms,tag){
-  return Promise.race([promise,
-    new Promise((_,rej)=>setTimeout(()=>rej(new Error(ms>=60000?`превышен бюджет ${Math.round(ms/60000)} мин`:`превышен бюджет ${Math.round(ms/1000)} с`)),ms))]);
+/* Часы на бюджет категории.
+ *
+ * Бюджет обязан обрывать саму работу, а не только ожидание её. Раньше здесь
+ * была гонка двух промисов: главный цикл переставал ждать и шёл дальше, а
+ * брошенная рекурсия продолжала качать Overpass и писать в базу. Счётчик мест
+ * общий на всю сборку, поэтому сироты приписывали найденное следующей
+ * категории — и та считалась собранной, даже если сама не нашла ничего, и
+ * навсегда выпадала из возобновления. Плюс несколько одновременных скачиваний
+ * вместо одного на сервисе, которым пользуемся бесплатно.
+ *
+ * Таймер тоже надо снимать. Каждый setTimeout держит цикл событий, и после
+ * «Готово» процесс жил ещё столько, сколько оставалось от последнего бюджета, —
+ * до двенадцати минут, занимая всё это время пиковую память на машине, где её
+ * гигабайт и нет подкачки. Systemd всё это время считает сборку идущей.
+ */
+function withBudget(run,ms,tag){
+  const ctrl=new AbortController();
+  let timer=null;
+  const alarm=new Promise((_,rej)=>{
+    timer=setTimeout(()=>{
+      ctrl.abort();
+      rej(new Error(ms>=60000?`превышен бюджет ${Math.round(ms/60000)} мин`:`превышен бюджет ${Math.round(ms/1000)} с`));
+    },ms);
+  });
+  return Promise.race([run(ctrl.signal),alarm]).finally(()=>clearTimeout(timer));
 }
 
 const targets=CATEGORIES.filter(c=>c.osm&&c.osm.length&&(!ONLY||ONLY.has(c.tag)));
@@ -101,7 +122,7 @@ for(const cat of targets){
   const onBatch=(els)=>{got+=els.length;total=snap.put(els,cat.tag)};
   try{
     await withBudget(
-      collectCategory(cat,MOSCOW_BBOX,{fetchCell,cap:CAP,pause:()=>sleep(PAUSE_MS),onBatch}),
+      (signal)=>collectCategory(cat,MOSCOW_BBOX,{fetchCell,cap:CAP,pause:()=>sleep(PAUSE_MS),onBatch,signal}),
       CAT_BUDGET_MS,cat.tag);
     snap.markDone(cat.tag);                    // в следующий раз не переделываем
     console.log(`${label.padEnd(26)} ${String(got).padStart(5)} объектов, всего ${total} (+${total-before})  ${keys.slice(0,2).join(", ")||"по названию"}`);
@@ -143,3 +164,7 @@ report({ok:true,places:res.places,duration_s:Math.round((Date.now()-started)/100
 console.log(`\nГотово за ${mins} мин: ${res.places} мест → ${res.file}`);
 if(partial.length)console.log(`Собраны частично: ${partial.map(f=>`${f.tag} (${f.places})`).join(", ")}`);
 if(failed.length)console.log(`Не собрались: ${failed.map(f=>f.tag).join(", ")}`);
+// Работа сделана — выходим сразу, не дожидаясь, пока цикл событий опустеет сам.
+// Держать процесс с пиковой памятью на машине с гигабайтом ради висящего
+// таймера или сокета незачем, а systemd считает oneshot идущим до самого конца.
+process.exit(0);

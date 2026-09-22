@@ -147,3 +147,40 @@ test("кеш картинок: попадание, срок, уборка", asyn
     assert.ok(readImgCache("https://x/5",{dir,now}),"свежее на месте");
   }finally{rmSync(dir,{recursive:true,force:true})}
 });
+
+test("ключ лимитов нельзя выбрать себе самому", async () => {
+  // nginx ставит X-Forwarded-For через $proxy_add_x_forwarded_for — то есть
+  // дописывает настоящий адрес к тому, что прислал клиент. Первый элемент
+  // списка принадлежит клиенту, и брать его значило позволить выбирать себе
+  // счётчик: новый выдуманный адрес на каждый запрос — лимита нет вовсе.
+  // А лимит диалогов сторожит расход ключа Yandex, то есть деньги.
+  const {clientKey}=await import("../server.mjs");
+  const req=(headers)=>({socket:{remoteAddress:"127.0.0.1"},headers});
+
+  assert.equal(clientKey(req({"x-real-ip":"203.0.113.9"})),"203.0.113.9","адрес ставит прокси, не клиент");
+  assert.equal(
+    clientKey(req({"x-real-ip":"203.0.113.9","x-forwarded-for":"1.1.1.1, 203.0.113.9"})),
+    "203.0.113.9","подставленное начало цепочки игнорируется");
+  assert.equal(
+    clientKey(req({"x-forwarded-for":"9.9.9.9, 203.0.113.9"})),
+    "203.0.113.9","без X-Real-IP берём хвост цепочки — его дописал прокси");
+
+  // Мусор в заголовке не должен становиться ключом: каждая уникальная строка
+  // заводит запись в таблице лимитов на десять минут.
+  for(const junk of ["x".repeat(5000),"не адрес","<script>",""])
+    assert.equal(clientKey(req({"x-real-ip":junk})),"127.0.0.1",`«${junk.slice(0,12)}» не адрес`);
+
+  // Соединение не от своего прокси — заголовкам не верим вовсе.
+  assert.equal(
+    clientKey({socket:{remoteAddress:"198.51.100.4"},headers:{"x-real-ip":"203.0.113.9"}}),
+    "198.51.100.4");
+});
+
+test("выдуманные адреса не плодят счётчики без конца", async () => {
+  const {clientKey}=await import("../server.mjs");
+  const keys=new Set();
+  for(let i=0;i<1000;i++)
+    keys.add(clientKey({socket:{remoteAddress:"127.0.0.1"},
+      headers:{"x-forwarded-for":`10.0.0.${i%256}, 203.0.113.9`}}));
+  assert.equal(keys.size,1,"тысяча подделок — один счётчик, а не тысяча записей в памяти");
+});

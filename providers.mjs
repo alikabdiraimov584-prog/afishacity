@@ -75,11 +75,20 @@ function providerResult(items,errors,extra={}){
 
 async function fetchJson(url,opts={}){
   const ctrl=new AbortController();const t=setTimeout(()=>ctrl.abort(),opts.timeoutMs||TIMEOUT_MS);
+  // Внешняя отмена — это не то же самое, что свой таймаут. Когда работу бросают
+  // сверху (кончился бюджет категории), запрос надо оборвать, а не дать ему
+  // докачаться в пустоту: данные уже никому не нужны, а канал и память заняты.
+  const outer=opts.signal||null;
+  const onAbort=()=>ctrl.abort();
+  if(outer){
+    if(outer.aborted)ctrl.abort();
+    else outer.addEventListener("abort",onAbort,{once:true});
+  }
   try{
     const r=await fetch(url,{...opts,signal:ctrl.signal,headers:{"User-Agent":"FREE-Moscow/0.9 (+local prototype)",...(opts.headers||{})}});
     if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);
     return await r.json();
-  }finally{clearTimeout(t)}
+  }finally{clearTimeout(t);if(outer)outer.removeEventListener("abort",onAbort)}
 }
 
 // Правила подбора запросов к провайдерам собираются из общего справочника категорий.
@@ -413,18 +422,23 @@ export const OVERPASS_MIRRORS=String(process.env.OVERPASS_URLS||
   .split(",").map(x=>x.trim()).filter(Boolean);
 // Зеркало, ответившее последним успешно, пробуем первым: не гоняем по кругу зря.
 let overpassPreferred=0;
-export async function overpassQuery(query,{timeoutMs,fetchJsonImpl=fetchJson}={}){
+export async function overpassQuery(query,{timeoutMs,signal=null,fetchJsonImpl=fetchJson}={}){
   const order=OVERPASS_MIRRORS.map((_,i)=>OVERPASS_MIRRORS[(overpassPreferred+i)%OVERPASS_MIRRORS.length]);
   const body=new URLSearchParams({data:query}).toString();
+  const stopped=()=>Boolean(signal&&signal.aborted);
   let last=null;
   for(const url of order){
+    // Отменённый запрос не надо повторять на остальных зеркалах: перебор всех
+    // после отмены — это ещё столько же бесполезных походов в сеть.
+    if(stopped())break;
     try{
       const d=await fetchJsonImpl(url,{method:"POST",
-        headers:{"Content-Type":"application/x-www-form-urlencoded;charset=UTF-8"},body,timeoutMs});
+        headers:{"Content-Type":"application/x-www-form-urlencoded;charset=UTF-8"},body,timeoutMs,signal});
       overpassPreferred=OVERPASS_MIRRORS.indexOf(url);
       return d;
-    }catch(e){last=e}
+    }catch(e){last=e;if(stopped())break}
   }
+  if(stopped())throw Object.assign(new Error("запрос отменён"),{name:"AbortError"});
   throw last||new Error("нет доступных зеркал Overpass");
 }
 

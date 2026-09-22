@@ -85,16 +85,24 @@ export function splitBox(b){
    запас памяти отнимать не у кого: следом перестаёт хватать всем, вплоть до
    того, что sshd не может развернуть сессию. Заодно исчезает out.push(...arr):
    спред большого массива аргументами роняет стек примерно на сотне тысяч. */
-export async function collectCategory(cat,box,{fetchCell,cap=3000,maxDepth=2,pause=async()=>{},depth=0,onBatch=null}={}){
+export async function collectCategory(cat,box,{fetchCell,cap=3000,maxDepth=2,pause=async()=>{},depth=0,onBatch=null,signal=null}={}){
   // Без приёмника элементы просто исчезли бы — молчаливая потеря данных хуже отказа.
   if(typeof onBatch!=="function")throw new TypeError("collectCategory: нужен onBatch, элементы отдаются только через него");
+  // Отмену проверяем перед каждым шагом. Сверху категорию бросают по бюджету, и
+  // если рекурсия об этом не знает, она продолжает качать Overpass и писать
+  // в базу — уже под именем следующей категории, потому что счётчик мест общий.
+  const stop=()=>{if(signal&&signal.aborted)throw Object.assign(new Error("сбор отменён"),{name:"AbortError"})};
+  const aborted=(e)=>Boolean(e&&e.name==="AbortError");
+  stop();
   let els;
-  try{els=await fetchCell(cat,box)}
+  try{els=await fetchCell(cat,box,signal)}
   catch(e){
-    if(depth>=maxDepth)throw e;
+    if(aborted(e)||depth>=maxDepth)throw e;               // отменённое не повторяем
     await pause();
-    els=await fetchCell(cat,box);                        // одна повторная попытка
+    stop();
+    els=await fetchCell(cat,box,signal);                  // одна повторная попытка
   }
+  stop();
   if(els.length<cap||depth>=maxDepth){
     const n=els.length;
     if(n)await onBatch(els);
@@ -103,7 +111,8 @@ export async function collectCategory(cat,box,{fetchCell,cap=3000,maxDepth=2,pau
   let got=0;
   for(const q of splitBox(box)){
     await pause();
-    got+=await collectCategory(cat,q,{fetchCell,cap,maxDepth,pause,depth:depth+1,onBatch});
+    stop();
+    got+=await collectCategory(cat,q,{fetchCell,cap,maxDepth,pause,depth:depth+1,onBatch,signal});
   }
   return got;
 }
@@ -144,6 +153,7 @@ export function createSnapshot(file,{resume=false}={}){
   const ins=db.prepare("insert or replace into place(pid,otype,oid,name,name_norm,lat,lon,tags_json,updated_at) values(?,?,?,?,?,?,?,?,?)");
   const insTag=db.prepare("insert or replace into ptag(tag,pid,lat,lon) values(?,?,?,?)");
   const insFts=db.prepare("insert into place_fts(name_norm,pid) values(?,?)");
+  const delFts=db.prepare("delete from place_fts where pid=?");
   const setMeta=db.prepare("insert or replace into meta(k,v) values(?,?)");
   let stored=Number(db.prepare("select count(*) n from place").get().n)||0;
   const doneKey="done_tags";
@@ -172,6 +182,12 @@ export function createSnapshot(file,{resume=false}={}){
           const pid=`${el.type}/${el.id}`;
           const nn=norm(name);
           ins.run(pid,String(el.type),Number(el.id),name,nn,lat,lon,JSON.stringify(t),now);
+          // place заменяется по ключу, а FTS5 — обычная вставка без уникальности.
+          // Одно и то же место приходит под несколькими категориями (кофейня —
+          // и «еда», и «кофе») и при возобновлении сборки, и каждый раз получало
+          // ещё одну строку в индексе. Поиск join'ит place_fts с place, поэтому
+          // место показывалось в выдаче столько раз, сколько его записали.
+          delFts.run(pid);
           insFts.run(nn,pid);
           for(const tg of new Set([...(tag?[tag]:[]),...structuralTags(t)]))insTag.run(tg,pid,lat,lon);
           stored++;
