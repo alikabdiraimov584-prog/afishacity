@@ -11,7 +11,8 @@
   "scripts": {
     "start": "node --no-warnings=ExperimentalWarning server.mjs",
     "check": "node --check server.mjs && node --check providers.mjs && node --check live_ranker.mjs && NODE_ENV=test node --no-warnings=ExperimentalWarning --test",
-    "test": "NODE_ENV=test node --no-warnings=ExperimentalWarning --test"
+    "test": "NODE_ENV=test node --no-warnings=ExperimentalWarning --test",
+    "stress": "node --no-warnings=ExperimentalWarning scripts/stress.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.127.0"
