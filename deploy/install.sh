@@ -41,15 +41,29 @@ if [ -z "$(swapon --show --noheadings 2>/dev/null)" ]; then
   FREE_KB=$(df --output=avail -k / | tail -1)
   if [ "${FREE_KB:-0}" -gt 3145728 ]; then      # оставляем не меньше 2 ГБ свободными
     say "Файл подкачки 1 ГБ"
-    fallocate -l 1G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=1024 status=none
-    chmod 600 /swapfile
-    mkswap -q /swapfile >/dev/null && swapon /swapfile
-    grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >>/etc/fstab
-    # 10, а не умолчание: подкачка здесь — страховка на пик, а не место,
-    # куда система складывает всё подряд, замедляя обычную работу.
-    grep -q '^vm.swappiness' /etc/sysctl.conf || echo 'vm.swappiness=10' >>/etc/sysctl.conf
-    sysctl -q -w vm.swappiness=10
-    echo "   подкачка включена: $(swapon --show=NAME,SIZE --noheadings | tr '\n' ' ')"
+    # Ни один шаг здесь не имеет права уронить установку. В контейнерной
+    # виртуализации (OpenVZ, часть LXC) ядро подкачку просто не даёт, и swapon
+    # возвращает отказ. При set -e это обрывало бы весь скрипт прямо тут —
+    # до выкладки кода, служб и nginx, — то есть сервер оставался бы без
+    # обновления из-за необязательного улучшения. Подкачка желательна, но
+    # обязательной частью установки быть не может.
+    if fallocate -l 1G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=1024 status=none 2>/dev/null; then
+      chmod 600 /swapfile
+      if mkswap -q /swapfile >/dev/null 2>&1 && swapon /swapfile 2>/dev/null; then
+        grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >>/etc/fstab
+        # 10, а не умолчание: подкачка здесь — страховка на пик, а не место,
+        # куда система складывает всё подряд, замедляя обычную работу.
+        grep -q '^vm.swappiness' /etc/sysctl.conf || echo 'vm.swappiness=10' >>/etc/sysctl.conf
+        sysctl -q -w vm.swappiness=10 || true
+        echo "   подкачка включена: $(swapon --show=NAME,SIZE --noheadings | tr '\n' ' ')"
+      else
+        # Не оставляем за собой гигабайт занятого места впустую.
+        rm -f /swapfile
+        echo "   подкачку это ядро не даёт (обычно контейнерная виртуализация) — продолжаю без неё"
+      fi
+    else
+      echo "   не удалось создать файл подкачки — продолжаю без неё"
+    fi
   else
     echo "   подкачки нет и места под неё тоже — всплеск памяти уронит машину целиком"
   fi
