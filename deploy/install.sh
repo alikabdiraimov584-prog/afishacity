@@ -53,7 +53,11 @@ if [ -z "$(swapon --show --noheadings 2>/dev/null)" ]; then
         grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >>/etc/fstab
         # 10, а не умолчание: подкачка здесь — страховка на пик, а не место,
         # куда система складывает всё подряд, замедляя обычную работу.
-        grep -q '^vm.swappiness' /etc/sysctl.conf || echo 'vm.swappiness=10' >>/etc/sysctl.conf
+        # Пишем в /etc/sysctl.d, а не в /etc/sysctl.conf: на свежих Ubuntu
+        # последнего просто нет, и дописывание в него сначала печатало ошибку
+        # от grep, а потом заводило файл, которого в системе быть не должно.
+        # Отдельный файл к тому же видно как наш и легко убрать.
+        printf 'vm.swappiness=10\n' >/etc/sysctl.d/99-free.conf
         sysctl -q -w vm.swappiness=10 || true
         echo "   подкачка включена: $(swapon --show=NAME,SIZE --noheadings | tr '\n' ' ')"
       else

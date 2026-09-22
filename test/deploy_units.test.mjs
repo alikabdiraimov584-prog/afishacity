@@ -76,10 +76,17 @@ test("установщик не падает из-за необязательн�
   // На контейнерной виртуализации ядро подкачку не даёт, и swapon отказывает.
   // При set -e это обрывало бы установку до выкладки кода и служб.
   const sh=readFileSync(new URL("../deploy/install.sh",import.meta.url),"utf8");
-  const block=sh.slice(sh.indexOf("Подкачка:"),sh.indexOf("node_major()"));
+  // Комментарии выбрасываем: они объясняют, как было раньше, и их упоминания
+  // старых путей не должны выглядеть как сам код.
+  const block=sh.slice(sh.indexOf("Подкачка:"),sh.indexOf("node_major()"))
+    .split("\n").filter(l=>!/^\s*#/.test(l)).join("\n");
   assert.match(block,/set -e/.test(sh)?/if mkswap[^\n]*&& swapon/:/swapon/,
     "swapon должен стоять под if, а не голой командой");
   assert.ok(!/^\s*mkswap -q \/swapfile >\/dev\/null && swapon \/swapfile\s*$/m.test(block),
     "голая цепочка с swapon обрывает скрипт при отказе ядра");
   assert.match(block,/rm -f \/swapfile/,"неудавшийся файл подкачки надо убирать, а не оставлять гигабайт впустую");
+  // На свежих Ubuntu /etc/sysctl.conf нет: дописывание в него печатало ошибку
+  // и заводило файл, которого в системе быть не должно.
+  assert.ok(!/sysctl\.conf/.test(block),"настройки ядра пишутся в /etc/sysctl.d, а не в /etc/sysctl.conf");
+  assert.match(block,/sysctl\.d\/99-free\.conf/,"свой файл настроек видно как наш и легко убрать");
 });
