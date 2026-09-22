@@ -180,8 +180,13 @@ const head=(s)=>{line();line(`\x1b[1m${s}\x1b[0m`)};
       :{timeoutMs:30000};
     const s=summarize(name,await wave(path,{concurrency:Math.max(2,Math.round(PEAK/4)),seconds:SECONDS/2,...opts}));
     if(s.statuses.some(([k,v])=>k===401&&v>s.n*0.9))unauthorized=true;
-    line(`  ${name.padEnd(28)} ${String(s.n).padStart(4)} шт, p50 ${ms(s.p50).padStart(8)}, p95 ${ms(s.p95).padStart(9)}` +
+    // Худший обязателен. Пятьсот запросов при p50 в две миллисекунды означают,
+    // что несколько заняли секунды, — и без этого числа их не видно вовсе.
+    const rps=Math.round(s.n/(SECONDS/2));
+    line(`  ${name.padEnd(28)} ${String(s.n).padStart(5)} шт (${String(rps).padStart(4)}/с), p50 ${ms(s.p50).padStart(8)}, p95 ${ms(s.p95).padStart(9)}, худший ${ms(s.max).padStart(9)}` +
       `${s.limited?`, лимит сработал ${s.limited}`:""}${s.bad?`, ОТКАЗОВ ${s.bad} (${s.statuses.map(([k,v])=>k+"×"+v).join(", ")})`:""}`);
+    if(s.max>=1000&&s.p95<s.max/4)
+      line(`${" ".repeat(30)}↑ разброс огромен: типичный ответ быстрый, но отдельные ждут секундами — это внешний источник, а не нагрузка`);
   }
 
   // 4. Не заблокирован ли цикл событий. Меряем самую дешёвую ручку, пока
@@ -200,13 +205,20 @@ const head=(s)=>{line();line(`\x1b[1m${s}\x1b[0m`)};
   // другое: сколько миллисекунд самая дешёвая ручка ЖДЁТ, пока рядом работают.
   // Заблокированный цикл событий — это сотни миллисекунд, а не единицы.
   const delta=under.p50-idle.p50;
-  const blocked=under.p95>=250||under.max>=1000;
-  const strained=under.p95>=80||delta>=50;
+  // Судим по худшему, а не по середине. Заминка в полсекунды на самой дешёвой
+  // ручке — это уже остановка всего приложения; в середине её не видно, потому
+  // что она случается редко, а человеку хватает и одного раза, чтобы решить,
+  // что сломалось. Прошлый порог в секунду пропустил зафиксированные 657 мс.
+  const blocked=under.p95>=250||under.max>=800;
+  const strained=under.p95>=80||under.max>=300||delta>=50;
   line(`  /api/health в покое        p50 ${ms(idle.p50)}, p95 ${ms(idle.p95)}`);
   line(`  /api/health под нагрузкой  p50 ${ms(under.p50)}, p95 ${ms(under.p95)}, худший ${ms(under.max)}`);
   line(`  Задержка от нагрузки: +${ms(delta)} — ${blocked
     ?"цикл событий блокируется, ищи синхронную работу в пути запроса"
-    :strained?"заметно, но приложение отвечает":"нормально, дешёвые ручки не ждут тяжёлых"}`);
+    :strained?"в среднем нормально, но отдельные заминки заметны человеку"
+    :"нормально, дешёвые ручки не ждут тяжёлых"}`);
+  if(strained&&!blocked)
+    line(`  Худшее ожидание ${ms(under.max)} на ручке, которая в покое отвечает за ${ms(idle.p50)}`);
 
   // 5. Разговор. По умолчанию выключен: каждый заход стоит денег.
   if(WITH_DIALOGUE){
@@ -247,5 +259,6 @@ const head=(s)=>{line();line(`\x1b[1m${s}\x1b[0m`)};
   const worst=rows[rows.length-1];
   if(worst&&worst.bad)line(`  Под пиком ${worst.bad} запросов из ${worst.n} остались без ответа`);
   if(blocked)line("  Главное подозрение: синхронная работа в пути запроса, она останавливает всё приложение");
+  else if(strained)line(`  Приложение отвечает, но раз в сотню запросов замирает на ${ms(under.max)} — стоит найти, на чём`);
   line();
 })().catch(e=>{console.error("стресс-тест не доехал:",e&&e.stack||e);process.exit(1)});
