@@ -532,7 +532,21 @@ function addMsg(role,html){
 }
 function typing(){const d=addMsg("ai",'<span class="typing"><i></i><i></i><i></i></span>');return d}
 function quick(opts){return '<div class="quick">'+opts.map((x,i)=>`<button class="${i===0?"primary":""}" data-quick="${esc(x)}">${esc(x)}</button>`).join("")+'</div>'}
-function bindQuick(){$$("[data-quick]").forEach(b=>{if(!b.dataset.bound){b.dataset.bound="1";b.onclick=()=>submitUser(b.dataset.quick)}})}
+/* Обработчик нельзя пометить в разметке.
+ *
+ * Здесь стояла отметка data-bound, чтобы не навешивать обработчик дважды.
+ * Но разметка переписки сохраняется в хранилище и возвращается на экран при
+ * следующем заходе — а обработчики не сохраняются. Отметка переживала запись
+ * в хранилище, обработчик не переживал: после восстановления кнопки выглядели
+ * живыми и не делали ровно ничего, потому что проверка считала их уже
+ * подключёнными. Карточки при этом работали — у них такой отметки нет, — и
+ * со стороны это выглядело как «не реагируют только кнопки в приветствии».
+ *
+ * Присваивание onclick заменяет прежний обработчик, а не добавляет второй,
+ * так что отметка не нужна вовсе. Признак живого поведения в разметке — сама
+ * по себе ловушка: разметку можно сохранить и восстановить, поведение нет.
+ */
+function bindQuick(){$$("[data-quick]").forEach(b=>{b.onclick=()=>submitUser(b.dataset.quick)})}
 // Сценарии со своим диалогом; всё остальное — прямой поиск по категории из общего справочника.
 const INTENT_BY_TAG={bar:"drink",hookah:"hookah",food:"food",bakery:"food",pastry:"food",club:"nightlife",karaoke:"nightlife",
   date:"date",family:"family",work:"work",coffee:"work",library:"work",spa:"wellness",massage:"wellness",yoga:"wellness",gym:"wellness",pool:"wellness"};
