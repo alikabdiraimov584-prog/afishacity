@@ -184,3 +184,22 @@ test("выдуманные адреса не плодят счётчики бе�
       headers:{"x-forwarded-for":`10.0.0.${i%256}, 203.0.113.9`}}));
   assert.equal(keys.size,1,"тысяча подделок — один счётчик, а не тысяча записей в памяти");
 });
+
+test("отказ в доступе виден человеку, а не подменяется демо-местами", async () => {
+  // Стресс-тест показал: все запросы к поиску отклонялись авторизацией, а
+  // приложение продолжало работать — на трёх десятках демонстрационных мест,
+  // внешне неотличимых от настоящих. Человек видел «какие-то не те заведения»
+  // и не мог узнать, что сервер не ответил ему ни разу.
+  const {readFileSync}=await import("node:fs");
+  const src=readFileSync(new URL("../public/index.html",import.meta.url),"utf8");
+  const body=src.slice(src.indexOf("async function recommend()"),src.indexOf("function reason(r)"));
+  assert.match(body,/noteAccessDenied\(r\)/,"отказ сервера должен быть замечен, а не проигнорирован");
+  // Проверяем порядок: сначала сообщаем, и только потом подменяем демо-набором.
+  assert.ok(body.indexOf("noteAccessDenied")<body.indexOf("fallbackSearch(args)"),
+    "сообщение должно предшествовать подмене, иначе оно ничего не объясняет");
+
+  const note=src.slice(src.indexOf("async function noteAccessDenied"),src.indexOf("async function recommend()"));
+  assert.match(note,/401/);assert.match(note,/403/);
+  assert.match(note,/accessDenied=true/,"говорим один раз за сеанс, а не на каждый запрос");
+  assert.match(note,/toast\(/,"сообщение должно дойти до человека, а не только в консоль");
+});

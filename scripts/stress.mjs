@@ -20,8 +20,34 @@ const SECONDS=Number(args.get("seconds")||12);
 const PEAK=Number(args.get("peak")||24);
 const WITH_DIALOGUE=args.has("dialogue");
 const SERVICE=String(args.get("service")||"free");
+const AS_APP=!args.has("anonymous");            // по умолчанию ходим как настоящее приложение
 
 const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
+
+/* ---- подпись, как у настоящего клиента ----------------------------------
+   Без неё сервер отвечает 401 на всё, что требует авторизации, и тест меряет
+   не работу, а отказ в доступе. Токен бота берём из .env самого сервера —
+   тем самым проверяется ровно то, чем живёт приложение: та ли это пара
+   «бот в Telegram ↔ токен в настройках». Если их разъехало (например, токен
+   перевыпустили), приложение молча перестаёт работать целиком, и увидеть это
+   можно только так. */
+async function appHeaders(){
+  if(!AS_APP)return {};
+  try{
+    const {readFile}=await import("node:fs/promises");
+    const {signInitData}=await import("../telegram.mjs");
+    const env=await readFile(new URL("../.env",import.meta.url),"utf8").catch(()=>"");
+    const token=(/^TELEGRAM_BOT_TOKEN=(.+)$/m.exec(env)||[])[1]?.trim()
+      ||process.env.TELEGRAM_BOT_TOKEN||"";
+    if(!token)return {reason:"в .env нет TELEGRAM_BOT_TOKEN"};
+    const initData=signInitData({
+      auth_date:String(Math.floor(Date.now()/1000)),
+      query_id:"stress",
+      user:{id:777000001,first_name:"Нагрузка",username:"stress",language_code:"ru"},
+    },token);
+    return {headers:{"X-Telegram-Init-Data":initData,"X-Free-Client":"stress-test-client-0001"}};
+  }catch(e){return {reason:String(e&&e.message||e)}}
+}
 const pct=(sorted,p)=>sorted.length?sorted[Math.min(sorted.length-1,Math.floor(sorted.length*p))]:0;
 const ms=(n)=>`${Math.round(n)} мс`;
 const mb=(n)=>`${(n/1048576).toFixed(0)} МБ`;
@@ -50,12 +76,13 @@ async function cgroup(){
 /* ---- один запрос --------------------------------------------------------
    Таймаут свой: без него зависший запрос молча растворится в ожидании, а
    именно он-то и интересен. */
+let AUTH={};                                   // заполняется один раз перед тестом
 async function hit(path,{method="GET",body=null,headers={},timeoutMs=20000}={}){
   const ctrl=new AbortController();
   const t=setTimeout(()=>ctrl.abort(),timeoutMs);
   const at=performance.now();
   try{
-    const r=await fetch(BASE+path,{method,body,headers,signal:ctrl.signal});
+    const r=await fetch(BASE+path,{method,body,headers:{...AUTH,...headers},signal:ctrl.signal});
     const text=await r.text();                   // дочитываем: иначе меряем заголовки, а не ответ
     return {ok:r.ok,status:r.status,ms:performance.now()-at,bytes:text.length};
   }catch(e){
@@ -93,6 +120,11 @@ const head=(s)=>{line();line(`\x1b[1m${s}\x1b[0m`)};
 
 (async()=>{
   line(`Нагрузка на ${BASE}: ${SECONDS} с на ступень, пик ${PEAK} одновременных`);
+  const app=await appHeaders();
+  AUTH=app.headers||{};
+  if(AS_APP&&app.headers)line("Ходим как настоящее приложение: подпись Telegram собрана из .env");
+  else if(AS_APP)line(`Подпись Telegram собрать не вышло (${app.reason}) — идём без неё`);
+  else line("Идём без подписи: проверяем, что видит посторонний");
 
   // 1. Жив ли вообще. Один запрос с коротким терпением: если сервер мёртв,
   // незачем ждать полную волну, чтобы это выяснить.
@@ -141,11 +173,13 @@ const head=(s)=>{line();line(`\x1b[1m${s}\x1b[0m`)};
     ["Скрипт экрана разговора","/voice.js"],
     ["Поиск мест","/api/recommend"],
   ];
+  let unauthorized=false;
   for(const [name,path] of heavy){
     const opts=path==="/api/recommend"
       ?{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query:"бар"}),timeoutMs:30000}
       :{timeoutMs:30000};
     const s=summarize(name,await wave(path,{concurrency:Math.max(2,Math.round(PEAK/4)),seconds:SECONDS/2,...opts}));
+    if(s.statuses.some(([k,v])=>k===401&&v>s.n*0.9))unauthorized=true;
     line(`  ${name.padEnd(28)} ${String(s.n).padStart(4)} шт, p50 ${ms(s.p50).padStart(8)}, p95 ${ms(s.p95).padStart(9)}` +
       `${s.limited?`, лимит сработал ${s.limited}`:""}${s.bad?`, ОТКАЗОВ ${s.bad} (${s.statuses.map(([k,v])=>k+"×"+v).join(", ")})`:""}`);
   }
@@ -201,6 +235,14 @@ const head=(s)=>{line();line(`\x1b[1m${s}\x1b[0m`)};
     else if(dh)line(`  Службу тормозили ради сброса страниц ${dh} раз — MemoryHigh ниже рабочего набора,`);
     if(dh&&!dk)line(`  а это и выглядит как «работает, но не реагирует»`);
     if(!dh&&!dm&&!dk)line("  В пределы памяти ни разу не упёрлись — дело не в них");
+  }
+  if(unauthorized){
+    line("  ВСЕ ЗАПРОСЫ ОТКЛОНЕНЫ АВТОРИЗАЦИЕЙ (401).");
+    line("  Значит подпись Telegram не сходится: токен в .env и бот, через которого");
+    line("  открывают приложение, — разные. Для человека это выглядит как «ничего");
+    line("  не работает»: сервер жив и быстр, но не отвечает ни на один запрос по делу.");
+    line("  Проверить: token=$(grep -m1 ^TELEGRAM_BOT_TOKEN= .env | cut -d= -f2-); curl -s \"https://api.telegram.org/bot$token/getMe\"");
+    line("  В ответе должно быть \"ok\":true и username того бота, через которого открываете.");
   }
   const worst=rows[rows.length-1];
   if(worst&&worst.bad)line(`  Под пиком ${worst.bad} запросов из ${worst.n} остались без ответа`);

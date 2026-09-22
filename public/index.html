@@ -469,7 +469,7 @@ function pushProfile(){
 }
 async function loadProfile(){
   try{
-    const r=await apiFetch("/api/me");if(!r.ok)return;
+    const r=await apiFetch("/api/me");if(!r.ok){await noteAccessDenied(r);return}
     const d=await r.json();profileState.user=d.user;profileState.evenings=d.evenings||[];profileState.stats=d.stats||{};
     const p=d.profile||{};
     const serverHas=(p.saved||[]).length||(p.plan||[]).length||Object.values(p.taste||{}).some(v=>v);
@@ -661,10 +661,36 @@ function fallbackSearch(args){
   const q=norm(args.query),words=q.split(" ").filter(x=>x.length>=3),out=[];
   for(const v of FALLBACK){if(!fallbackCurrent(v,args))continue;const text=norm([v.name,v.cat,v.desc,v.keywords,(v.tags||[]).join(" ")].join(" "));let s=0;for(const w of words){const re=new RegExp("(?<![а-яa-z0-9])"+w.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"(?:[а-я]{0,2}|н[а-я]{1,3})(?![а-я])");if(re.test(text))s+=12}if(s<12)continue;const dna=localDna(v);for(const [k,w] of Object.entries(taste))s+=(w||0)*(dna[k]-50)/14;out.push({...v,dna,_s:s,match:90})}
   out.sort((a,b)=>b._s-a._s);return out.slice(0,3).map((v,i)=>({id:v.id,name:v.name,organizer:v.organizer,category:v.cat,date:v.date_start||"постоянно",time:v.times?.[0]||v.hours_label||"",price:v.price_label,availability:v.availability,area:v.area,metro:v.metro,source:v.source,point_source:v.point_source||v.source,official_source:v.official_source||null,coords:v.coords||null,provider:"Fallback",image_url:v.image_url||null,booking_url:v.booking_url||null,booking_kind:v.booking_kind||null,booking_provider:v.booking_provider||null,phone:v.phone||null,reasons:[],dna:v.dna,match:Math.max(76,94-i*5),kind:v.kind}))}
+/* Отказ сервера не должен выглядеть как пустой результат.
+ *
+ * Особенно отказ в доступе. Поиск при неудаче молча переходил на три десятка
+ * демонстрационных мест, внешне неотличимых от настоящих: человек видел «какие-то
+ * не те заведения» и никак не мог узнать, что сервер не ответил ему ни разу.
+ * Молчаливое ухудшение хуже честной ошибки — его нельзя ни заметить, ни починить.
+ *
+ * Говорим один раз за сеанс: повторять на каждый запрос — это уже не сообщение,
+ * а шум, который перестают читать.
+ */
+let accessDenied=false;
+async function noteAccessDenied(r){
+  if(!r||r.ok||accessDenied)return false;
+  if(r.status!==401&&r.status!==403)return false;
+  accessDenied=true;
+  let msg="";
+  try{msg=(await r.clone().json()).message||""}catch(_){}
+  msg=msg||"Сервер не принимает запросы: откройте FREE через Telegram-бота";
+  toast(msg);
+  const h=$("#hint");if(h)h.textContent=msg+" · сейчас показываются демо-места, а не живой поиск";
+  return true;
+}
 async function recommend(){
   const args=await liveArgs();
   chatState.lastNote=null;
-  try{const r=await apiFetch("/api/recommend",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(args)});if(r.ok){const d=await r.json();chatState.lastNote=d.note||null;if(d.results?.length)return d.results.slice(0,3)}}catch(_){}
+  try{
+    const r=await apiFetch("/api/recommend",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(args)});
+    if(r.ok){const d=await r.json();chatState.lastNote=d.note||null;if(d.results?.length)return d.results.slice(0,3)}
+    else await noteAccessDenied(r);
+  }catch(_){}
   return fallbackSearch(args);
 }
 function reason(r){const a=[...(r.reasons||[])],d=r.dna||{};if(d.quiet>=68)a.push("можно разговаривать");if(d.romantic>=70)a.push("подходит вдвоём");if(d.late>=70)a.push("работает поздно");return [...new Set(a)].slice(0,3).join(" · ")||"лучшее совпадение с вашим контекстом"}
@@ -1183,7 +1209,11 @@ async function refindStop(i){
   if(prev)args.user_location=coords(prev.place);
   const btn=[...$("#chat").querySelectorAll(`[data-refind="${i}"]`)].at(-1);if(btn){btn.disabled=true;btn.textContent="ищу…"}
   let results=[];
-  try{const r=await apiFetch("/api/recommend",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(args)});if(r.ok)results=(await r.json()).results||[]}catch(_){}
+  try{
+    const r=await apiFetch("/api/recommend",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(args)});
+    if(r.ok)results=(await r.json()).results||[];
+    else await noteAccessDenied(r);
+  }catch(_){}
   if(!results.length)results=fallbackSearch(args);
   results=results.filter(x=>!used.has(x.id));
   if(!results.length){toast("Других вариантов рядом не нашёл");if(btn){btn.disabled=false;btn.textContent="🔍 найти другое"}return}
