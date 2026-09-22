@@ -94,6 +94,65 @@ for(const [name,f,why] of fields){
   console.log(`  ${name.padEnd(12)} ${mark.padEnd(22)} ${why}`);
 }
 
+/* Разрешено ли поле — или просто пусто у этих мест.
+ *
+ * Это разные беды с разным лечением, а в общем ответе они выглядят одинаково:
+ * поля нет. 2GIS часть полей отдаёт только за отдельную плату, и такой запрос
+ * он отклоняет целиком, называя поле. Поэтому спрашиваем каждое поле по
+ * одному: отказ — значит тариф, тишина при успехе — значит у этих заведений
+ * данных и правда нет.
+ *
+ * Отказы 2GIS приходит с HTTP 200 и кодом внутри тела, поэтому смотрим meta.
+ */
+const BASE_FIELDS="items.point,items.rubrics";
+const PROBES=[
+  ["items.schedule","часы работы"],
+  ["items.full_address_name","полный адрес"],
+  ["items.contact_groups","телефон и сайт"],
+  ["items.external_content","ФОТОГРАФИИ"],
+  ["items.reviews","РЕЙТИНГ И ОТЗЫВЫ"],
+  ["items.flags","признак закрытия"],
+  ["items.org","организация"],
+];
+async function probe(field){
+  const p=new URL("https://catalog.api.2gis.com/3.0/items");
+  for(const [k,v] of Object.entries({key,q:query,type:"branch",point:"37.6173,55.7558",
+    radius:String(DGIS_MAX_RADIUS),page_size:String(DGIS_PAGE_SIZE),locale:"ru_RU",
+    fields:`${BASE_FIELDS},${field}`}))p.searchParams.set(k,v);
+  try{
+    const r=await fetch(p,{signal:AbortSignal.timeout(15000)});
+    const b=await r.json().catch(()=>null);
+    const code=b&&b.meta?b.meta.code:r.status;
+    if(code!==200)return {allowed:false,why:b?.meta?.error?.message||b?.meta?.error?.type||`код ${code}`};
+    return {allowed:true,items:b.result?.items||[]};
+  }catch(e){return {allowed:null,why:String(e&&e.message||e)}}
+}
+
+console.log("\nКаждое поле по отдельности — разрешено ли оно этому ключу:");
+const FILL={
+  "items.schedule":x=>x.schedule&&Object.keys(x.schedule).length,
+  "items.full_address_name":x=>x.full_address_name,
+  "items.contact_groups":x=>(x.contact_groups||[]).length,
+  "items.external_content":x=>(x.external_content||[]).some(c=>c&&c.main_photo_url),
+  "items.reviews":x=>x.reviews&&x.reviews.general_rating,
+  "items.flags":x=>x.flags&&Object.keys(x.flags).length,
+  "items.org":x=>x.org&&x.org.id,
+};
+const denied=[];
+for(const [field,human] of PROBES){
+  const res=await probe(field);
+  if(res.allowed===null){console.log(`  ${human.padEnd(20)} проверить не вышло: ${res.why}`);continue}
+  if(!res.allowed){
+    denied.push([field,human,res.why]);
+    console.log(`  ${human.padEnd(20)} \x1b[31mКЛЮЧ НЕ ДАЁТ\x1b[0m — ${res.why}`);
+    continue;
+  }
+  const n=res.items.filter(FILL[field]||(()=>false)).length;
+  console.log(`  ${human.padEnd(20)} разрешено, заполнено у ${n} из ${res.items.length}`
+    +(n?"":"  ← поле открыто, но данных у этих мест нет"));
+  await new Promise(r=>setTimeout(r,250));       // не долбим чужой сервис
+}
+
 // Теперь то же самое глазами приложения.
 const plan=buildSearchPlan({query});
 const out=await search2GIS(plan,key);
@@ -119,6 +178,14 @@ if(!out.items.length){
   console.log(`  ПРИЛОЖЕНИЕ НЕ РАЗОБРАЛО НИ ОДНОГО МЕСТА, хотя ответ пришёл (${items.length}).`);
   console.log("  Ключ при этом рабочий — дело в коде или в параметрах запроса.");
   console.log("  Пришлите этот вывод: по нему видно, что именно разошлось.");
+}
+if(denied.length){
+  console.log(`  ЭТОТ КЛЮЧ НЕ ОТДАЁТ ${denied.length} пол${denied.length===1?"е":"я"}: ${denied.map(d=>d[1]).join(", ")}.`);
+  console.log("  Это тариф, а не поломка в коде и не выбор провайдера: у 2GIS часть полей");
+  console.log("  открывается отдельно. Демо-ключ можно превратить в рабочий, купив подписку");
+  console.log("  в Platform Manager — тогда поля откроются на том же ключе.");
+}else{
+  console.log("  Все нужные поля ключу разрешены — если данных нет, их нет у самих заведений.");
 }
 if(!rawRating)console.log("  Рейтингов нет. На этом тарифе поле reviews недоступно — порядок выдачи будет считаться без оценок людей.");
 else console.log(`  Рейтинги приходят у ${rawRating} из ${items.length}${out.items.length?" — они уже влияют на порядок и видны на карточке.":"."}`);
