@@ -179,17 +179,42 @@ test("категория, упёршаяся в потолок ответа, д�
     calls.push(box);
     return calls.length===1?[1,2,3]:[calls.length*10];
   };
-  const els=await collectCategory({tag:"bar"},MOSCOW_BBOX,{fetchCell,cap});
+  const got=[];
+  const n=await collectCategory({tag:"bar"},MOSCOW_BBOX,{fetchCell,cap,onBatch:(e)=>{got.push(...e)}});
   assert.equal(calls.length,5,"одна общая рамка плюс четыре четверти");
-  assert.deepEqual(els,[20,30,40,50]);
+  assert.deepEqual(got,[20,30,40,50]);
+  assert.equal(n,4,"наружу уходит только счёт, сами элементы — через onBatch");
+});
+
+test("собранное не копится в памяти", async () => {
+  // На машине с гигабайтом памяти и без подкачки лишний массив на десятки
+  // мегабайт отнимает её у сервера и у sshd. Элементы отдаются по клеткам и
+  // нигде не накапливаются: наружу уходит число, а не выдача целиком.
+  const cap=1000,cell=Array.from({length:cap},(_,i)=>i);
+  let handed=0,batches=0;
+  const n=await collectCategory({tag:"food"},MOSCOW_BBOX,{
+    fetchCell:async()=>cell.slice(),cap,maxDepth:1,
+    onBatch:(e)=>{batches++;handed+=e.length}});
+  assert.equal(typeof n,"number","возвращается счёт, а не массив");
+  assert.equal(batches,4,"каждая клетка отдана отдельно");
+  assert.equal(n,handed);
+  assert.equal(n,4*cap);
+});
+
+test("без приёмника собранное не исчезает молча", async () => {
+  await assert.rejects(
+    ()=>collectCategory({tag:"bar"},MOSCOW_BBOX,{fetchCell:async()=>[1],cap:10}),
+    /onBatch/,"потеря данных должна быть отказом, а не тишиной");
 });
 
 test("одиночный отказ повторяется, постоянный — пробрасывается", async () => {
   let n=0;
   const flaky=async()=>{n++;if(n===1)throw new Error("504");return [1]};
-  assert.deepEqual(await collectCategory({tag:"bar"},MOSCOW_BBOX,{fetchCell:flaky,cap:10}),[1]);
+  const seen=[];
+  assert.equal(await collectCategory({tag:"bar"},MOSCOW_BBOX,{fetchCell:flaky,cap:10,onBatch:(e)=>{seen.push(...e)}}),1);
+  assert.deepEqual(seen,[1],"повтор отдаёт клетку так же, как удачная попытка");
   const dead=async()=>{throw new Error("403")};
-  await assert.rejects(()=>collectCategory({tag:"bar"},MOSCOW_BBOX,{fetchCell:dead,cap:10}),/403/);
+  await assert.rejects(()=>collectCategory({tag:"bar"},MOSCOW_BBOX,{fetchCell:dead,cap:10,onBatch:()=>{}}),/403/);
 });
 
 test("огрызок вместо снимка не публикуется", () => {

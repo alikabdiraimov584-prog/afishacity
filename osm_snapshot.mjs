@@ -70,13 +70,24 @@ export function splitBox(b){
  * Категория, упёршаяся в потолок ответа, означает, что в рамке её больше, чем
  * нам отдали: делим рамку, иначе половина города теряется молча.
  */
-/* onBatch — отдать клетку сразу, как только она пришла.
+/* Сбор одной категории. Элементы отдаются через onBatch, наружу возвращается
+   только их число.
+   
    Большая категория делится на клетки, и каждую Overpass считает под минуту.
-   Раньше результат возвращался одним куском в самом конце: обрыв на
-   предпоследней клетке уничтожал всё, что успели собрать за двадцать минут.
-   Теперь клетка уходит в базу сразу, и незаконченная категория оставляет
-   после себя работу, а не пустоту. */
+   Клетка уходит в базу сразу, как только пришла: обрыв на предпоследней
+   клетке оставляет после себя работу, а не пустоту.
+   
+   Собранное при этом нигде не накапливается, и это не мелочь. Раньше рекурсия
+   складывала элементы всех подклеток в один массив, который вызывающий код
+   даже не читал: на «еде» по Москве это до сорока восьми тысяч разобранных
+   объектов Overpass, десятки мегабайт, — и всё это лежало в памяти рядом с
+   базой и самим сервером. На машине с гигабайтом памяти и без подкачки такой
+   запас памяти отнимать не у кого: следом перестаёт хватать всем, вплоть до
+   того, что sshd не может развернуть сессию. Заодно исчезает out.push(...arr):
+   спред большого массива аргументами роняет стек примерно на сотне тысяч. */
 export async function collectCategory(cat,box,{fetchCell,cap=3000,maxDepth=2,pause=async()=>{},depth=0,onBatch=null}={}){
+  // Без приёмника элементы просто исчезли бы — молчаливая потеря данных хуже отказа.
+  if(typeof onBatch!=="function")throw new TypeError("collectCategory: нужен onBatch, элементы отдаются только через него");
   let els;
   try{els=await fetchCell(cat,box)}
   catch(e){
@@ -85,15 +96,16 @@ export async function collectCategory(cat,box,{fetchCell,cap=3000,maxDepth=2,pau
     els=await fetchCell(cat,box);                        // одна повторная попытка
   }
   if(els.length<cap||depth>=maxDepth){
-    if(onBatch&&els.length)await onBatch(els);
-    return els;
+    const n=els.length;
+    if(n)await onBatch(els);
+    return n;
   }
-  const out=[];
+  let got=0;
   for(const q of splitBox(box)){
     await pause();
-    out.push(...await collectCategory(cat,q,{fetchCell,cap,maxDepth,pause,depth:depth+1,onBatch}));
+    got+=await collectCategory(cat,q,{fetchCell,cap,maxDepth,pause,depth:depth+1,onBatch});
   }
-  return out;
+  return got;
 }
 
 // Снимок из половины города — не снимок. Решение вынесено сюда, чтобы правило

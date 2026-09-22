@@ -8,9 +8,18 @@ Type=simple
 User=free
 WorkingDirectory=/opt/afishacity
 EnvironmentFile=/opt/afishacity/.env
-ExecStart=/usr/bin/node --no-warnings=ExperimentalWarning server.mjs
+ExecStart=/usr/bin/node --no-warnings=ExperimentalWarning --max-old-space-size=256 server.mjs
 Restart=always
 RestartSec=3
+# На боевой машине 956 МБ памяти и нет подкачки. Без предела куче V8 выбирает
+# его сам, ориентируясь на объём памяти целиком, — то есть больше, чем здесь
+# вообще свободно, и до сборки мусора дело может не дойти. Тогда память
+# кончается у всех сразу: nginx перестаёт отвечать, а sshd не может развернуть
+# сессию, и до сервера не достучаться именно в тот момент, когда это нужно.
+# MemoryHigh придавливает процесс до того, как станет поздно, MemoryMax —
+# последняя черта: лучше перезапуск одного сервиса, чем вся машина в ступоре.
+MemoryHigh=288M
+MemoryMax=400M
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

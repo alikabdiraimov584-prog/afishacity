@@ -32,6 +32,29 @@ say "Пакеты: git, nginx, certbot"
 apt-get update -qq
 apt-get install -y -qq curl git nginx certbot python3-certbot-nginx >/dev/null
 
+# Подкачка: не для скорости, а чтобы всплеск памяти не ронял всю машину.
+# На гигабайте без подкачки любой пик — это мгновенный отказ всем сразу: nginx
+# перестаёт отвечать, sshd не может развернуть сессию, и до сервера не
+# достучаться именно тогда, когда это нужно. С файлом подкачки тот же пик
+# становится просто замедлением на несколько секунд.
+if [ -z "$(swapon --show --noheadings 2>/dev/null)" ]; then
+  FREE_KB=$(df --output=avail -k / | tail -1)
+  if [ "${FREE_KB:-0}" -gt 3145728 ]; then      # оставляем не меньше 2 ГБ свободными
+    say "Файл подкачки 1 ГБ"
+    fallocate -l 1G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=1024 status=none
+    chmod 600 /swapfile
+    mkswap -q /swapfile >/dev/null && swapon /swapfile
+    grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >>/etc/fstab
+    # 10, а не умолчание: подкачка здесь — страховка на пик, а не место,
+    # куда система складывает всё подряд, замедляя обычную работу.
+    grep -q '^vm.swappiness' /etc/sysctl.conf || echo 'vm.swappiness=10' >>/etc/sysctl.conf
+    sysctl -q -w vm.swappiness=10
+    echo "   подкачка включена: $(swapon --show=NAME,SIZE --noheadings | tr '\n' ' ')"
+  else
+    echo "   подкачки нет и места под неё тоже — всплеск памяти уронит машину целиком"
+  fi
+fi
+
 node_major(){ command -v node >/dev/null && node -v | sed 's/^v//' | cut -d. -f1 || echo 0; }
 if [ "$(node_major)" -lt 20 ]; then
   say "Node.js"

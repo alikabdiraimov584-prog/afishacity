@@ -9,7 +9,13 @@ Wants=network-online.target
 Type=oneshot
 User=free
 WorkingDirectory=/opt/afishacity
-ExecStart=/usr/bin/node --no-warnings=ExperimentalWarning scripts/build_osm_snapshot.mjs
+ExecStart=/usr/bin/node --no-warnings=ExperimentalWarning --max-old-space-size=192 scripts/build_osm_snapshot.mjs
+# Фоновая сборка не имеет права мешать живому сервису. Клетки уходят в базу по
+# мере готовности и нигде не копятся, поэтому двухсот мегабайт кучи хватает с
+# запасом; предел тут не ограничение, а страховка от того, чтобы ночная задача
+# утащила за собой машину, на которой всего гигабайт памяти и нет подкачки.
+MemoryHigh=224M
+MemoryMax=320M
 # Сборка идёт десятки минут и не должна висеть вечно.
 TimeoutStartSec=3600
 # Упало (зеркала Overpass легли, сеть моргнула) — повторяем: каждый заход
