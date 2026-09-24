@@ -869,7 +869,16 @@ async function runYandexAgent(message,conversationId,context={},emit=null,signal
     voice,emit,signal,cfg:YANDEX,
     context:{...context,summary:dialogueContextSummary(context)},
     deps:{
+      /* Ушедшему искать не надо.
+       *
+       * Сигнал отмены доходит до модели, но не до обхода источников: он не
+       * прокинут через всю цепочку провайдеров, и это отдельная правка. Зато
+       * не дать обходу НАЧАТЬСЯ после ухода можно здесь — а начинается он как
+       * раз чаще всего после, потому что человек закрывает экран, пока модель
+       * думает. Уже идущий обход всё равно доработает до конца.
+       */
       recommend_free:async(args)=>{
+        if(signal&&signal.aborted)throw Object.assign(new Error("клиент отключился"),{name:"AbortError"});
         const a={...args};
         if(!a.query)a.query=String(message);
         if(context.taste_weights&&typeof context.taste_weights==="object")a.taste_weights=context.taste_weights;
@@ -877,7 +886,10 @@ async function runYandexAgent(message,conversationId,context={},emit=null,signal
           a.user_location={lat:+context.user_location.lat,lon:+context.user_location.lon};
         return recommend(a);
       },
-      plan_evening:async(args)=>planEvening(args,context),
+      plan_evening:async(args)=>{
+        if(signal&&signal.aborted)throw Object.assign(new Error("клиент отключился"),{name:"AbortError"});
+        return planEvening(args,context);
+      },
       status:(name,args)=>toolStatus({name,input:args})
     }
   });
@@ -1101,13 +1113,32 @@ const server=http.createServer(async(req,res)=>{
       const message=text(body.message).trim();
       if(!message)return json(res,400,{error:"message_required"});
       res.writeHead(200,{"Content-Type":"text/event-stream; charset=utf-8","Cache-Control":"no-store","Connection":"keep-alive","X-Accel-Buffering":"no",...corsHeaders(req)});
-      const emit=(type,data)=>{if(!res.writableEnded)res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`)};
-      const ping=setInterval(()=>{if(!res.writableEnded)res.write(": ping\n\n")},15000);
-      // Клиент ушёл — продолжать разговор с моделью бессмысленно: ответ уже некому
-      // читать, а ключ тратится. Сообщаем об отмене внутрь диалога.
+      /* Жив ли ещё тот, кому мы пишем.
+       *
+       * writableEnded отвечает «закончили ли МЫ», а не «слушает ли ОН»: у
+       * оборванного соединения он остаётся false, и пинги раз в пятнадцать
+       * секунд продолжали уходить в уничтоженный сокет. Про уход клиента
+       * говорит destroyed. */
+      const gone=()=>res.destroyed||res.writableEnded;
+      const emit=(type,data)=>{if(!gone())res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`)};
+      const ping=setInterval(()=>{if(!gone())res.write(": ping\n\n")},15000);
+      /* Клиент ушёл — продолжать разговор с моделью бессмысленно: ответ уже
+       * некому читать, а ключ тратится.
+       *
+       * Слушать надо ответ, а не запрос. Запрос в Node 22 закрывается сразу,
+       * как только дочитано тело, — а тело здесь читается строкой выше.
+       * Обработчик, повешенный на уже закрытый запрос, не срабатывает никогда:
+       * проверено на v22.22.2, сразу после чтения тела req.closed и
+       * req.destroyed уже true. Значит отмена не приходила ни разу за всю
+       * жизнь сервиса, и каждый закрытый экран оставлял за собой полный ход
+       * агента: до четырёх обращений к модели и три обхода провайдеров,
+       * оплаченных ключом и никому не нужных. Ответ живёт до конца передачи и
+       * об уходе клиента узнаёт честно. */
       const abort=new AbortController();
       const onClose=()=>{abort.abort();clearInterval(ping)};
-      req.on("close",onClose);
+      res.on("close",onClose);
+      // Мог уйти и до того, как мы успели подписаться.
+      if(res.destroyed)onClose();
       const me=identify(req,auth);
       try{
         const result=await runAgent(message,body.previous_response_id||null,
@@ -1117,7 +1148,7 @@ const server=http.createServer(async(req,res)=>{
         console.error("dialogue/stream:",e);
         const err=dialogueError(e);
         emit("error",{error:err.error,message:err.message,fallback:true});
-      }finally{req.off("close",onClose);clearInterval(ping);if(!res.writableEnded)res.end()}
+      }finally{res.off("close",onClose);clearInterval(ping);if(!gone())res.end()}
       return;
     }
 
