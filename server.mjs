@@ -997,8 +997,12 @@ const server=http.createServer(async(req,res)=>{
         text_ai_model:TEXT_MODEL,
         telegram_auth:TG_REQUIRED,
         env_skipped_lines:ENV_SKIPPED,
-        voice_ready:false,
-        voice_model:null,
+        // Голос: распознавание и синтез через SpeechKit. Старые поля
+        // voice_ready/voice_model остались от WebRTC-режима и всегда были
+        // false/null — health уверял, что голоса нет, хотя он работал.
+        voice_ready:Boolean(YANDEX.ready),
+        voice_model:YANDEX.ready?`speechkit/${YANDEX.voice}`:null,
+        live_session:false,
         providers:{kudago:true,timepad:true,osm:true,dgis:Boolean(process.env.DGIS_API_KEY||process.env.TWOGIS_API_KEY)},
         // Отдельно и явно: без ключа 2GIS у выдачи нет ни рейтингов, ни фото
         // заведений — по одному этому полю видно, почему места «так себе».
@@ -1178,7 +1182,7 @@ const server=http.createServer(async(req,res)=>{
         u.searchParams.set("current","temperature_2m,precipitation,rain");
         u.searchParams.set("hourly","precipitation_probability,rain");
         u.searchParams.set("forecast_days","3");u.searchParams.set("timezone","Europe/Moscow");
-        const wr=await fetch(u);if(!wr.ok)throw new Error("weather "+wr.status);
+        const wr=await fetch(u,{signal:AbortSignal.timeout(6000)});if(!wr.ok)throw new Error("weather "+wr.status);
         const w=await wr.json();
         const maxProb=Math.max(0,...(w.hourly?.precipitation_probability||[]).slice(0,48));
         return json(res,200,{temperature_c:w.current?.temperature_2m??null,rain:Boolean((w.current?.rain||0)>0||(w.current?.precipitation||0)>0||maxProb>=55),precipitation_probability_max:maxProb});

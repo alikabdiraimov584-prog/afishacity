@@ -242,15 +242,15 @@ html{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-we
 </section>
 
 <section id="view-saved" class="panel"><div class="panelHeader"><div class="eyebrow">SAVED</div><h2>Сохранённое</h2></div><div id="savedList" class="list"></div></section>
-<section id="view-plan" class="panel"><div class="panelHeader"><div class="eyebrow">YOUR PLAN</div><h2>План</h2></div><div id="planList" class="list"></div></section>
-<section id="view-profile" class="panel"><div class="panelHeader"><div class="eyebrow">TASTE GRAPH</div><h2 id="profileName">Ваш вкус</h2><p id="profileMeta" class="small" style="margin:6px 0 0;color:var(--muted)">Профиль хранится в этом браузере</p></div><div id="tasteGrid" class="tasteGrid"></div></section>
+<section id="view-plan" class="panel"><div class="panelHeader"><div class="eyebrow">ВАШ ПЛАН</div><h2>План</h2></div><div id="planList" class="list"></div></section>
+<section id="view-profile" class="panel"><div class="panelHeader"><div class="eyebrow">ВАШ ВКУС</div><h2 id="profileName">Ваш вкус</h2><p id="profileMeta" class="small" style="margin:6px 0 0;color:var(--muted)">Профиль хранится в этом браузере</p></div><div id="tasteGrid" class="tasteGrid"></div></section>
 </main>
 
 <nav class="bottom">
   <button class="nav on" data-view="chat"><b>✦</b>AI</button>
-  <button class="nav" data-view="saved"><b>♡</b>Saved</button>
-  <button class="nav" data-view="plan"><b>◎</b>Plan</button>
-  <button class="nav" data-view="profile"><b>◉</b>Profile</button>
+  <button class="nav" data-view="saved"><b>♡</b>Сохранённое</button>
+  <button class="nav" data-view="plan"><b>◎</b>План</button>
+  <button class="nav" data-view="profile"><b>◉</b>Профиль</button>
 </nav>
 
 <div id="detail" class="overlay"></div>
@@ -1359,7 +1359,7 @@ function orderTaxi(items){
   openExternal(u);
   if(list.length>1)toast("Такси до первой точки: "+to.name);
 }
-function toggleSave(id){const r=placeById(id);if(!r)return;const i=saved.findIndex(x=>x.id===id);if(i>=0)saved.splice(i,1);else{saved.unshift(r);learn("save",r);haptic()}save();toast(i>=0?"Удалено из Saved":"Сохранено")}
+function toggleSave(id){const r=placeById(id);if(!r)return;const i=saved.findIndex(x=>x.id===id);if(i>=0)saved.splice(i,1);else{saved.unshift(r);learn("save",r);haptic()}save();toast(i>=0?"Удалено из сохранённого":"Сохранено")}
 function openDetail(id){
   const r=placeById(id);if(!r)return;
   $("#detail").innerHTML=`<div class="sheet"><button class="close">×</button>
@@ -1367,7 +1367,7 @@ function openDetail(id){
     <div class="eyebrow">${esc(r.kind==="event"?"СОБЫТИЕ":"МЕСТО")}</div><h2>${esc(r.name)}</h2><p>${esc(r.category||"")} · ${esc(r.area||"")}</p>
     <div class="detailGrid"><div class="detail"><b>Цена</b><br>${esc(r.price||"на сайте")}</div><div class="detail"><b>Время</b><br>${esc(r.time||"по расписанию")}</div><div class="detail"><b>Почему вам</b><br>${esc(reason(r))}</div><div class="detail"><b>Бронирование</b><br>${esc(r.booking_provider||"через страницу места")}</div></div>
     <p class="small" style="margin-top:10px;color:var(--muted)">Данные: ${esc(r.provider||"открытые источники")}${r.photo&&r.photo.credit&&r.photo.credit.text?` · фото: ${esc(r.photo.credit.text)}`:r.photo&&r.photo.origin==="generated"?" · обложка нарисована FREE":""}</p>
-    <div class="sheetActions"><button class="primary" data-book-detail>${bookingLabel(r)}</button><button data-select>В план</button><button data-r>Такси</button><button data-map>На карте</button><a target="_blank" rel="noopener" href="${esc(r.point_source||r.source||"#")}">${r.kind==="event"?"Страница события":"Страница точки"} ↗</a><button data-save-detail>${saved.some(x=>x.id===r.id)?"Убрать из Saved":"Сохранить"}</button></div></div>`;
+    <div class="sheetActions"><button class="primary" data-book-detail>${bookingLabel(r)}</button><button data-select>В план</button><button data-r>Такси</button><button data-map>На карте</button><a target="_blank" rel="noopener" href="${esc(r.point_source||r.source||"#")}">${r.kind==="event"?"Страница события":"Страница точки"} ↗</a><button data-save-detail>${saved.some(x=>x.id===r.id)?"Убрать из сохранённого":"Сохранить"}</button></div></div>`;
   $("#detail").classList.add("on");$("#detail .close").onclick=()=>$("#detail").classList.remove("on");
   $("#detail [data-book-detail]").onclick=()=>openBooking(r.id);
   $("#detail [data-select]").onclick=()=>{$("#detail").classList.remove("on");selectPlace(r.id)};
@@ -1487,7 +1487,7 @@ async function detectCapabilities(){
     if(chatState.serverOk)await loadProfile();
     chatState.aiReady=Boolean(d.text_ai_ready);
     if(d.taxi&&window.FreeTaxi)window.FreeTaxi.configure(d.taxi);
-    if(d.voice_ready)voice.mode="live";
+    if(d.live_session)voice.mode="live";
     // Полноэкранный разговор включаем только когда на сервере есть и речь, и движок:
     // окно, где агент не может ответить голосом, хуже обычной переписки.
     VOICE_SCREEN=Boolean(d.voice_provider&&d.text_ai_ready);

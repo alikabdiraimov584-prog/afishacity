@@ -280,7 +280,11 @@ function normalizeTimepadEvent(e,plan){
   };
 }
 
-export async function searchTimepad(plan){
+export async function searchTimepad(plan,token=process.env.TIMEPAD_TOKEN||""){
+  // Timepad перестал отдавать события без токена («Запрос требует указание
+  // токена», 403). Без ключа источник выключен, как 2GIS: иначе каждый поиск
+  // давал три отказа, размыкал предохранитель и писал «источники не отвечают».
+  if(!token)return {items:[],errors:[],disabled:true};
   const out=[],errors=[];const b=timepadBounds(plan);
   // Без распознанного намерения ищем по ядру запроса; пустое ядро = все ближайшие события Москвы.
   const qs=plan.eventQueries.length?plan.eventQueries.slice(0,3):[plan.coreQuery||""];
@@ -290,7 +294,7 @@ export async function searchTimepad(plan){
       const kw=norm(q).split(" ").filter(w=>w.length>3).slice(0,2);if(kw.length)u.searchParams.set("keywords",kw.join(","));
       if(plan.freeOnly)u.searchParams.set("price_max","0");
       else if(plan.maxPrice!==null&&plan.maxPrice!==undefined)u.searchParams.set("price_max",String(plan.maxPrice));
-      const d=await fetchJson(u);
+      const d=await fetchJson(u,{headers:{Authorization:`Bearer ${token}`}});
       for(const e of (d.values||[]))out.push(normalizeTimepadEvent(e,plan));
     }catch(e){errors.push(`Timepad: ${e.message}`)}
   }
@@ -665,7 +669,11 @@ export function providerHealth(){
   for(const n of ["kudago","timepad","osm","dgis"]){
     const b=breakerStatus(n,{cooldownMs:BREAKER.cooldownMs});
     out[n]={ok:!b.open,failures:b.failures,last_error:b.lastError||null,retry_in_sec:Math.round(b.retryInMs/1000)};
+    // Заблокированный ключ — не временный сбой: предохранитель будет размыкаться
+    // вечно, а причина видна только в тексте ошибки. Выносим её в отдельное поле.
+    if(n==="dgis"&&/apiKeyIsBlocked|key is blocked/i.test(b.lastError||""))out[n].key_blocked=true;
   }
+  if(!process.env.TIMEPAD_TOKEN)out.timepad={...out.timepad,ok:false,disabled:true,reason:"нет TIMEPAD_TOKEN — Timepad требует токен (dev.timepad.ru)"};
   return out;
 }
 export function getLiveCache(){return liveCache||(liveCache=createCache({ttlMs:LIVE_TTL_MS,staleMs:LIVE_STALE_MS,file:CACHE_FILE}))}
@@ -698,6 +706,9 @@ async function cachedProvider(name,key,fn,{cache,now,breaker}){
       if((r.errors||[]).length&&!(r.items||[]).length){const e=new Error(r.errors.join("; "));e.labeled=true;throw e}
       return r;
     },{...breaker,now});
+    // Выключенный источник (нет ключа) не кешируем и помечаем как disabled,
+    // чтобы его молчание не считалось сбоем и не попадало в примечание.
+    if(r.disabled)return {items:[],errors:[],from_cache:false,degraded:false,disabled:true};
     cache.set(key,{items:r.items||[]});
     return {items:r.items||[],errors:r.errors||[],from_cache:false,degraded:false};
   }catch(e){
@@ -713,11 +724,12 @@ export async function searchLiveInventory(args={},env=process.env,opts={}){
   const P={kudago:searchKudago,timepad:searchTimepad,osm:searchOSM,dgis:search2GIS,...(opts.providers||{})};
   const ctx={cache:opts.cache||getLiveCache(),now:opts.now||Date.now,breaker:{...BREAKER,...(opts.breaker||{})}};
   const dgisKey=env.DGIS_API_KEY||env.TWOGIS_API_KEY||"";
+  const timepadToken=env.TIMEPAD_TOKEN||"";
   const skipEvents=plan.serviceOnly;
   const none={items:[],errors:[],from_cache:false,degraded:false,disabled:true};
   const [k,t,o,d]=await Promise.all([
     skipEvents?none:cachedProvider("kudago",cacheKeyFor("kudago",plan),()=>P.kudago(plan),ctx),
-    skipEvents?none:cachedProvider("timepad",cacheKeyFor("timepad",plan),()=>P.timepad(plan),ctx),
+    skipEvents?none:cachedProvider("timepad",cacheKeyFor("timepad",plan),()=>P.timepad(plan,timepadToken),ctx),
     // Снимок читается до предохранителя: три сбоя сети размыкали цепь, и пять
     // минут все поиски мест отвечали пустотой, хотя SQLite ответил бы сразу.
     snapshotFirst(plan,opts)||cachedProvider("osm",cacheKeyFor("osm",plan),()=>P.osm(plan),ctx),
@@ -732,7 +744,7 @@ export async function searchLiveInventory(args={},env=process.env,opts={}){
   // источников недоступна» из-за афиши событий, которая тут ни при чём, —
   // и каждый ответ выглядел как сбой, хотя места найдены.
   const relevant=[];
-  if(plan.eventIntent)relevant.push(k,t);
+  if(plan.eventIntent){relevant.push(k);if(!t.disabled)relevant.push(t)}
   if(plan.placeIntent||!plan.eventIntent)relevant.push(o);
   if(!d.disabled)relevant.push(d);
   const relevantDegraded=relevant.filter(x=>x.degraded);
@@ -745,7 +757,7 @@ export async function searchLiveInventory(args={},env=process.env,opts={}){
   return {
     plan,items,
     errors:[...(k.errors||[]),...(t.errors||[]),...(o.errors||[]),...(d.errors||[])],
-    providers:{kudago:!skipEvents,timepad:!skipEvents,osm:true,dgis:!d.disabled},
+    providers:{kudago:!skipEvents,timepad:!skipEvents&&!t.disabled,osm:true,dgis:!d.disabled},
     degraded,from_cache,
     note:notes.length?notes.join(" "):null
   };

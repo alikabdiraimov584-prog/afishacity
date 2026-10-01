@@ -177,3 +177,15 @@ test("уборка карточек не трогает то, что влеза�
   assert.equal(sweepCards({dir,maxBytes:10*1024*1024,alive:()=>true}),0);
   assert.equal(readdirSync(dir).length,3);
 });
+
+test("Timepad без токена выключен: не считается сбоем, не ходит в сеть и не попадает в примечание", async ()=>{
+  resetBreakers();
+  const cache=createCache({now:()=>1});
+  const envNoToken={...env};delete envNoToken.TIMEPAD_TOKEN;
+  const r=await searchLiveInventory({query:"стендап"},envNoToken,{providers:{kudago:emptyProvider,osm:emptyProvider,dgis:emptyProvider},cache,now:()=>1});
+  assert.equal(r.providers.timepad,false,"источник помечен выключенным");
+  assert.equal(r.degraded.timepad,false,"молчание без токена — не сбой");
+  assert.ok(!r.errors.some(e=>/Timepad/.test(e)),r.errors.join());
+  assert.equal(breakerStatus("timepad",{cooldownMs:1000,now:()=>1}).failures,0);
+  resetBreakers();
+});
