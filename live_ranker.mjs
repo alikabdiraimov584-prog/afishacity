@@ -270,7 +270,7 @@ export function rankLive(items,args={},plan={}){
     }
     if(rain&&dna.outdoors>=55)s-=42;
     if(rain&&dna.outdoors<40)s+=8;
-    if(x.live)s+=8;if(x.provider==="2GIS")s+=5;
+    if(x.live)s+=8;if(/2GIS|Яндекс Карты/.test(x.provider||""))s+=5;
     const quality=qualityScore(x);
     s+=quality;
     // Место подходит по сопутствующей рубрике, а не по основной: ресторан,

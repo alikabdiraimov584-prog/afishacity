@@ -353,3 +353,52 @@ test("ресторан с баром не выдаётся за бар", async (
     assert.ok(names.includes("White Rabbit"));
   }finally{globalThis.fetch=real}
 });
+
+// ---- Яндекс Карты ----
+test("Яндекс Карты: часы, телефон, сайт и координаты берутся из ответа, рейтинг не выдумывается", async () => {
+  const {searchYandexPlaces}=await import("../providers.mjs");
+  const feature={type:"Feature",geometry:{type:"Point",coordinates:[37.6321,55.7571]},
+    properties:{name:"Ровесник",description:"Лубянский пр., 15, Москва",
+      CompanyMetaData:{id:"1234567890",name:"Ровесник",address:"Москва, Лубянский проезд, 15",url:"https://rovesnik.bar/",
+        Phones:[{type:"phone",formatted:"+7 (495) 123-45-67"}],Categories:[{class:"bar",name:"Бар, паб"}],
+        Hours:{text:"ежедневно, 18:00–06:00",Availabilities:[{Everyday:true,Intervals:[{from:"18:00:00",to:"06:00:00"}]}]}}}};
+  let seenUrl=null;
+  const realFetch=globalThis.fetch;
+  globalThis.fetch=async(u)=>{seenUrl=new URL(String(u));return {ok:true,status:200,json:async()=>({type:"FeatureCollection",features:[feature,feature]})}};
+  try{
+    const out=await searchYandexPlaces({placeQueries:["бар"],area:null,userLocation:{lat:55.69,lon:37.79},near:true},"key");
+    assert.equal(out.items.length,1,"дубликаты одной организации отсеяны");
+    const x=out.items[0];
+    assert.equal(x.provider,"Яндекс Карты");
+    assert.equal(x.hours_label,"ежедневно, 18:00–06:00");
+    assert.equal(x.phone,"+7 (495) 123-45-67");
+    assert.equal(x.official_source,"https://rovesnik.bar/");
+    assert.deepEqual(x.coords,{lat:55.7571,lon:37.6321},"порядок у Яндекса — долгота, широта");
+    assert.equal(x.rating,null);assert.equal(x.aggregator_image,null);
+    assert.ok(x.cat_tags.length,"рубрика «Бар, паб» даёт теги");
+    assert.equal(seenUrl.searchParams.get("type"),"biz");
+    assert.equal(seenUrl.searchParams.get("ll"),"37.79,55.69","ищем вокруг человека");
+    assert.equal(seenUrl.searchParams.get("rspn"),"1");
+  }finally{globalThis.fetch=realFetch}
+});
+
+test("место из карты дополняется часами и телефоном из Яндекс Карт", async () => {
+  const {searchLiveInventory}=await import("../providers.mjs");
+  const osmBar={id:"osm:node:1",provider:"OpenStreetMap",live:true,kind:"venue",name:"Ровесник",cat:"Бар",tags:["bar"],cat_tags:["bar"],primary_tags:["bar"],
+    area:"Лубянский пр., 15",metro:"",date_start:null,date_end:null,times:[],hours_label:null,price_label:null,price_min:null,free:false,
+    availability:null,rating:null,rating_count:0,closed:false,aggregator_image:null,aggregator_name:null,source:"https://osm.org/node/1",point_source:"https://osm.org/node/1",
+    official_source:null,image_url:null,booking_url:null,booking_kind:null,booking_provider:null,phone:null,desc:"",keywords:"ровесник бар",coords:{lat:55.7571,lon:37.6321}};
+  const yaBar={...osmBar,id:"yandex:place:7",provider:"Яндекс Карты",hours_label:"ежедневно, 18:00–06:00",phone:"+7 495 123-45-67",
+    booking_url:"tel:+74951234567",booking_kind:"phone",booking_provider:"телефон",official_source:"https://rovesnik.bar/"};
+  const providers={kudago:async()=>({items:[],errors:[]}),timepad:async()=>({items:[],errors:[]}),
+    osm:async()=>({items:[osmBar],errors:[]}),dgis:async()=>({items:[],errors:[]}),yandex:async()=>({items:[yaBar],errors:[]})};
+  const out=await searchLiveInventory({query:"бар"},{NODE_ENV:"test",YANDEX_MAPS_API_KEY:"k"},{providers,cache:{get:()=>null,set(){}},now:()=>1});
+  const x=out.items.find(i=>/Ровесник/.test(i.name));
+  assert.ok(x,"место найдено");
+  assert.equal(out.items.filter(i=>/Ровесник/.test(i.name)).length,1,"одно место, а не два");
+  assert.equal(x.hours_label,"ежедневно, 18:00–06:00");
+  assert.equal(x.phone,"+7 495 123-45-67");
+  assert.equal(x.official_source,"https://rovesnik.bar/");
+  assert.match(x.provider,/Яндекс Карты/);
+  assert.equal(out.providers.yandex,true);
+});

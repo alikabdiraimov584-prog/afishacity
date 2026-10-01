@@ -434,7 +434,7 @@ async function recommend(args){
 
 const recommendTool={
   name:"recommend_free",
-  description:"Ищет реальные заведения и мероприятия Москвы в live-источниках FREE (KudaGo, Timepad, OpenStreetMap, 2GIS). Вызывай перед любой рекомендацией, куда пойти, где поесть, выпить, покурить кальян, послушать музыку, посмотреть событие и т.п. Возвращает только факты из источников.",
+  description:"Ищет реальные заведения и мероприятия Москвы в live-источниках FREE (KudaGo, Timepad, OpenStreetMap, Яндекс Карты, 2GIS). Вызывай перед любой рекомендацией, куда пойти, где поесть, выпить, покурить кальян, послушать музыку, посмотреть событие и т.п. Возвращает только факты из источников.",
   input_schema:{
     type:"object",
     properties:{
@@ -1003,7 +1003,11 @@ const server=http.createServer(async(req,res)=>{
         voice_ready:Boolean(YANDEX.ready),
         voice_model:YANDEX.ready?`speechkit/${YANDEX.voice}`:null,
         live_session:false,
-        providers:{kudago:true,timepad:true,osm:true,dgis:Boolean(process.env.DGIS_API_KEY||process.env.TWOGIS_API_KEY)},
+        providers:{kudago:true,timepad:Boolean(process.env.TIMEPAD_TOKEN),osm:true,dgis:Boolean(process.env.DGIS_API_KEY||process.env.TWOGIS_API_KEY),
+          yandex_maps:Boolean(process.env.YANDEX_MAPS_API_KEY)},
+        // Яндекс Карты: часы, телефон, сайт и рубрики заведений. Рейтинга и фото
+        // API не отдаёт — это было только у 2GIS.
+        yandex_maps:{enabled:Boolean(process.env.YANDEX_MAPS_API_KEY),gives:["часы работы","телефон и сайт","рубрики","точные координаты"]},
         // Отдельно и явно: без ключа 2GIS у выдачи нет ни рейтингов, ни фото
         // заведений — по одному этому полю видно, почему места «так себе».
         dgis:{enabled:Boolean(process.env.DGIS_API_KEY||process.env.TWOGIS_API_KEY),
@@ -1218,7 +1222,7 @@ if(process.env.NODE_ENV!=="test"){
   server.listen(PORT,HOST,()=>{
     console.log(`FREE v18: http://${HOST}:${PORT}`);
     console.log("Telegram auth: "+(TG_REQUIRED?"required (TELEGRAM_BOT_TOKEN set)":"off"));
-    console.log("Live providers: KudaGo + Timepad + OpenStreetMap/Overpass" + (process.env.DGIS_API_KEY||process.env.TWOGIS_API_KEY?" + 2GIS":""));
+    console.log("Live providers: KudaGo"+(process.env.TIMEPAD_TOKEN?" + Timepad":"")+" + OpenStreetMap/Overpass"+(process.env.YANDEX_MAPS_API_KEY?" + Яндекс Карты":"")+(process.env.DGIS_API_KEY||process.env.TWOGIS_API_KEY?" + 2GIS":""));
     console.log("Диалог: "+(AI_PROVIDER==="claude"?`Claude ${TEXT_MODEL}`:AI_PROVIDER==="yandex"?`YandexGPT, агент ${CONCIERGE.name}`:"сценарный запасной режим (ключей нет)"));
   console.log("Речь: "+(YANDEX.ready?`SpeechKit, голос ${YANDEX.voice}`:"распознавание в браузере"));
     console.log("Voice: browser speech recognition → text dialogue");

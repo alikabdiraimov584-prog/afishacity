@@ -17,8 +17,9 @@ test("searchLiveInventory: свежий ответ кешируется, про�
   const providers={kudago:async()=>{calls++;return {items:[venue("k1","Бар Один")],errors:[]}},timepad:emptyProvider,osm:emptyProvider,dgis:emptyProvider};
   const r1=await searchLiveInventory({query:"бар"},env,{providers,cache,now:c.now});
   assert.equal(calls,1);assert.equal(r1.from_cache.kudago,false);assert.equal(r1.degraded.kudago,false);
-  assert.deepEqual(r1.degraded,{kudago:false,timepad:false,osm:false,dgis:false});
+  assert.deepEqual(r1.degraded,{kudago:false,timepad:false,osm:false,dgis:false,yandex:false});
   assert.equal(r1.providers.dgis,false,"без ключа 2GIS отключён");
+  assert.equal(r1.providers.yandex,false,"без ключа Яндекс Карты отключены");
   assert.equal(r1.note,null);
   const r2=await searchLiveInventory({query:"бар"},env,{providers,cache,now:c.now});
   assert.equal(calls,1,"второй вызов из кеша");

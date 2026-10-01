@@ -356,6 +356,63 @@ function normalize2gisItem(x,plan){
     desc:rubrics.length?rubrics.join(" · "):"Карточка действующей организации из 2GIS",keywords:norm(hay),coords:x.point||null
   };
 }
+/* Яндекс Карты — API Поиска по организациям (Geosearch, search-maps.yandex.ru).
+   Отдаёт название, адрес, телефон, сайт, рубрики, часы работы и координаты.
+   Рейтинга и фотографий в задокументированном ответе нет — их давал только
+   2GIS; с Яндексом карточка честная, но без оценки. Ключ: Кабинет разработчика
+   Яндекса → «API Поиска по организациям». Бесплатная квота небольшая, поэтому
+   запросы кешируются (10 минут) и идут только по месту, а не по событиям. */
+export const YANDEX_PLACES_RESULTS=20;
+// Москва целиком: нижний левый ~ верхний правый угол (долгота, широта).
+const YANDEX_MOSCOW_BBOX="37.32,55.55~37.97,55.95";
+function normalizeYandexItem(f,plan){
+  const m=f.properties?.CompanyMetaData||{};
+  const cats=(m.Categories||[]).map(c=>c&&c.name||"").filter(Boolean);
+  const hay=[m.name,m.address,cats.join(" ")].join(" ");
+  const phone=(m.Phones||[]).map(p=>p&&p.formatted).find(Boolean)||null;
+  const site=safeLink(m.url||null);
+  const [lon,lat]=Array.isArray(f.geometry?.coordinates)?f.geometry.coordinates.map(Number):[NaN,NaN];
+  const ph=phone?phone.replace(/[^\d+]/g,""):"";
+  const book=ph?{url:`tel:${ph}`,kind:"phone",provider:"телефон"}:site?{url:site,kind:"site",provider:"сайт"}:{url:null,kind:null,provider:null};
+  const link=`https://yandex.ru/maps/org/${encodeURIComponent(String(m.id||""))}`;
+  return {
+    id:`yandex:place:${m.id}`,provider:"Яндекс Карты",live:true,kind:"venue",name:m.name||"Заведение",organizer:m.name||"",
+    cat:cats[0]||"Заведение",tags:inferTags(hay),cat_tags:rubricTags(cats),primary_tags:rubricTags(cats.slice(0,1)),
+    area:m.address||"Москва",metro:"",
+    date_start:null,date_end:null,times:[],hours_label:m.Hours?.text||null,price_label:null,price_min:null,free:false,
+    availability:null,rating:null,rating_count:0,closed:false,aggregator_image:null,aggregator_name:null,
+    source:link,point_source:link,official_source:site,
+    image_url:null,booking_url:book.url,booking_kind:book.kind,booking_provider:book.provider,
+    phone,desc:cats.length?cats.join(" · "):"Организация из Яндекс Карт",keywords:norm(hay),
+    coords:Number.isFinite(lat)&&Number.isFinite(lon)?{lat,lon}:null
+  };
+}
+export async function searchYandexPlaces(plan,key){
+  if(!key)return {items:[],errors:[],disabled:true};
+  const out=[],errors=[],seen=new Set();
+  for(const q of (plan.placeQueries||[]).slice(0,4)){
+    try{
+      const u=new URL("https://search-maps.yandex.ru/v1/");
+      u.searchParams.set("apikey",key);u.searchParams.set("text",q);u.searchParams.set("lang","ru_RU");
+      u.searchParams.set("type","biz");u.searchParams.set("results",String(YANDEX_PLACES_RESULTS));
+      // Вокруг человека — узкое окно (~4 км), по центру — чуть шире, иначе — вся Москва.
+      // rspn=1: без него Яндекс спокойно отвечает Петербургом.
+      const near=searchPoint(plan);
+      if(near){u.searchParams.set("ll",`${near.lon},${near.lat}`);u.searchParams.set("spn","0.07,0.04")}
+      else if(centerFor(plan)){u.searchParams.set("ll","37.6173,55.7558");u.searchParams.set("spn","0.12,0.07")}
+      else u.searchParams.set("bbox",YANDEX_MOSCOW_BBOX);
+      u.searchParams.set("rspn","1");
+      const d=await fetchJson(u);
+      for(const f of (d.features||[])){
+        const id=f?.properties?.CompanyMetaData?.id;
+        if(!id||seen.has(id))continue;
+        seen.add(id);out.push(normalizeYandexItem(f,plan));
+      }
+    }catch(e){errors.push(`Яндекс Карты: ${e.message}`)}
+  }
+  return providerResult(out,errors);
+}
+
 // Сорок километров от центра накрывают Москву целиком; больше API не примет.
 export const DGIS_MAX_RADIUS=40000;
 // Страница у Catalog API — не больше десяти позиций («Length of parameter
@@ -631,9 +688,12 @@ export async function searchOSM(plan,opts={}){
    фото, часы и контакты. */
 const FROM_2GIS=["rating","rating_count","aggregator_image","aggregator_name",
   "hours_label","phone","booking_url","booking_kind","booking_provider","closed"];
+// Источники, которые дополняют карточку с карты: 2GIS и Яндекс Карты.
+export const ENRICH_PROVIDERS=new Set(["2GIS","Яндекс Карты"]);
+const isEnrich=x=>ENRICH_PROVIDERS.has(x.provider);
 function mergePlaces(a,b){
-  const from2=b.provider==="2GIS"?b:a.provider==="2GIS"?a:null;
-  const base=a.provider==="2GIS"&&b.provider!=="2GIS"?b:a;   // структурные данные — от карты
+  const from2=isEnrich(b)&&!isEnrich(a)?b:isEnrich(a)&&!isEnrich(b)?a:isEnrich(a)&&isEnrich(b)?b:null;
+  const base=isEnrich(a)&&!isEnrich(b)?b:a;   // структурные данные — от карты
   if(!from2)return base;
   // Ноль — это «отзывов нет», а не значение: иначе счётчик из 2GIS не
   // переносился, потому что у карты он уже «заполнен» нулём.
@@ -642,7 +702,7 @@ function mergePlaces(a,b){
   for(const k of FROM_2GIS)if(empty(out[k])&&!empty(from2[k]))out[k]=from2[k];
   if(from2.closed)out.closed=true;                            // 2GIS знает, что закрылось
   if(!out.official_source&&from2.official_source)out.official_source=from2.official_source;
-  out.provider=base.provider==="2GIS"?"2GIS":`${base.provider}+2GIS`;
+  out.provider=base.provider.includes(from2.provider)?base.provider:`${base.provider}+${from2.provider}`;
   return out;
 }
 function dedupe(items){
@@ -660,13 +720,13 @@ const LIVE_TTL_MS=10*60_000;          // свежий ответ переисп�
 const LIVE_STALE_MS=6*60*60_000;      // при сбое источника отдаём сохранённый ответ до 6 часов
 const BREAKER={failures:3,cooldownMs:5*60_000};
 const CACHE_FILE=process.env.NODE_ENV==="test"?null:join(fileURLToPath(new URL(".",import.meta.url)),"data","live_cache.json");
-const PROVIDER_LABEL={kudago:"KudaGo",timepad:"Timepad",osm:"OpenStreetMap/Overpass",dgis:"2GIS"};
+const PROVIDER_LABEL={kudago:"KudaGo",timepad:"Timepad",osm:"OpenStreetMap/Overpass",dgis:"2GIS",yandex:"Яндекс Карты"};
 let liveCache=null;
 // Состояние источников: какой из них сейчас отключён предохранителем и почему.
 // Иначе «часть источников временно недоступна» в интерфейсе ничем не объяснить.
 export function providerHealth(){
   const out={};
-  for(const n of ["kudago","timepad","osm","dgis"]){
+  for(const n of ["kudago","timepad","osm","dgis","yandex"]){
     const b=breakerStatus(n,{cooldownMs:BREAKER.cooldownMs});
     out[n]={ok:!b.open,failures:b.failures,last_error:b.lastError||null,retry_in_sec:Math.round(b.retryInMs/1000)};
     // Заблокированный ключ — не временный сбой: предохранитель будет размыкаться
@@ -691,7 +751,8 @@ function cacheKeyFor(name,plan,hasKey){
     kudago:{e:plan.eventQueries.slice(0,3),p:plan.placeQueries.slice(0,3),f:plan.freeOnly,d:plan.targetDate},
     timepad:{e:plan.eventQueries.length?plan.eventQueries.slice(0,3):[plan.coreQuery||""],d:plan.targetDate,f:plan.freeOnly,m:plan.maxPrice},
     osm:{f:osmFilters(plan)},
-    dgis:{p:plan.placeQueries.slice(0,4),k:!!hasKey}
+    dgis:{p:plan.placeQueries.slice(0,4),k:!!hasKey},
+    yandex:{p:plan.placeQueries.slice(0,4),k:!!hasKey}
   }[name];
   return `${name}:${JSON.stringify({...base,...part})}`;
 }
@@ -721,23 +782,27 @@ async function cachedProvider(name,key,fn,{cache,now,breaker}){
 // opts: {providers:{kudago,timepad,osm,dgis}, cache, now, breaker} — для тестов и прогрева.
 export async function searchLiveInventory(args={},env=process.env,opts={}){
   const plan=buildSearchPlan(args);
-  const P={kudago:searchKudago,timepad:searchTimepad,osm:searchOSM,dgis:search2GIS,...(opts.providers||{})};
+  const P={kudago:searchKudago,timepad:searchTimepad,osm:searchOSM,dgis:search2GIS,yandex:searchYandexPlaces,...(opts.providers||{})};
   const ctx={cache:opts.cache||getLiveCache(),now:opts.now||Date.now,breaker:{...BREAKER,...(opts.breaker||{})}};
   const dgisKey=env.DGIS_API_KEY||env.TWOGIS_API_KEY||"";
   const timepadToken=env.TIMEPAD_TOKEN||"";
+  const yandexKey=env.YANDEX_MAPS_API_KEY||"";
   const skipEvents=plan.serviceOnly;
   const none={items:[],errors:[],from_cache:false,degraded:false,disabled:true};
-  const [k,t,o,d]=await Promise.all([
+  const [k,t,o,d,y]=await Promise.all([
     skipEvents?none:cachedProvider("kudago",cacheKeyFor("kudago",plan),()=>P.kudago(plan),ctx),
     skipEvents?none:cachedProvider("timepad",cacheKeyFor("timepad",plan),()=>P.timepad(plan,timepadToken),ctx),
     // Снимок читается до предохранителя: три сбоя сети размыкали цепь, и пять
     // минут все поиски мест отвечали пустотой, хотя SQLite ответил бы сразу.
     snapshotFirst(plan,opts)||cachedProvider("osm",cacheKeyFor("osm",plan),()=>P.osm(plan),ctx),
-    dgisKey?cachedProvider("dgis",cacheKeyFor("dgis",plan,true),()=>P.dgis(plan,dgisKey),ctx):{items:[],errors:[],from_cache:false,degraded:false,disabled:true}
+    dgisKey?cachedProvider("dgis",cacheKeyFor("dgis",plan,true),()=>P.dgis(plan,dgisKey),ctx):{items:[],errors:[],from_cache:false,degraded:false,disabled:true},
+    // Яндекс Карты — основной источник сведений о заведениях (часы, телефон,
+    // сайт); 2GIS остаётся дополнительным, если его ключ жив.
+    yandexKey?cachedProvider("yandex",cacheKeyFor("yandex",plan,true),()=>P.yandex(plan,yandexKey),ctx):{items:[],errors:[],from_cache:false,degraded:false,disabled:true}
   ]);
-  const items=dedupe([...(d.items||[]),...(o.items||[]),...(k.items||[]),...(t.items||[])]);
-  const degraded={kudago:k.degraded,timepad:t.degraded,osm:o.degraded,dgis:d.degraded};
-  const from_cache={kudago:k.from_cache,timepad:t.from_cache,osm:o.from_cache,dgis:d.from_cache};
+  const items=dedupe([...(d.items||[]),...(y.items||[]),...(o.items||[]),...(k.items||[]),...(t.items||[])]);
+  const degraded={kudago:k.degraded,timepad:t.degraded,osm:o.degraded,dgis:d.degraded,yandex:y.degraded};
+  const from_cache={kudago:k.from_cache,timepad:t.from_cache,osm:o.from_cache,dgis:d.from_cache,yandex:y.from_cache};
   // Примечание про источники — только когда не ответил источник, который
   // этому запросу нужен, и найденного мало. Раньше оно вставало, стоило
   // любому из четырёх не ответить: на «бар рядом» человек читал «часть
@@ -747,6 +812,7 @@ export async function searchLiveInventory(args={},env=process.env,opts={}){
   if(plan.eventIntent){relevant.push(k);if(!t.disabled)relevant.push(t)}
   if(plan.placeIntent||!plan.eventIntent)relevant.push(o);
   if(!d.disabled)relevant.push(d);
+  if(!y.disabled)relevant.push(y);
   const relevantDegraded=relevant.filter(x=>x.degraded);
   const thin=items.length<3;
   const anyStale=relevantDegraded.some(x=>x.from_cache);
@@ -756,8 +822,8 @@ export async function searchLiveInventory(args={},env=process.env,opts={}){
     :anyStale?"Часть источников не ответила — показываю сохранённое.":"Часть источников не ответила — показываю, что нашлось.");
   return {
     plan,items,
-    errors:[...(k.errors||[]),...(t.errors||[]),...(o.errors||[]),...(d.errors||[])],
-    providers:{kudago:!skipEvents,timepad:!skipEvents&&!t.disabled,osm:true,dgis:!d.disabled},
+    errors:[...(k.errors||[]),...(t.errors||[]),...(o.errors||[]),...(d.errors||[]),...(y.errors||[])],
+    providers:{kudago:!skipEvents,timepad:!skipEvents&&!t.disabled,osm:true,dgis:!d.disabled,yandex:!y.disabled},
     degraded,from_cache,
     note:notes.length?notes.join(" "):null
   };
