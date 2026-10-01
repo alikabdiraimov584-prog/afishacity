@@ -368,10 +368,29 @@ async function photoByWikidata(qid,{brand=false}={}){
   // Картинка бренда — это логотип сети, а не снимок конкретного места.
   return {url,origin:brand?"brand_logo":"commons",confidence:brand?"low":"medium",...commonsCredit(page)};
 }
-async function photoByGeo(lat,lon){
-  const u=`https://commons.wikimedia.org/w/api.php?action=query&generator=geosearch&ggscoord=${lat}|${lon}&ggsradius=60&ggsnamespace=6&ggslimit=8&prop=imageinfo&iiprop=url|size|mime|extmetadata&iiurlwidth=1280&format=json`;
+// Слова, по которым фото не опознать: «bar», «cafe», «Dubai» есть в названиях
+// тысяч чужих снимков. Совпадение засчитывается только по особенному слову.
+const GENERIC_NAME_WORDS=new Set(("bar pub cafe coffee restaurant lounge club hotel grill kitchen house shop "+
+  "store center centre mall dubai moscow the and of de la le el al bin beach park garden spa gym studio "+
+  "бар кафе ресторан кофейня клуб отель дом центр москва парк").split(" "));
+export function distinctiveTokens(name){
+  return [...new Set(String(name||"").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g,"")
+    .split(/[^a-zа-яё0-9]+/i).filter(w=>w.length>=4&&!GENERIC_NAME_WORDS.has(w)))];
+}
+// Фото с Викисклада, снятое рядом (до 400 м) И подписанное именем места.
+// Раньше брался любой снимок в 60 м — троллейбус вместо кальянной. Теперь
+// кадр засчитывается, только если в названии файла есть особенное слово из
+// названия места: «Burj Khalifa at night.jpg» для Burj Khalifa — да, «Bus 27.jpg» — нет.
+export async function photoByGeo(lat,lon,name){
+  let tokens=distinctiveTokens(name);
+  // Название целиком из общих слов («Dubai Mall») — ищем его как фразу.
+  if(!tokens.length){const ph=String(name||"").toLowerCase().trim().replace(/\s+/g," ");if(ph.length>=8&&ph.includes(" "))tokens=[ph]}
+  if(!tokens.length)return null;
+  const u=`https://commons.wikimedia.org/w/api.php?action=query&generator=geosearch&ggscoord=${lat}|${lon}&ggsradius=400&ggsnamespace=6&ggslimit=50&prop=imageinfo&iiprop=url|size|mime|extmetadata&iiurlwidth=1280&format=json`;
   const d=await wikiJson(u);
-  const pages=d&&d.query&&d.query.pages?Object.values(d.query.pages):[];
+  const all=d&&d.query&&d.query.pages?Object.values(d.query.pages):[];
+  const title=(pg)=>String(pg.title||"").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g,"");
+  const pages=all.filter(pg=>tokens.some(t=>title(pg).includes(t)));
   for(const pg of pages){
     const ii=pg.imageinfo&&pg.imageinfo[0];if(!ii)continue;
     if(!/^image\/(jpeg|png|webp)$/.test(ii.mime||""))continue;
@@ -387,7 +406,7 @@ async function photoByGeo(lat,lon){
 }
 async function photoLookup(place){
   // v2: прежний кеш хранил кадры «по соседству» — сбрасываем его версией ключа.
-  const key=place.id?`v2:${place.id}`:"";if(!key)return null;
+  const key=place.id?`v3:${place.id}`:"";if(!key)return null;
   const hit=PHOTO_CACHE.get(key);
   if(hit){
     const v=hit.value;
@@ -400,9 +419,9 @@ async function photoLookup(place){
       if(!qid||!/^Q\d+$/.test(qid))continue;
       found=await photoByWikidata(qid,{brand});if(found)break;
     }
-    // Поиск по координатам («любой снимок Викисклада в 60 м») убран: он отдавал
-    // чужие кадры — троллейбус на карточке кальянной, выставку на карточке
-    // ресторана. Лучше честная обложка, чем фото не того места.
+    // Викисклад рядом — только снимки, подписанные именем места (см. photoByGeo).
+    if(!found&&place.coords&&Number.isFinite(+place.coords.lat)&&Number.isFinite(+place.coords.lon))
+      found=await photoByGeo(+place.coords.lat,+place.coords.lon,place.name);
   }catch(e){found=null}
   PHOTO_CACHE.set(key,found||{none:true,at:Date.now()});
   return found;
