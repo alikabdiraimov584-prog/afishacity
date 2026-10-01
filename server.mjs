@@ -386,7 +386,8 @@ async function photoByGeo(lat,lon){
   return null;
 }
 async function photoLookup(place){
-  const key=String(place.id||"");if(!key)return null;
+  // v2: прежний кеш хранил кадры «по соседству» — сбрасываем его версией ключа.
+  const key=place.id?`v2:${place.id}`:"";if(!key)return null;
   const hit=PHOTO_CACHE.get(key);
   if(hit){
     const v=hit.value;
@@ -399,8 +400,9 @@ async function photoLookup(place){
       if(!qid||!/^Q\d+$/.test(qid))continue;
       found=await photoByWikidata(qid,{brand});if(found)break;
     }
-    if(!found&&place.coords&&Number.isFinite(+place.coords.lat)&&Number.isFinite(+place.coords.lon))
-      found=await photoByGeo(+place.coords.lat,+place.coords.lon);
+    // Поиск по координатам («любой снимок Викисклада в 60 м») убран: он отдавал
+    // чужие кадры — троллейбус на карточке кальянной, выставку на карточке
+    // ресторана. Лучше честная обложка, чем фото не того места.
   }catch(e){found=null}
   PHOTO_CACHE.set(key,found||{none:true,at:Date.now()});
   return found;
