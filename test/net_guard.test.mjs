@@ -74,3 +74,12 @@ test("цепочка перенаправлений ограничена", async
   const r=await guardedFetch("https://loop.example/start",{fetchImpl,lookupImpl:pubLookup,maxRedirects:2});
   assert.equal(r.reason,"too_many_redirects");
 });
+
+test("заголовки исходящих запросов — только латиница: кириллица в User-Agent роняла каждый fetch", async () => {
+  const {guardedFetch}=await import("../net_guard.mjs");
+  let seen=null;
+  const fetchImpl=async(u,o)=>{seen=o.headers;for(const [k,v] of Object.entries(o.headers))for(const ch of String(v))if(ch.charCodeAt(0)>255)throw new TypeError("Cannot convert argument to a ByteString");
+    return new Response("ok",{status:200,headers:{"content-type":"text/plain"}})};
+  const r=await guardedFetch("https://example.com/x",{fetchImpl,lookupImpl:async()=>[{address:"93.184.216.34",family:4}],maxBytes:1000,accept:()=>true});
+  assert.equal(r.ok,true,`fetch отклонил заголовки: ${JSON.stringify(seen)}`);
+});

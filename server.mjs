@@ -320,7 +320,7 @@ const PHOTO_CACHE=(()=>{
   return c;
 })();
 const PHOTO_NONE_MS=24*3600e3;                 // отрицательный ответ — сутки, потом ещё попытка
-const WIKI_HEADERS={"Accept":"application/json","User-Agent":"FREE-Moscow/1.0 (https://afishasity.ru; консьерж по городу)"};
+const WIKI_HEADERS={"Accept":"application/json","User-Agent":"FREE-Moscow/1.0 (+https://afishasity.ru; city concierge)"};
 function commonsCredit(page,author,license){
   return {credit:{text:author?`${author} · Wikimedia Commons`:"Wikimedia Commons",url:page||"https://commons.wikimedia.org/"},
     license:{code:license||"см. страницу файла",url:page||"https://commons.wikimedia.org/"}};

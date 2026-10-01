@@ -122,5 +122,5 @@ export async function guardedFetch(raw,{
   return {ok:false,reason:"too_many_redirects"};
 }
 
-const UA="FREE-Moscow/1.0 (+https://afishasity.ru; консьерж по городу)";
+const UA="FREE-Moscow/1.0 (+https://afishasity.ru; city concierge)";
 export const USER_AGENT=UA;
