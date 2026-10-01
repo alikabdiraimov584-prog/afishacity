@@ -796,6 +796,12 @@ function bindCards(root){
   all("[data-book]").forEach(b=>b.onclick=()=>openBooking(b.dataset.book));
   all("[data-pick]").forEach(b=>b.onclick=()=>selectPlace(b.dataset.pick));
   all("[data-detail]").forEach(b=>b.onclick=()=>openDetail(b.dataset.detail));
+  // Тап по самой карточке (обложка, название, адрес) тоже открывает подробности:
+  // маленькую кнопку внизу в Telegram легко не заметить и не попасть.
+  all(".placeCard").forEach(c=>{if(c.dataset.tapBound)return;c.dataset.tapBound="1";
+    const id=c.querySelector("[data-detail]")?.dataset.detail;if(!id)return;
+    c.style.cursor="pointer";
+    c.addEventListener("click",e=>{if(e.target.closest("button,a"))return;openDetail(id)});});
   all("[data-route]").forEach(b=>b.onclick=()=>routePlace(b.dataset.route));
   all("[data-save]").forEach(b=>b.onclick=()=>toggleSave(b.dataset.save));
 }

@@ -213,6 +213,8 @@ async function pageMeta(raw){
 }
 // Прокси картинок: многие сайты блокируют хотлинки и отдают http, а страница у нас https.
 const IMG_MAX=3*1024*1024;
+// Тяжёлые фото с сайтов заведений (1–2 МБ PNG) за 6 секунд не успевали.
+const IMG_TIMEOUT_MS=12000;
 /* Кеш байтов картинок на диске.
    Прокси /api/img ходил за кадром заново на каждый показ карточки: карточка
    открывалась медленно, а сайты заведений видели с нашего адреса очередь
@@ -293,7 +295,7 @@ async function proxyImage(res,raw){
   }
   // Только растровые форматы: SVG — это документ со скриптами, и отданный с
   // нашего адреса он выполнялся бы в нашем origin.
-  const r=await guardedFetch(raw,{maxBytes:IMG_MAX,timeoutMs:6000,
+  const r=await guardedFetch(raw,{maxBytes:IMG_MAX,timeoutMs:IMG_TIMEOUT_MS,
     accept:t=>RASTER_IMAGE.test(t),headers:{"Accept":"image/avif,image/webp,image/*;q=0.8"}});
   if(!r.ok){
     if(r.reason==="too_large")return send(res,413,"too large");
@@ -419,7 +421,25 @@ async function enrichResults(payload){
       sources:{data:x.provider||null,photo:photo.origin,site:site||null}
     };
   }));
+  // Прогрев: карточка отдаётся сейчас, а картинку телефон попросит через
+  // секунду. Внешние фото весят по 1–2 МБ, и за 6 секунд таймаута прокси
+  // половина не успевала — карточка оставалась без фото до второго показа.
+  // Качаем их в кеш прокси сразу, не дожидаясь клиента.
+  prewarmImages(enriched.map(x=>x&&x.photo&&x.photo.origin!=="generated"?x.photo.url:null));
   return {...payload,results:enriched};
+}
+const PREWARM_INFLIGHT=new Set();
+function prewarmImages(urls){
+  if(process.env.NODE_ENV==="test")return;
+  for(const raw of urls.filter(Boolean).slice(0,8)){
+    if(PREWARM_INFLIGHT.has(raw)||readImgCache(raw))continue;
+    PREWARM_INFLIGHT.add(raw);
+    guardedFetch(raw,{maxBytes:IMG_MAX,timeoutMs:IMG_TIMEOUT_MS,accept:t=>RASTER_IMAGE.test(t),
+      headers:{"Accept":"image/avif,image/webp,image/*;q=0.8"}})
+      .then(r=>{if(r.ok&&!r.truncated)writeImgCache(raw,r.type,r.body)})
+      .catch(()=>{})
+      .finally(()=>PREWARM_INFLIGHT.delete(raw));
+  }
 }
 async function recommend(args){
   const key=cacheKey(args),hit=CACHE.get(key);
