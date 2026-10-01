@@ -227,6 +227,7 @@ export function rankLive(items,args={},plan={}){
     // из Кузьминок отсекала всё дальше 6 км от Кремля — то есть всё рядом.
     centerAsked=/центр/.test(norm(args.area||""))&&!(near&&user);
   const scored=[];
+  const multiCat=(plan.placeQueries||[]).length>1;
   for(const x of items){
     if(!dateOkay(x,args)||!timeOkay(x,args)||!priceOkay(x,args))continue;
     if(x.closed||(x.availability&&/закрыт/.test(norm(x.availability))))continue;
@@ -242,7 +243,11 @@ export function rankLive(items,args={},plan={}){
       // Услугу засчитываем только по категории из источника: «Аптекарский огород»
       // — парк, а «Хлебозавод» с барбершопом в описании — не барбершоп.
       const hit=SERVICE_TAGS.has(t)?ctags.has(t):(xtags.has(t)||ctags.has(t)||SYN[t]?.some(k=>hasTerm(text,k)));
-      if(hit){s+=strong.has(t)?58:22;strongHit++;reasons.push(tagRu(t))}
+      // Для общего запроса («куда сходить вечером» = бар + ресторан + кальянная)
+      // каждая следующая совпавшая рубрика даёт меньше: иначе кальян-бар,
+      // у которого в рубриках и бар, и кальян, и ночная жизнь, набирал в полтора
+      // раза больше любого бара или ресторана и занимал всю пятёрку.
+      if(hit){s+=strong.has(t)?(multiCat&&strongHit>0?14:58):22;strongHit++;reasons.push(tagRu(t))}
     }
     // Слова запроса влияют на ранг, но в причины не идут: «парк · park» — не объяснение.
     let lex=0;for(const w of qwords)if(text.includes(w))lex+=9;
@@ -314,13 +319,20 @@ export function rankLive(items,args={},plan={}){
   // подходящих местах. Отсекаем только слабых относительно лучшего.
   const top=scored[0]._score,close=scored.filter(x=>x._score>=top-42);
   const out=[],pool=[...close];
+  // Общий запрос («куда сходить вечером») раскладывается на несколько категорий
+  // сразу — бар, ресторан, кальянная. Раньше каждая из них считалась «запрошенной»,
+  // штраф за повтор не работал, и пять карточек подряд были кальянными: они
+  // просто закрываются позже всех. Для таких запросов повтор ведущей рубрики
+  // штрафуется мягко, чтобы в пятёрке был выбор, а не одна категория.
+  const multi=multiCat;
+  const lead=(x)=>(x.primary_tags&&x.primary_tags[0])||(x.cat_tags&&x.cat_tags[0])||norm(x.cat);
   while(pool.length&&out.length<5){
     let best=null,bestAdj=-Infinity;
     for(const x of pool){
       // Одинаковая категория штрафуется только если её не просили: на «выпить»
       // второй бар — это то, что нужно, а не повод подсунуть кафе.
       const asked=tags.some(t=>(x.cat_tags||[]).includes(t));
-      let p=0;for(const y of out){if(!asked&&norm(x.cat)===norm(y.cat))p+=10;if(norm(x.organizer)===norm(y.organizer))p+=12;if(x.provider===y.provider)p+=2}
+      let p=0;for(const y of out){if(!asked&&norm(x.cat)===norm(y.cat))p+=10;if(asked&&multi&&lead(x)===lead(y))p+=7;if(norm(x.organizer)===norm(y.organizer))p+=12;if(x.provider===y.provider)p+=2}
       const a=x._score-p;if(a>bestAdj){best=x;bestAdj=a}
     }
     out.push(best);pool.splice(pool.indexOf(best),1);
