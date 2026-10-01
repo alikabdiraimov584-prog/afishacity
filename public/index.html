@@ -505,7 +505,7 @@ function applyI18n(){
   for(const el of document.querySelectorAll("[data-i18n-placeholder]"))el.placeholder=t(el.getAttribute("data-i18n-placeholder"));
   for(const el of document.querySelectorAll("[data-i18n-title]"))el.title=t(el.getAttribute("data-i18n-title"));
   for(const el of document.querySelectorAll("[data-i18n-aria]"))el.setAttribute("aria-label",t(el.getAttribute("data-i18n-aria")));
-  window.FREE_LANG=LANG;window.FREE_CITY_NAME=CITY_UI.name;
+  window.FREE_LANG=LANG;window.FREE_CITY_NAME=CITY_UI.name;window.FREE_CITY_ID=CITY_UI.id;
 }
 // Язык и город из ответа сервера. Возвращает true, если язык сменился.
 function setCity(city){
@@ -1611,7 +1611,9 @@ async function routeItems(items){
   const g=await geo(false);
   // Без геопозиции строим маршрут от первой точки; Яндекс сам предложит выбрать старт.
   const pts=[g?`${g.lat},${g.lon}`:null,...items.map(dest)].filter(Boolean);
-  const u=`https://yandex.ru/maps/?mode=routes&rtext=${pts.map(encodeURIComponent).join("~")}`;
+  // Москва — Яндекс Карты, остальные города — Google Maps (там Яндекс маршрут не построит).
+  const u=CITY_UI.id==="moscow"?`https://yandex.ru/maps/?mode=routes&rtext=${pts.map(encodeURIComponent).join("~")}`
+    :FreePlanner.googleRouteUrl(items.map(r=>({coords:coords(r),area:r.area,name:r.name})),g?{coords:{lat:g.lat,lon:g.lon}}:null);
   win.go(u);
   if(!g)toast(t("route.noGeo"));
 }

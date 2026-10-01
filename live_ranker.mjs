@@ -1,5 +1,5 @@
 import {parseHours,localNow} from "./hours.mjs";
-import {CITY,cityDate} from "./city.mjs";
+import {CITY,cityDate,L} from "./city.mjs";
 
 import {CATEGORIES,SERVICE_TAGS} from "./categories.mjs";
 import {tagTitle as tagRu} from "./osm_tags.mjs";
@@ -142,12 +142,15 @@ function tasteScore(dna,taste={}){
 }
 function contextDnaReasons(dna,args){
   const n=norm(args.query||""),out=[];
-  if(/тих|спокой|разговар/.test(n)&&dna.quiet>=60)out.push("спокойная атмосфера");
-  if(/красив|свидан|романт/.test(n)&&dna.romantic>=60)out.push("подходит для свидания");
-  if(/работ|ноутбук/.test(n)&&dna.work>=55)out.push("удобно для работы");
-  if(/ребен|дет/.test(n)&&dna.family>=55)out.push("подходит с детьми");
-  if(/необыч|новое|hidden/.test(n)&&dna.hidden>=55)out.push("небанальный формат");
-  if(/поздно|ноч|после 22/.test(n)&&dna.late>=55)out.push("поздний формат");
+  // В Дубае запрос по-английски: те же признаки, английские слова. Для Москвы
+  // регэкспы прежние, чтобы выдача не сдвинулась.
+  const EN=CITY.lang==="en";
+  if((EN?/тих|спокой|разговар|quiet|calm|chill|talk/:/тих|спокой|разговар/).test(n)&&dna.quiet>=60)out.push(L("спокойная атмосфера","calm atmosphere"));
+  if((EN?/красив|свидан|романт|date|romantic|beautiful/:/красив|свидан|романт/).test(n)&&dna.romantic>=60)out.push(L("подходит для свидания","good for a date"));
+  if((EN?/работ|ноутбук|work|laptop/:/работ|ноутбук/).test(n)&&dna.work>=55)out.push(L("удобно для работы","good for working"));
+  if((EN?/ребен|дет|kid|child|family/:/ребен|дет/).test(n)&&dna.family>=55)out.push(L("подходит с детьми","good with kids"));
+  if((EN?/необыч|новое|hidden|unusual|new/:/необыч|новое|hidden/).test(n)&&dna.hidden>=55)out.push(L("небанальный формат","something different"));
+  if((EN?/поздно|ноч|после 22|late|night/:/поздно|ноч|после 22/).test(n)&&dna.late>=55)out.push(L("поздний формат","late-night spot"));
   return out;
 }
 
@@ -230,7 +233,7 @@ export function rankLive(items,args={},plan={}){
     serviceAsked=tags.some(t=>SERVICE_TAGS.has(t)),
     // «Рядом» с известной точкой важнее «центра»: иначе просьба «ближайшее»
     // из Кузьминок отсекала всё дальше 6 км от Кремля — то есть всё рядом.
-    centerAsked=/центр/.test(norm(args.area||""))&&!(near&&user);
+    centerAsked=(CITY.lang==="en"?/центр|\bcent(?:er|re)\b|downtown/:/центр/).test(norm(args.area||""))&&!(near&&user);
   const scored=[];
   const multiCat=(plan.placeQueries||[]).length>1;
   for(const x of items){
@@ -241,8 +244,8 @@ export function rankLive(items,args={},plan={}){
     if(hours&&hours.open_now===false&&args.after_time)continue;
     const text=itemText(x),xtags=new Set(x.tags||[]),ctags=new Set(x.cat_tags||[]),dna=placeDna(x);let s=0,reasons=[],strongHit=0;
     if(hours&&hours.open_now){
-      s+=7;reasons.push(args.after_time?`открыто в ${args.after_time}`:"открыто сейчас");
-      if(hours.closes_in!==null&&hours.closes_in<=60){s-=24;reasons.push(`закрывается в ${hours.closes_at}`)}
+      s+=7;reasons.push(args.after_time?L(`открыто в ${args.after_time}`,`open at ${args.after_time}`):L("открыто сейчас","open now"));
+      if(hours.closes_in!==null&&hours.closes_in<=60){s-=24;reasons.push(L(`закрывается в ${hours.closes_at}`,`closes at ${hours.closes_at}`))}
     }
     for(const t of tags){
       // Услугу засчитываем только по категории из источника: «Аптекарский огород»
@@ -261,22 +264,22 @@ export function rankLive(items,args={},plan={}){
     // Спросили услугу — показываем только подтверждённые источником места.
     if(serviceAsked&&strongHit===0)continue;
     if(!strong.size&&qwords.length===0)s+=18;
-    if(args.target_date&&x.kind==="event"){s+=22;reasons.push("по дате")}
-    if(args.after_time&&x.times?.length){s+=9;reasons.push("по времени")}
-    if(args.max_price_rub!==undefined&&args.max_price_rub!==null&&x.price_min!==null&&x.price_min<=args.max_price_rub){s+=10;reasons.push("в бюджете")}
+    if(args.target_date&&x.kind==="event"){s+=22;reasons.push(L("по дате","matches the date"))}
+    if(args.after_time&&x.times?.length){s+=9;reasons.push(L("по времени","matches the time"))}
+    if(args.max_price_rub!==undefined&&args.max_price_rub!==null&&x.price_min!==null&&x.price_min<=args.max_price_rub){s+=10;reasons.push(L("в бюджете","within budget"))}
     const ts=tasteScore(dna,taste);
     s+=ts;
     reasons.push(...contextDnaReasons(dna,args));
     let distance_km=null;
     const c=coordsPair(x.coords);
-    if(user&&c){distance_km=hav(user,c);if(near)s+=Math.max(-30,32-distance_km*5);else s+=Math.max(0,8-distance_km*.6);if(distance_km<2)reasons.push("рядом")}
+    if(user&&c){distance_km=hav(user,c);if(near)s+=Math.max(-30,32-distance_km*5);else s+=Math.max(0,8-distance_km*.6);if(distance_km<2)reasons.push(L("рядом","nearby"))}
     // Просили центр — место за его пределами не показываем вовсе.
     let center_km=null;
     if(centerAsked&&c){
       center_km=hav(CENTER,c);
       if(center_km>6)continue;
       s+=Math.max(0,20-center_km*3);
-      reasons.push(center_km<=2?"в центре":`${center_km.toFixed(1)} км от центра`);
+      reasons.push(center_km<=2?L("в центре","in the center"):L(`${center_km.toFixed(1)} км от центра`,`${center_km.toFixed(1)} km from the center`));
     }
     if(rain&&dna.outdoors>=55)s-=42;
     if(rain&&dna.outdoors<40)s+=8;
@@ -289,7 +292,7 @@ export function rankLive(items,args={},plan={}){
     if(strong.size&&Array.isArray(x.primary_tags)&&x.primary_tags.length){
       const primary=new Set(x.primary_tags);
       const asMain=[...strong].some(t=>primary.has(t));
-      if(!asMain&&strongHit>0){s-=26;reasons.push("по сопутствующей рубрике")}
+      if(!asMain&&strongHit>0){s-=26;reasons.push(L("по сопутствующей рубрике","secondary category match"))}
     }
     const chain=chainPenalty(x,tags,ctags);
     if(chain===null)continue;
@@ -346,7 +349,7 @@ export function rankLive(items,args={},plan={}){
 }
 export function resultPayload(results,meta={}){
   return {status:results.length?"ok":"no_match",count:results.length,providers:meta.providers||{},degraded:meta.degraded||{},from_cache:meta.from_cache||{},note:meta.note||null,results:results.map(x=>({
-    id:x.id,name:x.name,organizer:x.organizer,category:x.cat,date:x.date_start||"постоянно",time:x.times?.[0]||x.hours_label||"",
+    id:x.id,name:x.name,organizer:x.organizer,category:x.cat,date:x.date_start||L("постоянно","ongoing"),time:x.times?.[0]||x.hours_label||"",
     price:x.price_label,price_min:x.price_min,availability:x.availability,area:x.area,metro:x.metro,source:x.source,
     point_source:x.point_source||x.source,official_source:x.official_source||null,coords:x.coords||null,provider:x.provider,
     image_url:x.image_url||null,image_source:x.image_source||null,booking_url:x.booking_url||null,

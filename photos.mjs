@@ -12,6 +12,7 @@
 //
 // Инвариант, проверяемый тестом: если origin !== "generated", а credit.text пуст,
 // кандидат отбрасывается. Лучше своя обложка, чем чужой кадр без указания автора.
+import {L} from "./city.mjs";
 
 // Хосты-агрегаторы. С них не берём ни фотографию, ни ссылку «забронировать»:
 // именно это и есть зависимость, от которой уходим. Сравнение по суффиксу домена,
@@ -90,7 +91,7 @@ export function looksLikePhoto(url,{width=null,height=null}={}){
 
 const CREDIT={
   osm:{text:"OpenStreetMap contributors",url:"https://www.openstreetmap.org/copyright",license:{code:"ODbL-1.0",url:"https://opendatacommons.org/licenses/odbl/"}},
-  commons:{text:"Wikimedia Commons",url:"https://commons.wikimedia.org/",license:{code:"см. страницу файла",url:"https://commons.wikimedia.org/"}}
+  commons:{text:"Wikimedia Commons",url:"https://commons.wikimedia.org/",license:{code:L("см. страницу файла","see file page"),url:"https://commons.wikimedia.org/"}}
 };
 
 /**
@@ -119,7 +120,7 @@ export async function resolvePhoto(place,deps={}){
   const site=ownSiteUrl(place);
   if(place.image_raw&&site&&hostOf(place.image_raw)===hostOf(site)&&looksLikePhoto(place.image_raw)){
     const r=out({url:place.image_raw,origin:"venue_site",confidence:"high",
-      credit:{text:hostOf(site),url:site},license:{code:"сайт заведения",url:site}});
+      credit:{text:hostOf(site),url:site},license:{code:L("сайт заведения","venue website"),url:site}});
     if(r)return r;
   }
 
@@ -129,7 +130,7 @@ export async function resolvePhoto(place,deps={}){
     try{meta=await siteMeta(site)}catch{meta=null}
     if(meta&&meta.image_url&&looksLikePhoto(meta.image_url,{width:meta.image_width,height:meta.image_height})){
       const r=out({url:meta.image_url,origin:"venue_site",confidence:"high",
-        credit:{text:hostOf(site),url:site},license:{code:"сайт заведения",url:site}});
+        credit:{text:hostOf(site),url:site},license:{code:L("сайт заведения","venue website"),url:site}});
       if(r)return r;
     }
   }
@@ -138,10 +139,10 @@ export async function resolvePhoto(place,deps={}){
   // именем: это источник картинки, а не владелец места. Если агрегатор завтра
   // отключится, карточка не опустеет — ниже стоит своя обложка.
   if(place.aggregator_image&&looksLikePhoto(place.aggregator_image)){
-    const who=place.aggregator_name||place.provider||"источник";
+    const who=place.aggregator_name||place.provider||L("источник","source");
     const r=out({url:place.aggregator_image,origin:"aggregator",confidence:"low",
       credit:{text:who,url:place.point_source||place.source||null},
-      license:{code:`фото предоставлено ${who}`,url:place.point_source||place.source||null}});
+      license:{code:L(`фото предоставлено ${who}`,`photo courtesy of ${who}`),url:place.point_source||place.source||null}});
     if(r)return r;
   }
 
@@ -155,7 +156,7 @@ export async function resolvePhoto(place,deps={}){
       const r=out({url,origin:hit.kind==="logo"?"brand_logo":"commons",
         confidence:hit.kind==="logo"?"low":"medium",
         credit:{text:hit.author||CREDIT.commons.text,url:hit.page||CREDIT.commons.url},
-        license:{code:hit.license||"см. страницу файла",url:hit.license_url||CREDIT.commons.url}});
+        license:{code:hit.license||L("см. страницу файла","see file page"),url:hit.license_url||CREDIT.commons.url}});
       if(r)return r;
     }
   }

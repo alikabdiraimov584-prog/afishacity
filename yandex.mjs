@@ -26,8 +26,16 @@ export const V3_ONLY_VOICES=new Set(["dasha","julia","lera","masha","alexander",
 export const STT_MAX_BYTES=1024*1024;        // предел короткого распознавания
 export const TTS_MAX_CHARS=5000;
 
+// Голоса SpeechKit с английским языком. Русский голос из .env (YANDEX_VOICE=alena)
+// в английском городе читал бы английский текст с русским акцентом, а амплуа
+// вроде good у английского голоса нет — v3 отвечал бы отказом.
+export const EN_VOICES=new Set(["john","naomi"]);
 export function yandexConfig(env=process.env){
   const key=env.YANDEX_API_KEY||"";
+  const en=CITY.lang==="en";
+  // Для английского города берём только английские настройки голоса:
+  // YANDEX_VOICE_EN/YANDEX_ROLE_EN, иначе голос города без амплуа и эмоций.
+  const envVoice=en?(env.YANDEX_VOICE_EN||(EN_VOICES.has(env.YANDEX_VOICE)?env.YANDEX_VOICE:"")):env.YANDEX_VOICE;
   const folder=env.YANDEX_FOLDER_ID||"";
   return {
     key,folder,
@@ -38,15 +46,15 @@ export function yandexConfig(env=process.env){
     // разница в формулировке. Для переписки остаётся старшая модель.
     voiceModel:env.YANDEX_VOICE_MODEL||"yandexgpt-lite/latest",
     // Голос по умолчанию — из конфигурации города: masha для Москвы, john для Дубая.
-    voice:env.YANDEX_VOICE||CITY.agent.voice||"masha",
+    voice:envVoice||CITY.agent.voice||"masha",
     // Язык распознавания и синтеза: ru-RU для Москвы, en-US для Дубая.
-    lang:env.YANDEX_LANG||CITY.agent.lang||"ru-RU",
-    emotion:env.YANDEX_EMOTION||"neutral",
+    lang:(en?env.YANDEX_LANG_EN:env.YANDEX_LANG)||CITY.agent.lang||"ru-RU",
+    emotion:en?"":(env.YANDEX_EMOTION||"neutral"),
     // Подъём интонационного контура: голос звучит живее и моложе. Только v3.
-    pitchShift:Number(env.YANDEX_PITCH_SHIFT||0),
+    pitchShift:en?0:Number(env.YANDEX_PITCH_SHIFT||0),
     // Роль (амплуа) — это про манеру, а не про тембр: один и тот же голос
     // в neutral и friendly звучит на разный возраст. Есть только в v3.
-    role:env.YANDEX_ROLE||"neutral",
+    role:en?(env.YANDEX_ROLE_EN||""):(env.YANDEX_ROLE||"neutral"),
     // auto — пробуем третью версию, при отказе один раз откатываемся на первую
     // и дальше работаем на ней. v1/v3 — жёстко выбранная версия.
     ttsVersion:env.YANDEX_TTS_VERSION||"auto",

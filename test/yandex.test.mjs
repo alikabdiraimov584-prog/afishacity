@@ -96,7 +96,9 @@ test("состояние настроек видно до первого раз�
   const s=yandexStatus({YANDEX_API_KEY:"k",YANDEX_FOLDER_ID:"f",YANDEX_VOICE:"zahar"});
   assert.equal(s.ready,true);
   assert.equal(s.model,"gpt://f/yandexgpt/latest");
-  assert.equal(s.voice,"zahar","настройка голоса перебивает умолчание");
+  // В русском городе настройка голоса перебивает умолчание; в английском
+  // русский голос из .env игнорируется — остаётся английский голос города.
+  assert.equal(s.voice,CITY.lang==="en"?CITY.agent.voice:"zahar","настройка голоса перебивает умолчание");
   assert.deepEqual(yandexStatus({YANDEX_API_KEY:"k"}),
     {ready:false,has_key:true,has_folder:false,model:null,voice:CITY.agent.voice},"видно, чего именно не хватает");
 });
@@ -267,4 +269,16 @@ test("выбранная первая версия с голосом из тре
   await assert.rejects(()=>yandexTts("привет",{cfg:{...CFG,ttsVersion:"v1",voice:"masha"},fetchImpl}),
     /только в третьей версии/);
   assert.equal(called,false,"в сеть ходить незачем: настройки противоречат друг другу");
+});
+
+test("английский город не берёт русский голос и амплуа из .env", async () => {
+  const {yandexConfig,EN_VOICES}=await import("../yandex.mjs");
+  const c=yandexConfig({YANDEX_VOICE:"alena",YANDEX_ROLE:"good",YANDEX_EMOTION:"good"});
+  if(CITY.lang==="en"){
+    assert.ok(EN_VOICES.has(c.voice),`голос ${c.voice} должен быть английским`);
+    assert.equal(c.role,"");assert.equal(c.emotion,"");assert.match(c.lang,/^en/);
+    assert.equal(yandexConfig({YANDEX_VOICE_EN:"naomi"}).voice,"naomi");
+  }else{
+    assert.equal(c.voice,"alena");assert.equal(c.role,"good");assert.equal(c.lang,"ru-RU");
+  }
 });

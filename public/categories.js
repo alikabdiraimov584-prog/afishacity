@@ -41,7 +41,11 @@ const CATEGORIES=[
   {tag:"museum",re:/(?<![а-я])музе[йяюеи](?![а-я])|музейн/,queries:["музей"],en:["museums?"],queriesEn:["museum"],extraTags:["culture"],osm:['nwr["tourism"="museum"]({{bbox}});']},
   {tag:"gallery",re:/галере|арт.?пространств/,queries:["галерея"],en:["galler(?:y|ies)","art space","art exhibition","exhibition"],queriesEn:["art gallery"],extraTags:["culture","art"],osm:['nwr["tourism"="gallery"]({{bbox}});']},
   {tag:"library",re:/библиотек|читальн/,queries:["библиотека"],en:["librar(?:y|ies)","reading room"],queriesEn:["library"],extraTags:["work","culture"],osm:['nwr["amenity"="library"]({{bbox}});']},
-  {tag:"park",re:/(?<![а-я])парк(и|е|а|ов|ах|у)?(?![а-я])|погулять|прогулк|набережн|сквер|подышать/,queries:["парк","набережная"],en:["parks?(?! my car| the car)","walks?","walking","stroll(?:ing)?","beach","beaches","promenade","corniche","waterfront","fresh air","picnic"],queriesEn:["park","beach","promenade"],extraTags:["outdoors"],osm:['nwr["leisure"="park"]({{bbox}});']},
+  // Пляж и достопримечательности — главные туристические запросы Дубая; в
+  // Москве их почти не задают, поэтому русские шаблоны узкие.
+  {tag:"beach",re:/пляж|искупаться|позагорать/,queries:["пляж"],en:["beach(?:es)?","swim(?:ming)?","sunbath(?:e|ing)?","beach club"],queriesEn:["beach","beach club"],extraTags:["outdoors"],osm:['nwr["natural"="beach"]({{bbox}});','nwr["leisure"="beach_resort"]({{bbox}});']},
+  {tag:"sights",re:/достопримечательн|что посмотреть|смотровая|осмотреть город/,queries:["достопримечательность"],en:["sights?","sightseeing","landmarks?","attractions?","must.?see","viewpoints?","observation deck","tourist spots?","what to see"],queriesEn:["tourist attraction","landmark","viewpoint"],extraTags:["culture"],osm:['nwr["tourism"="attraction"]({{bbox}});','nwr["tourism"="viewpoint"]({{bbox}});']},
+  {tag:"park",re:/(?<![а-я])парк(и|е|а|ов|ах|у)?(?![а-я])|погулять|прогулк|набережн|сквер|подышать/,queries:["парк","набережная"],en:["parks?(?! my car| the car)","walks?","walking","stroll(?:ing)?","promenade","corniche","waterfront","fresh air","picnic"],queriesEn:["park","promenade"],extraTags:["outdoors"],osm:['nwr["leisure"="park"]({{bbox}});']},
   {tag:"planetarium",re:/планетари|обсерватор/,queries:["планетарий"],en:["planetarium","observatory"],queriesEn:["planetarium"],extraTags:["family","culture"],osm:['nwr["amenity"="planetarium"]({{bbox}});']},
 
   // ---- Красота ----

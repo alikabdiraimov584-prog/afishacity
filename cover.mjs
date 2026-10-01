@@ -9,6 +9,7 @@
 // Функция детерминирована: одно и то же место даёт один и тот же SVG, поэтому
 // обложку можно кешировать навсегда и проверять снапшот-тестом без сети.
 import {parseHours} from "./hours.mjs";
+import {CITY,L} from "./city.mjs";
 
 const W=1200,H=800;
 
@@ -78,6 +79,19 @@ function shift(hex,deg,dl){const c=rgbToHsl(hexToRgb(hex));return rgbToHex(hslTo
 export function coverGroup(tags=[],category=""){
   for(const t of tags)if(GROUP[t])return GROUP[t];
   const n=String(category||"").toLowerCase();
+  // Английские рубрики (Дубай: OSM/Foursquare/Google) — отдельной веткой,
+  // чтобы московские обложки не сдвинулись ни на байт.
+  if(CITY.lang==="en"){
+    if(/hookah|shisha/.test(n))return "hookah";
+    if(/\b(bar|pub|lounge|brewery)/.test(n))return "bar";
+    if(/\b(night ?club|club)\b/.test(n))return "club";
+    if(/restaurant|cafe|café|diner|bistro|kitchen|eatery|food/.test(n))return "food";
+    if(/museum|galler|theat|exhibit/.test(n))return "culture";
+    if(/park|garden|beach/.test(n))return "walk";
+    if(/pharmac|clinic|dentist/.test(n))return "health";
+    if(/salon|hairdress|barber/.test(n))return "beauty";
+    if(/hotel|hostel/.test(n))return "hotel";
+  }
   if(/бар|паб/.test(n))return "bar";
   if(/ресторан|кафе|кухн|столов/.test(n))return "food";
   if(/кальян/.test(n))return "hookah";
@@ -120,7 +134,8 @@ export function wrapLines(text,maxChars,maxLines){
 // Положение относительно центра Москвы. Настоящих тайлов мы не рисуем: Tile Usage
 // Policy запрещает их систематическое использование, а рисовать улицы нам не из чего.
 // Вместо этого — честная схема: Кремль, Садовое кольцо, МКАД и точка места.
-const KREMLIN={lat:55.7539,lon:37.6208};
+// Центр схемы: для Москвы — Кремль, как и раньше; для других городов — их центр.
+const KREMLIN=CITY.id==="moscow"?{lat:55.7539,lon:37.6208}:CITY.center;
 function locDot(coords){
   if(!coords)return null;
   const lat=Number(coords.lat??coords.latitude),lon=Number(coords.lon??coords.lng??coords.longitude);
@@ -133,15 +148,15 @@ function locDot(coords){
 function statusLine(hoursLabel,now){
   const h=parseHours(hoursLabel,now);
   if(!h||h.open_now===null||h.open_now===undefined)return null;
-  if(h.open_now)return {text:h.closes_at?`Открыто · до ${h.closes_at}`:"Открыто сейчас",tone:"#146c43"};
-  return {text:h.opens_at?`Закрыто · откроется в ${h.opens_at}`:"Сейчас закрыто",tone:"#8a6410"};
+  if(h.open_now)return {text:h.closes_at?L(`Открыто · до ${h.closes_at}`,`Open · until ${h.closes_at}`):L("Открыто сейчас","Open now"),tone:"#146c43"};
+  return {text:h.opens_at?L(`Закрыто · откроется в ${h.opens_at}`,`Closed · opens at ${h.opens_at}`):L("Сейчас закрыто","Closed now"),tone:"#8a6410"};
 }
 
 /**
  * Рисует обложку места. Все данные приходят из уже собранной карточки —
  * функция ничего не запрашивает и не зависит от текущего времени, если now передан.
  */
-export function renderCover({name="Место",category="",tags=[],area="",metro="",hours_label="",price_label="",coords=null,kind="venue",now=new Date()}={}){
+export function renderCover({name=L("Место","Place"),category="",tags=[],area="",metro="",hours_label="",price_label="",coords=null,kind="venue",now=new Date()}={}){
   const group=kind==="event"&&!tags.length?"event":coverGroup(tags,category);
   const [c1,c2]=PALETTE[group]||PALETTE.other;
   const seed=hash(name+"|"+group);
@@ -179,7 +194,7 @@ export function renderCover({name="Место",category="",tags=[],area="",metro
       <circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="9" fill="${ink}" opacity=".18"/>
       <circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="5.5" fill="${ink}"/>
       <text x="0" y="${mapR+22}" text-anchor="middle" font-size="16" fill="${soft}"
-        font-family="-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',Arial,sans-serif">${esc(d<1?"в центре":d.toFixed(1)+" км от центра")}</text>
+        font-family="-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',Arial,sans-serif">${esc(d<1?L("в центре","in the center"):d.toFixed(1)+L(" км от центра"," km from the center"))}</text>
     </g>`;
   }
 
@@ -203,7 +218,7 @@ export function renderCover({name="Место",category="",tags=[],area="",metro
 <rect width="${W}" height="${H}" fill="url(#${gid})"/>
 <text x="72" y="118" font-size="112" opacity=".22">${esc(GLYPH[group]||GLYPH.other)}</text>
 <text x="72" y="${eyebrowY}" font-size="19" letter-spacing="3.2" fill="${soft}"
-  font-family="-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',Arial,sans-serif">${esc(kind==="event"?"СОБЫТИЕ":"МЕСТО")}</text>
+  font-family="-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',Arial,sans-serif">${esc(kind==="event"?L("СОБЫТИЕ","EVENT"):L("МЕСТО","PLACE"))}</text>
 ${lines.map((l,i)=>`<text x="72" y="${nameTop+i*size}" font-size="${size}" font-weight="700" fill="${ink}" letter-spacing="-1.4"
   font-family="-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',Arial,sans-serif">${esc(l)}</text>`).join("\n")}
 ${chipSvg}
@@ -212,7 +227,7 @@ ${st?`<g transform="translate(72 ${H-108})">
   <text x="26" y="0" font-size="24" fill="${ink}" opacity=".9"
     font-family="-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',Arial,sans-serif">${esc(st.text)}</text></g>`:""}
 <text x="72" y="${H-54}" font-size="15" fill="${soft}"
-  font-family="-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',Arial,sans-serif">Схема © OpenStreetMap contributors (ODbL)</text>
+  font-family="-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',Arial,sans-serif">${L("Схема","Map")} © OpenStreetMap contributors (ODbL)</text>
 ${mapSvg}
 </svg>`;
 }

@@ -52,7 +52,9 @@ const CONCIERGE_EN={
   name:CITY.agent.name||"Noor",
   role:`concierge for ${CITY.nameEn||"Dubai"}`,
   voice:CITY.agent.voice||"john",
-  voiceRole:"neutral",
+  // У английских голосов SpeechKit амплуа нет: роль не передаём вовсе,
+  // иначе v3 отказывает и синтез навсегда уходит на первую версию.
+  voiceRole:"",
   traits:[
     "a local friend, not a support desk: warm, direct, no ceremony",
     "knows the city on foot: Downtown, Marina, JBR, DIFC, Business Bay, Jumeirah, Deira, Al Quoz, the Palm — where it's loud, where it's quiet, where traffic kills a plan",

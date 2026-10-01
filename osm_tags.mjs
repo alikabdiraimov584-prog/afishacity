@@ -3,7 +3,8 @@
 // Вынесено отдельно, потому что этим пользуются двое: живой поиск через Overpass
 // и локальный снимок города. Дублировать разбор в обоих местах означало бы
 // расхождение категорий между тем, что найдено сейчас, и тем, что лежит в индексе.
-import {CATEGORIES} from "./categories.mjs";
+import {CATEGORIES,queriesFor} from "./categories.mjs";
+import {CITY} from "./city.mjs";
 
 function uniq(a){return [...new Set(a.filter(Boolean))]}
 
@@ -44,8 +45,14 @@ export function categoryOsmKeys(c){
 // Русское название категории: первый поисковый запрос справочника как раз им и
 // является. Нужно и карточке (на плашке теперь категория, а не имя агрегатора),
 // и объяснению «почему вам».
-const TITLE=new Map(CATEGORIES.map(c=>[c.tag,(c.queries||[])[0]||c.tag]));
-for(const [k,v] of Object.entries({nightlife:"ночная жизнь",outdoors:"на воздухе",music:"музыка",
+// На языке города: в Дубае карточка с карты подписана «Bar», а не «Бар»,
+// и «почему вам» — «bar · nightlife», а не «бар · ночная жизнь».
+const EN=CITY.lang==="en";
+const TITLE=new Map(CATEGORIES.map(c=>[c.tag,(EN?queriesFor(c,"en"):c.queries||[])[0]||c.tag]));
+for(const [k,v] of Object.entries(EN?{nightlife:"nightlife",outdoors:"outdoors",music:"music",
+  culture:"culture",art:"exhibitions",theatre:"theatre",comedy:"stand-up",jazz:"jazz",rock:"rock",
+  science:"science",festival:"festival",lecture:"talk",workshop:"workshop",
+  experience:"experience",friends:"for groups",beauty:"beauty"}:{nightlife:"ночная жизнь",outdoors:"на воздухе",music:"музыка",
   culture:"культура",art:"выставки",theatre:"театр",comedy:"стендап",jazz:"джаз",rock:"рок",
   science:"наука",festival:"фестиваль",lecture:"лекция",workshop:"мастер-класс",
   experience:"впечатления",friends:"для компании",beauty:"красота"}))TITLE.set(k,v);

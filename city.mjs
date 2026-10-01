@@ -36,7 +36,7 @@ export const CITIES={
     // Downtown, DIFC, Business Bay, Jumeirah 1 — «центр» для запросов «in the center».
     centerBbox:{south:25.17,west:55.24,north:25.24,east:55.31},
     yandexBbox:null,
-    providers:{places:["osm","foursquare","google"],events:["platinumlist"]},
+    providers:{places:["osm","foursquare","google"],events:[]},
     taxi:["uber","careem"],
     agent:{name:"Noor",voice:"john",lang:"en-US"},
     snapshotFile:"osm_dubai.db",
@@ -66,3 +66,7 @@ export function cityNow(now=new Date()){
 }
 export function bboxString(b=CITY.bbox){return `${b.south},${b.west},${b.north},${b.east}`}
 export function inBbox(lat,lon,b=CITY.bbox){return lat>=b.south&&lat<=b.north&&lon>=b.west&&lon<=b.east}
+
+// Строка на языке города: L("открыто сейчас","open now"). Для пользовательских
+// подписей, которые формирует сервер (причины, примечания, обложки, ошибки).
+export function L(ru,en){return CITY.lang==="en"?en:ru}

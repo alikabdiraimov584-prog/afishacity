@@ -5,7 +5,7 @@ import {fileURLToPath} from "node:url";
 import {randomUUID,createHmac,timingSafeEqual} from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import {verifyInitData,createRateLimiter} from "./telegram.mjs";
-import {buildPlan,planSummary} from "./planner.mjs";
+import {buildPlan,planSummary,googleRouteUrl} from "./planner.mjs";
 import {openStore} from "./store.mjs";
 import {mkdirSync,writeFileSync as writeFileSyncFs,readFileSync as readFileSyncFs,existsSync,readdirSync,unlinkSync,statSync} from "node:fs";
 import {searchLiveInventory,providerHealth,snapshotStatus} from "./providers.mjs";
@@ -19,7 +19,7 @@ import {rankLive,resultPayload} from "./live_ranker.mjs";
 import {startWarmup} from "./warmup.mjs";
 import {createCache} from "./cache.mjs";
 import {loadDotenv} from "./env.mjs";
-import {CITY} from "./city.mjs";
+import {CITY,L} from "./city.mjs";
 import {GOOGLE_PHOTO_NAME} from "./providers.mjs";
 
 const __dirname=fileURLToPath(new URL(".",import.meta.url));
@@ -77,7 +77,7 @@ function clientKey(req){
 function authorize(req){
   if(!TG_REQUIRED)return {user:null};
   const v=verifyInitData(req.headers["x-telegram-init-data"],TG_BOT_TOKEN);
-  if(!v.ok)return {error:{status:401,error:"telegram_auth_required",reason:v.reason,message:"Откройте FREE через Telegram-бота"}};
+  if(!v.ok)return {error:{status:401,error:"telegram_auth_required",reason:v.reason,message:L("Откройте FREE через Telegram-бота","Open FREE through the Telegram bot")}};
   return {user:v.user};
 }
 // Хранилище: SQLite в data/free.db (FREE_DB переопределяет путь; в тестах — память).
@@ -207,7 +207,7 @@ async function pageMeta(raw){
     if(tg||wa||/заброни|брониров|booking|reserve|reservation|купить билет|билеты|tickets/.test(hay)){
       booking_url=full;
       booking_kind=tg?"telegram":wa?"whatsapp":/билет|ticket/.test(hay)?"tickets":"site";
-      booking_provider=booking_kind==="telegram"?"Telegram":booking_kind==="whatsapp"?"WhatsApp":booking_kind==="tickets"?"билетный сервис":"форма бронирования";
+      booking_provider=booking_kind==="telegram"?"Telegram":booking_kind==="whatsapp"?"WhatsApp":booking_kind==="tickets"?L("билетный сервис","ticketing service"):L("форма бронирования","booking form");
       break;
     }
   }
@@ -346,7 +346,7 @@ const PHOTO_NONE_MS=24*3600e3;                 // отрицательный о�
 const WIKI_HEADERS={"Accept":"application/json","User-Agent":"FREE-Moscow/1.0 (+https://afishasity.ru; city concierge)"};
 function commonsCredit(page,author,license){
   return {credit:{text:author?`${author} · Wikimedia Commons`:"Wikimedia Commons",url:page||"https://commons.wikimedia.org/"},
-    license:{code:license||"см. страницу файла",url:page||"https://commons.wikimedia.org/"}};
+    license:{code:license||L("см. страницу файла","see file page"),url:page||"https://commons.wikimedia.org/"}};
 }
 async function wikiJson(url){
   const r=await guardedFetch(url,{maxBytes:512*1024,timeoutMs:1800,headers:WIKI_HEADERS,
@@ -500,7 +500,7 @@ const recommendToolRu={
 };
 const recommendToolEn={
   name:"recommend_free",
-  description:`Searches real venues and events in ${PROMPT_CITY_NAME} across FREE's live sources (OpenStreetMap, Foursquare, Google, Platinumlist). Call it before any recommendation: where to go, eat, drink, smoke shisha, hear music, see an event, get a service. Returns only facts from the sources.`,
+  description:`Searches real venues and events in ${PROMPT_CITY_NAME} across FREE's live sources (OpenStreetMap, plus Foursquare and Google when connected). There is no event listing for this city yet: for concerts, shows or nightlife search venues (clubs, theatres, concert halls, attractions) and say plainly that you can't see tonight's line-up. Call it before any recommendation: where to go, eat, drink, smoke shisha, hear music, see an event, get a service. Returns only facts from the sources.`,
   input_schema:{
     type:"object",
     properties:{
@@ -687,6 +687,9 @@ function planForModel(plan){
 function escapeHtml(s=""){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 function sharedPlanPage(rec,origin=""){
   const p=rec.plan,e=escapeHtml;
+  // Москва — Яндекс Карты (ссылка из плана), другие города — Google Maps
+  // по координатам точек; старые планы с яндексовой ссылкой тоже переводим.
+  const routeHref=CITY.id==="moscow"?safeHref(p.route_url):(googleRouteUrl((p.stops||[]).filter(s=>s.place).map(s=>s.place))||safeHref(p.route_url));
   const names=(p.stops||[]).filter(s=>s.place).map(s=>s.place.name);
   const desc=`${p.total?.start||""}–${p.total?.end||""}: ${names.join(" → ")}`;
   const cardUrl=cardExists(rec)?`${origin}/p/${rec.id}/card.png`:null;
@@ -701,16 +704,16 @@ function sharedPlanPage(rec,origin=""){
   ].join("\n");
   const rows=(p.stops||[]).map(s=>{
     const pl=s.place;
-    const travel=s.travel_to_next?`<div class="travel">↓ ${s.travel_to_next.mode==="walk"?"пешком":s.travel_to_next.mode==="taxi"?"такси":"переход"} ~${s.travel_to_next.minutes} мин${s.travel_to_next.km?` · ${s.travel_to_next.km} км`:""}</div>`:"";
-    return `<div class="stop"><div class="time">${e(s.slot_start)}–${e(s.slot_end)}</div><div class="body"><h3>${pl?e(pl.name):e(s.query)+" — не найдено"}</h3>${pl?`<p>${e(pl.category||"")}${pl.area?" · "+e(pl.area):""}${pl.metro?" · м. "+e(pl.metro):""}</p><p class="muted">${e(pl.price||"")}${pl.availability?" · "+e(pl.availability):""}</p>${safeHref(pl.booking_url||pl.source)?`<a href="${e(safeHref(pl.booking_url||pl.source))}" target="_blank" rel="noopener noreferrer">${pl.booking_url?"Бронь / билеты":"Страница места"}</a>`:""}`:""}</div></div>${travel}`;
+    const travel=s.travel_to_next?`<div class="travel">↓ ${s.travel_to_next.mode==="walk"?L("пешком","walk"):s.travel_to_next.mode==="taxi"?L("такси","taxi"):L("переход","transfer")} ~${s.travel_to_next.minutes} ${L("мин","min")}${s.travel_to_next.km?` · ${s.travel_to_next.km} ${L("км","km")}`:""}</div>`:"";
+    return `<div class="stop"><div class="time">${e(s.slot_start)}–${e(s.slot_end)}</div><div class="body"><h3>${pl?e(pl.name):e(s.query)+L(" — не найдено"," — not found")}</h3>${pl?`<p>${e(pl.category||"")}${pl.area?" · "+e(pl.area):""}${pl.metro?L(" · м. "," · metro ")+e(pl.metro):""}</p><p class="muted">${e(pl.price||"")}${pl.availability?" · "+e(pl.availability):""}</p>${safeHref(pl.booking_url||pl.source)?`<a href="${e(safeHref(pl.booking_url||pl.source))}" target="_blank" rel="noopener noreferrer">${pl.booking_url?L("Бронь / билеты","Book / tickets"):L("Страница места","Place page")}</a>`:""}`:""}</div></div>${travel}`;
   }).join("");
-  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${e(rec.title)} · FREE</title>
+  return `<!doctype html><html lang="${CITY.lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${e(rec.title)} · FREE</title>
 ${og}
 <style>body{margin:0;font-family:-apple-system,Inter,Segoe UI,Roboto,sans-serif;background:#f6f6f4;color:#111214}main{max-width:560px;margin:0 auto;padding:24px 16px 48px}.eyebrow{font-size:11px;letter-spacing:.14em;color:#727780;text-transform:uppercase}h1{font-size:28px;margin:6px 0 4px}.sub{color:#727780;margin:0 0 20px}.stop{display:flex;gap:14px;background:#fff;border:1px solid rgba(20,24,28,.08);border-radius:18px;padding:14px 16px;box-shadow:0 10px 30px rgba(31,36,46,.06)}.time{min-width:92px;font-weight:700;font-variant-numeric:tabular-nums}.body h3{margin:0 0 4px;font-size:17px}.body p{margin:2px 0;font-size:13px}.muted{color:#727780}.body a{display:inline-block;margin-top:8px;font-size:13px;color:#315fff;text-decoration:none;font-weight:600}.travel{padding:8px 0 8px 108px;color:#727780;font-size:12px}.cta{display:flex;gap:10px;margin-top:22px;flex-wrap:wrap}.cta a{flex:1;text-align:center;padding:13px 16px;border-radius:14px;text-decoration:none;font-weight:700;font-size:14px}.cta .dark{background:#111316;color:#fff}.cta .light{background:#fff;color:#111214;border:1px solid rgba(20,24,28,.12)}.foot{margin-top:28px;font-size:12px;color:#727780}.hero{width:100%;border-radius:22px;display:block;margin:0 0 18px;box-shadow:0 20px 50px rgba(31,36,46,.12)}</style></head>
-<body><main>${cardUrl?`<img class="hero" src="${e(cardUrl)}" alt="">`:""}<div class="eyebrow">План вечера</div><h1>${e(rec.title)}</h1><p class="sub">${e(p.total?.start||"")}–${e(p.total?.end||"")}${rec.date?" · "+e(rec.date):""}${p.total?.travel_km?" · переходы "+e(String(p.total.travel_km))+" км":""}</p>
+<body><main>${cardUrl?`<img class="hero" src="${e(cardUrl)}" alt="">`:""}<div class="eyebrow">${L("План вечера","Evening plan")}</div><h1>${e(rec.title)}</h1><p class="sub">${e(p.total?.start||"")}–${e(p.total?.end||"")}${rec.date?" · "+e(rec.date):""}${p.total?.travel_km?L(" · переходы "," · transfers ")+e(String(p.total.travel_km))+L(" км"," km"):""}</p>
 ${rows}
-<div class="cta">${safeHref(p.route_url)?`<a class="dark" href="${e(safeHref(p.route_url))}" target="_blank" rel="noopener noreferrer">Маршрут в Яндекс Картах</a>`:""}<a class="light" href="/">Собрать свой вечер в FREE</a></div>
-<div class="foot">Составлено FREE по данным KudaGo, Timepad, OpenStreetMap и официальных сайтов. Часы и наличие мест стоит перепроверить у заведения.</div></main></body></html>`;
+<div class="cta">${routeHref?`<a class="dark" href="${e(routeHref)}" target="_blank" rel="noopener noreferrer">${L("Маршрут в Яндекс Картах","Route in Google Maps")}</a>`:""}<a class="light" href="/">${L("Собрать свой вечер в FREE","Plan your own evening in FREE")}</a></div>
+<div class="foot">${L("Составлено FREE по данным KudaGo, Timepad, OpenStreetMap и официальных сайтов. Часы и наличие мест стоит перепроверить у заведения.","Put together by FREE from OpenStreetMap, Foursquare, Google and official websites. Double-check opening hours and availability with the venue.")}</div></main></body></html>`;
 }
 
 const TEXT_MODEL=process.env.CLAUDE_MODEL||"claude-opus-5";
@@ -1029,8 +1032,8 @@ function runAgent(message,conversationId,context,emit=null,signal=null,opts={}){
 function dialogueError(e){
   if(e instanceof YandexError)return {status:e.status===401||e.status===403?502:e.retryable?503:502,
     error:"dialogue_yandex",message:e.message};
-  if(e instanceof Anthropic.AuthenticationError)return {status:502,error:"dialogue_auth",message:"Неверный ANTHROPIC_API_KEY"};
-  if(e instanceof Anthropic.RateLimitError)return {status:503,error:"dialogue_rate_limited",message:"Лимит запросов к Claude, попробуйте чуть позже"};
+  if(e instanceof Anthropic.AuthenticationError)return {status:502,error:"dialogue_auth",message:L("Неверный ANTHROPIC_API_KEY","Invalid ANTHROPIC_API_KEY")};
+  if(e instanceof Anthropic.RateLimitError)return {status:503,error:"dialogue_rate_limited",message:L("Лимит запросов к Claude, попробуйте чуть позже","Claude rate limit reached, try again shortly")};
   if(e instanceof Anthropic.BadRequestError)return {status:502,error:"dialogue_bad_request",message:e.message};
   if(e instanceof Anthropic.APIError)return {status:502,error:"dialogue_failed",message:`Claude API ${e.status}: ${e.message}`};
   return {status:502,error:"dialogue_failed",message:e.message};
@@ -1047,13 +1050,13 @@ const server=http.createServer(async(req,res)=>{
     // SpeechKit принимает напрямую и который браузер умеет отдать без
     // перекодирования (MediaRecorder даёт WebM/Opus, его SpeechKit не берёт).
     if(req.method==="POST"&&url.pathname==="/api/voice/stt"){
-      if(!YANDEX.ready)return json(res,503,{error:"voice_not_configured",message:"Нужны YANDEX_API_KEY и YANDEX_FOLDER_ID"});
+      if(!YANDEX.ready)return json(res,503,{error:"voice_not_configured",message:L("Нужны YANDEX_API_KEY и YANDEX_FOLDER_ID","YANDEX_API_KEY and YANDEX_FOLDER_ID are required")});
       const auth=authorize(req);if(auth.error)return json(res,auth.error.status,auth.error);
       const rl=voiceLimiter.check(auth.user?.id?`tg:${auth.user.id}`:`ip:${clientKey(req)}`);
       if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return json(res,429,{error:"rate_limited",retry_after:rl.retryAfterSec})}
       let audio;
       try{audio=await readRaw(req,STT_MAX_BYTES)}
-      catch(e){return json(res,413,{error:"audio_too_large",message:"Реплика длиннее тридцати секунд"})}
+      catch(e){return json(res,413,{error:"audio_too_large",message:L("Реплика длиннее тридцати секунд","Recording is longer than thirty seconds")})}
       try{
         const text=await yandexStt(audio,{cfg:YANDEX,
           sampleRateHertz:Number(url.searchParams.get("rate"))||16000});
@@ -1065,7 +1068,7 @@ const server=http.createServer(async(req,res)=>{
     }
 
     if(req.method==="POST"&&url.pathname==="/api/voice/tts"){
-      if(!YANDEX.ready)return json(res,503,{error:"voice_not_configured",message:"Нужны YANDEX_API_KEY и YANDEX_FOLDER_ID"});
+      if(!YANDEX.ready)return json(res,503,{error:"voice_not_configured",message:L("Нужны YANDEX_API_KEY и YANDEX_FOLDER_ID","YANDEX_API_KEY and YANDEX_FOLDER_ID are required")});
       const auth=authorize(req);if(auth.error)return json(res,auth.error.status,auth.error);
       const rl=voiceLimiter.check(auth.user?.id?`tg:${auth.user.id}`:`ip:${clientKey(req)}`);
       if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return json(res,429,{error:"rate_limited",retry_after:rl.retryAfterSec})}
@@ -1074,8 +1077,11 @@ const server=http.createServer(async(req,res)=>{
       const speech=text(body.text).trim();
       if(!speech)return json(res,400,{error:"text_required"});
       try{
-        const mp3=await yandexTts(speech,{cfg:YANDEX,voice:text(body.voice)||YANDEX.voice,
-          role:text(body.role)||YANDEX.role||CONCIERGE.voiceRole});
+        // Голос и амплуа задаёт сервер по городу: русский голос из клиента в
+        // английском городе (и наоборот) давал бы чужой акцент или отказ v3.
+        const en=YANDEX.lang&&!/^ru/i.test(YANDEX.lang);
+        const mp3=await yandexTts(speech,{cfg:YANDEX,voice:(en?"":text(body.voice))||YANDEX.voice,
+          role:en?(YANDEX.role||""):(text(body.role)||YANDEX.role||CONCIERGE.voiceRole)});
         res.writeHead(200,{"Content-Type":"audio/mpeg","Cache-Control":"no-store",
           "Content-Length":String(mp3.length),...corsHeaders(req)});
         return res.end(mp3);
@@ -1147,10 +1153,10 @@ const server=http.createServer(async(req,res)=>{
     }
 
     if(req.method==="POST"&&url.pathname==="/api/dialogue"){
-      if(!AI_READY)return json(res,503,{error:"ai_not_configured",message:"Нужен ключ: ANTHROPIC_API_KEY или пара YANDEX_API_KEY + YANDEX_FOLDER_ID",fallback:true});
+      if(!AI_READY)return json(res,503,{error:"ai_not_configured",message:L("Нужен ключ: ANTHROPIC_API_KEY или пара YANDEX_API_KEY + YANDEX_FOLDER_ID","A key is required: ANTHROPIC_API_KEY or YANDEX_API_KEY + YANDEX_FOLDER_ID"),fallback:true});
       const auth=authorize(req);if(auth.error)return json(res,auth.error.status,auth.error);
       const rl=dialogueLimiter.check(auth.user?.id?`tg:${auth.user.id}`:`ip:${clientKey(req)}`);
-      if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return json(res,429,{error:"rate_limited",message:"Слишком много сообщений, подождите немного",retry_after:rl.retryAfterSec})}
+      if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return json(res,429,{error:"rate_limited",message:L("Слишком много сообщений, подождите немного","Too many messages, please wait a moment"),retry_after:rl.retryAfterSec})}
       let body={};
       try{body=await readJsonObject(req,240000)}catch(e){return bodyError(res,e)}
       const message=text(body.message).trim();
@@ -1173,7 +1179,7 @@ const server=http.createServer(async(req,res)=>{
       if(!rlMe.ok){res.setHeader("Retry-After",String(rlMe.retryAfterSec));return json(res,429,{error:"rate_limited",retry_after:rlMe.retryAfterSec})}
       const auth=authorize(req);if(auth.error)return json(res,auth.error.status,auth.error);
       const me=identify(req,auth);
-      if(!me)return json(res,400,{error:"client_required",message:"Нужен заголовок X-Free-Client или вход через Telegram"});
+      if(!me)return json(res,400,{error:"client_required",message:L("Нужен заголовок X-Free-Client или вход через Telegram","X-Free-Client header or Telegram sign-in required")});
       if(req.method==="GET"&&url.pathname==="/api/me"){
         return json(res,200,{user:{id:me.id,first_name:me.first_name,telegram:Boolean(me.tg_id)},profile:store.getProfile(me.id),evenings:store.evenings(me.id,10),stats:store.stats(me.id),conversation_id:store.lastConversationId(me.id)});
       }
@@ -1209,7 +1215,7 @@ const server=http.createServer(async(req,res)=>{
 
     if(req.method==="POST"&&url.pathname==="/api/plan/share"){
       const rl=shareLimiter.check(`ip:${clientKey(req)}`);
-      if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return json(res,429,{error:"rate_limited",message:"Слишком много планов подряд, подождите немного"})}
+      if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return json(res,429,{error:"rate_limited",message:L("Слишком много планов подряд, подождите немного","Too many plans in a row, please wait a moment")})}
       let body={};
       try{body=await readJsonObject(req,2500000)}catch(e){return bodyError(res,e)} // план + PNG-карточка до ~1 МБ
       if(!body.plan||!Array.isArray(body.plan.stops)||!body.plan.stops.length)return json(res,400,{error:"plan_required"});
@@ -1231,15 +1237,15 @@ const server=http.createServer(async(req,res)=>{
 
     if(req.method==="GET"&&/^\/p\/[a-z0-9]{6,20}$/.test(url.pathname)){
       const rec=store.getShared(url.pathname.split("/").pop());
-      if(!rec)return send(res,404,"План не найден или удалён");
+      if(!rec)return send(res,404,L("План не найден или удалён","Plan not found or deleted"));
       return send(res,200,sharedPlanPage(rec,publicOrigin(req)),"text/html; charset=utf-8");
     }
 
     if(req.method==="POST"&&url.pathname==="/api/dialogue/stream"){
-      if(!AI_READY)return json(res,503,{error:"ai_not_configured",message:"Нужен ключ: ANTHROPIC_API_KEY или пара YANDEX_API_KEY + YANDEX_FOLDER_ID",fallback:true});
+      if(!AI_READY)return json(res,503,{error:"ai_not_configured",message:L("Нужен ключ: ANTHROPIC_API_KEY или пара YANDEX_API_KEY + YANDEX_FOLDER_ID","A key is required: ANTHROPIC_API_KEY or YANDEX_API_KEY + YANDEX_FOLDER_ID"),fallback:true});
       const auth=authorize(req);if(auth.error)return json(res,auth.error.status,auth.error);
       const rl=dialogueLimiter.check(auth.user?.id?`tg:${auth.user.id}`:`ip:${clientKey(req)}`);
-      if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return json(res,429,{error:"rate_limited",message:"Слишком много сообщений, подождите немного",retry_after:rl.retryAfterSec})}
+      if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return json(res,429,{error:"rate_limited",message:L("Слишком много сообщений, подождите немного","Too many messages, please wait a moment"),retry_after:rl.retryAfterSec})}
       let body={};
       try{body=await readJsonObject(req,240000)}catch(e){return bodyError(res,e)}
       const message=text(body.message).trim();
@@ -1332,7 +1338,7 @@ const server=http.createServer(async(req,res)=>{
     // Голосовой WebRTC-режим был привязан к OpenAI Realtime; у Claude такого канала нет.
     // Интерфейс использует распознавание речи браузера и отправляет текст в /api/dialogue.
     if(req.method==="POST"&&url.pathname==="/api/live-session"){
-      return json(res,501,{error:"voice_not_supported",message:"Голосовой режим работает через распознавание речи в браузере"});
+      return json(res,501,{error:"voice_not_supported",message:L("Голосовой режим работает через распознавание речи в браузере","Voice mode uses the browser's speech recognition")});
     }
 
     if(req.method!=="GET")return send(res,405,"Method not allowed");

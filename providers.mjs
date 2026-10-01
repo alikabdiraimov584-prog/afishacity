@@ -6,7 +6,7 @@ import {CATEGORIES,SERVICE_TAGS,categoryTags,queriesFor} from "./categories.mjs"
 import {structuralTags,placeTitle} from "./osm_tags.mjs";
 import {openSnapshot} from "./osm_snapshot.mjs";
 import {statSync,readFileSync} from "node:fs";
-import {CITY,cityDate,bboxString} from "./city.mjs";
+import {CITY,cityDate,bboxString,L} from "./city.mjs";
 export {structuralTags};
 
 // Центр города в формате «lon,lat» — для 2GIS и Яндекса.
@@ -179,9 +179,9 @@ function inferTags(text){
 
 
 function priceInfo(label,isFree=false){
-  if(isFree)return {price_label:"Бесплатно",price_min:0,free:true};
+  if(isFree)return {price_label:L("Бесплатно","Free"),price_min:0,free:true};
   const p=parseMoney(label);
-  return {price_label:label&&text(label).trim()?stripHtml(label):"цена на сайте",price_min:p,free:false};
+  return {price_label:label&&text(label).trim()?stripHtml(label):L("цена на сайте","price on the website"),price_min:p,free:false};
 }
 
 async function kudagoEventDetail(id){
@@ -382,7 +382,7 @@ function normalizeYandexItem(f,plan){
   const site=safeLink(m.url||null);
   const [lon,lat]=Array.isArray(f.geometry?.coordinates)?f.geometry.coordinates.map(Number):[NaN,NaN];
   const ph=phone?phone.replace(/[^\d+]/g,""):"";
-  const book=ph?{url:`tel:${ph}`,kind:"phone",provider:"телефон"}:site?{url:site,kind:"site",provider:"сайт"}:{url:null,kind:null,provider:null};
+  const book=ph?{url:`tel:${ph}`,kind:"phone",provider:L("телефон","phone")}:site?{url:site,kind:"site",provider:L("сайт","website")}:{url:null,kind:null,provider:null};
   const link=`https://yandex.ru/maps/org/${encodeURIComponent(String(m.id||""))}`;
   return {
     id:`yandex:place:${m.id}`,provider:"Яндекс Карты",live:true,kind:"venue",name:m.name||"Заведение",organizer:m.name||"",
@@ -496,7 +496,7 @@ export function normalizeFoursquareItem(x,plan){
   const site=safeLink(x.website);
   const lat=Number(x.latitude??x.geocodes?.main?.latitude),lon=Number(x.longitude??x.geocodes?.main?.longitude);
   const ph=phone?phone.replace(/[^\d+]/g,""):"";
-  const book=ph?{url:`tel:${ph}`,kind:"phone",provider:"телефон"}:site?{url:site,kind:"site",provider:"сайт"}:{url:null,kind:null,provider:null};
+  const book=ph?{url:`tel:${ph}`,kind:"phone",provider:L("телефон","phone")}:site?{url:site,kind:"site",provider:L("сайт","website")}:{url:null,kind:null,provider:null};
   const link=`https://foursquare.com/v/${encodeURIComponent(id)}`;
   const photo=(Array.isArray(x.photos)?x.photos:[]).map(fsqPhoto).find(Boolean)||null;
   const open=typeof x.hours?.open_now==="boolean"?x.hours.open_now:null;
@@ -560,7 +560,7 @@ export function normalizeGoogleItem(x,plan){
   const site=safeLink(x.websiteUri);
   const lat=Number(x.location?.latitude),lon=Number(x.location?.longitude);
   const ph=phone?phone.replace(/[^\d+]/g,""):"";
-  const book=ph?{url:`tel:${ph}`,kind:"phone",provider:"телефон"}:site?{url:site,kind:"site",provider:"сайт"}:{url:null,kind:null,provider:null};
+  const book=ph?{url:`tel:${ph}`,kind:"phone",provider:L("телефон","phone")}:site?{url:site,kind:"site",provider:L("сайт","website")}:{url:null,kind:null,provider:null};
   const link=`https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(id)}`;
   const photo=(Array.isArray(x.photos)?x.photos:[]).map(p=>googlePhotoUrl(p&&p.name)).find(Boolean)||null;
   const hours=(x.regularOpeningHours?.weekdayDescriptions||[]).map(text).filter(Boolean).join("; ")||null;
@@ -669,6 +669,8 @@ export function safeLink(raw){
   if(!/^https?:\/\//i.test(v))return null;
   try{const u=new URL(v);return /^https?:$/.test(u.protocol)?u.href:null}catch{return null}
 }
+// Имя-заглушка места без названия: такие из выдачи OSM выбрасываются.
+const OSM_NONAME=L("Заведение","Venue");
 function normalizeOsmItem(x,plan){
   const t=x.tags||{};
   const phone=t["contact:phone"]||t.phone||null;
@@ -679,11 +681,16 @@ function normalizeOsmItem(x,plan){
   // text(): вызов text(phone) строкой выше попадал в TDZ, и любое место с
   // телефоном роняло весь ответ OpenStreetMap — ноль мест, «нет данных».
   const directBook=telegram||whatsapp||reservation||(phone?`tel:${text(phone).replace(/[^\d+]/g,"")}`:null);
-  const name=t.name||t["name:ru"]||t.brand||"Заведение";
+  // В англоязычном городе берём английское имя, если оно есть: name в Дубае
+  // нередко по-арабски.
+  const name=(CITY.lang==="en"?t["name:en"]||t.name||t.brand:t.name||t["name:ru"]||t.brand)||OSM_NONAME;
   const amenity=t.amenity||t.leisure||t.sport||"place";
   const hay=[name,t.brand,t.cuisine,amenity,t.description,t["description:ru"],t["smoking"],t["opening_hours"]].filter(Boolean).join(" ");
   const site=safeLink(t.website)||safeLink(t["contact:website"])||osmSource(x);
-  const cats={
+  const cats=CITY.lang==="en"?{
+    hookah_lounge:"Hookah lounge",bar:"Bar",pub:"Pub",biergarten:"Bar",nightclub:"Nightclub",
+    restaurant:"Restaurant",cafe:"Cafe",sauna:"Sauna",spa:"Spa"
+  }:{
     hookah_lounge:"Кальянная",bar:"Бар",pub:"Паб",biergarten:"Бар",nightclub:"Ночной клуб",
     restaurant:"Ресторан",cafe:"Кафе",sauna:"Сауна",spa:"Спа"
   };
@@ -691,7 +698,7 @@ function normalizeOsmItem(x,plan){
     id:`osm:${x.type}:${x.id}`,provider:"OpenStreetMap",live:true,kind:"venue",name,organizer:t.brand||name,
     // Раньше всё, кроме десятка знакомых значений, называлось «Заведение».
     // Теперь название берётся из справочника по структурному тегу места.
-    cat:cats[amenity]||(/караоке|karaoke/i.test(hay)?"Караоке":placeTitle(t))||"Заведение",
+    cat:cats[amenity]||(/караоке|karaoke/i.test(hay)?L("Караоке","Karaoke"):placeTitle(t))||OSM_NONAME,
     tags:inferTags(hay),cat_tags:structuralTags(t),area:osmAddress(t),metro:"",
     // Эти теги приходят в том же ответе и раньше терялись: из них берётся
     // фотография места без обращения к агрегатору.
@@ -715,8 +722,8 @@ function normalizeOsmItem(x,plan){
     source:osmSource(x),point_source:osmSource(x),official_source:site!==osmSource(x)?site:null,
     image_url:null,
     booking_url:directBook||((site!==osmSource(x))?site:null),booking_kind:telegram?"telegram":whatsapp?"whatsapp":reservation?"site":phone?"phone":(site!==osmSource(x)?"site":null),
-    booking_provider:telegram?"Telegram":whatsapp?"WhatsApp":phone?"телефон":(site!==osmSource(x)?"официальный сайт":null),phone,
-    desc:clampText(t.description||t["description:ru"]||[t.cuisine,t["opening_hours"]].filter(Boolean).join(" · ")),
+    booking_provider:telegram?"Telegram":whatsapp?"WhatsApp":phone?L("телефон","phone"):(site!==osmSource(x)?L("официальный сайт","official website"):null),phone,
+    desc:clampText(t.description||t[CITY.lang==="en"?"description:en":"description:ru"]||[t.cuisine,t["opening_hours"]].filter(Boolean).join(" · ")),
     keywords:norm(hay),coords:{lat:x.lat||x.center?.lat||null,lon:x.lon||x.center?.lon||null}
   };
 }
@@ -779,7 +786,7 @@ function snapshotFirst(plan,opts){
   try{
     const els=snap.search(plan,{center:centerFor(plan),limit:plan.userLocation?160:120,
       point:searchPoint(plan),order:plan.userLocation});
-    const items=els.map(x=>normalizeOsmItem(x,plan)).filter(x=>x.name!=="Заведение");
+    const items=els.map(x=>normalizeOsmItem(x,plan)).filter(x=>x.name!==OSM_NONAME);
     return items.length?{items,errors:[],from_cache:false,degraded:false,disabled:false,from_snapshot:true}:null;
   }catch{return null}
 }
@@ -790,7 +797,7 @@ export async function searchOSM(plan,opts={}){
     try{
       const els=snap.search(plan,{center:centerFor(plan),limit:plan.userLocation?160:120,
         point:searchPoint(plan),order:plan.userLocation});
-      const items=els.map(x=>normalizeOsmItem(x,plan)).filter(x=>x.name!=="Заведение");
+      const items=els.map(x=>normalizeOsmItem(x,plan)).filter(x=>x.name!==OSM_NONAME);
       // Снимок ответил — в сеть не идём вовсе. Пусто в снимке ещё не значит
       // «пусто в городе», поэтому на этот случай ниже остаётся Overpass.
       if(items.length)return {items,errors:[],disabled:false,from_snapshot:true};
@@ -813,7 +820,7 @@ export async function searchOSM(plan,opts={}){
     // Таймаут и перегрузка приходят как HTTP 200 с пустым elements и полем
     // remark. Раньше это считалось «мест нет» и кешировалось на часы.
     if(d&&d.remark&&/timed out|error|too busy|load/i.test(String(d.remark)))throw new Error(`Overpass: ${String(d.remark).slice(0,120)}`);
-    const items=(d.elements||[]).map(x=>normalizeOsmItem(x,plan)).filter(x=>x.name!=="Заведение");
+    const items=(d.elements||[]).map(x=>normalizeOsmItem(x,plan)).filter(x=>x.name!==OSM_NONAME);
     return {items,errors:[],disabled:false};
   }catch(e){
     return providerResult([],[`OpenStreetMap/Overpass: ${e.message}`],{disabled:false});
@@ -987,9 +994,9 @@ export async function searchLiveInventory(args={},env=process.env,opts={}){
   const thin=items.length<3;
   const anyStale=relevantDegraded.some(x=>x.from_cache);
   const notes=[];
-  if(plan.heavyDrinkingPhrase)notes.push("Запрос интерпретирован как поиск баров/пабов/ночных заведений; FREE не ранжирует места по количеству алкоголя.");
-  if(relevantDegraded.length&&thin)notes.push(!items.length?"Источник мест сейчас не отвечает — попробуйте через минуту."
-    :anyStale?"Часть источников не ответила — показываю сохранённое.":"Часть источников не ответила — показываю, что нашлось.");
+  if(plan.heavyDrinkingPhrase)notes.push(L("Запрос интерпретирован как поиск баров/пабов/ночных заведений; FREE не ранжирует места по количеству алкоголя.","Interpreted as a search for bars, pubs and nightlife; FREE does not rank places by how much alcohol they serve."));
+  if(relevantDegraded.length&&thin)notes.push(!items.length?L("Источник мест сейчас не отвечает — попробуйте через минуту.","The places source isn't responding right now — try again in a minute.")
+    :anyStale?L("Часть источников не ответила — показываю сохранённое.","Some sources didn't respond — showing saved results."):L("Часть источников не ответила — показываю, что нашлось.","Some sources didn't respond — showing what I found."));
   return {
     plan,items,
     errors:[...(k.errors||[]),...(t.errors||[]),...(o.errors||[]),...(d.errors||[]),...(y.errors||[]),...(f.errors||[]),...(g.errors||[])],

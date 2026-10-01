@@ -65,6 +65,23 @@ function yandexRouteUrl(points,origin){
   const pts=[origin,...points].filter(Boolean).map(p=>{const c=coordsPair(p.coords||p);return c?`${c.lat},${c.lon}`:`${CITY_NAME()}, ${p.area||p.name||""}`});
   return "https://yandex.ru/maps/?mode=routes&rtext="+pts.map(encodeURIComponent).join("~");
 }
+// Вне Москвы Яндекс Карты маршрут не строят — там Google Maps:
+// origin — первая точка, destination — последняя, остальные — waypoints через «|».
+function googleRouteUrl(points,origin){
+  const pts=[origin,...points].filter(Boolean).map(p=>{const c=coordsPair(p.coords||p);return c?`${c.lat},${c.lon}`:`${CITY_NAME()}, ${p.area||p.name||""}`});
+  if(!pts.length)return null;
+  const u=new URL("https://www.google.com/maps/dir/");
+  u.searchParams.set("api","1");
+  if(pts.length>1)u.searchParams.set("origin",pts[0]);
+  u.searchParams.set("destination",pts[pts.length-1]);
+  if(pts.length>2)u.searchParams.set("waypoints",pts.slice(1,-1).join("|"));
+  u.searchParams.set("travelmode","walking");
+  return u.href;
+}
+// Город — из глобали FREE_CITY_ID (страница/сервер); без неё — Москва, как было.
+function routeUrl(points,origin){
+  return String(root.FREE_CITY_ID||"moscow")==="moscow"?yandexRouteUrl(points,origin):googleRouteUrl(points,origin);
+}
 function stopDuration(stop,place){
   if(stop.duration_min)return +stop.duration_min;
   if(place?.duration_min)return +place.duration_min;
@@ -123,7 +140,7 @@ async function buildPlan(request,search){
   const priceSum=found.reduce((s,x)=>s+(Number.isFinite(+x.place.price_min)?+x.place.price_min:0),0);
   const total={start:out[0].slot_start,end:out[out.length-1].slot_end,stops:out.length,found:found.length,travel_km:+km.toFixed(1),price_from:priceSum||null,
     has_conflict:out.some(s=>s.conflict)};
-  return {status:found.length?(found.length===out.length?"ok":"partial"):"no_match",stops:out,total,route_url:found.length?yandexRouteUrl(found.map(s=>s.place),request.anchor?{coords:request.anchor}:null):null};
+  return {status:found.length?(found.length===out.length?"ok":"partial"):"no_match",stops:out,total,route_url:found.length?routeUrl(found.map(s=>s.place),request.anchor?{coords:request.anchor}:null):null};
 }
 function planSummary(plan){
   if(!plan||!plan.stops?.length)return "";
@@ -154,6 +171,6 @@ function parseStops(text){
   }
   return stops;
 }
-const api={buildPlan,parseStops,planSummary,travel,guessCategory,yandexRouteUrl,coordsPair,DEFAULT_DURATION};
+const api={buildPlan,parseStops,planSummary,travel,guessCategory,yandexRouteUrl,googleRouteUrl,routeUrl,coordsPair,DEFAULT_DURATION};
 root.FreePlanner=api;
 })(typeof globalThis!=="undefined"?globalThis:this);
