@@ -6,6 +6,7 @@ import {CATEGORIES,SERVICE_TAGS,categoryTags,queriesFor} from "./categories.mjs"
 import {structuralTags,placeTitle} from "./osm_tags.mjs";
 import {openSnapshot} from "./osm_snapshot.mjs";
 import {statSync,readFileSync} from "node:fs";
+import {DatabaseSync} from "node:sqlite";
 import {CITY,cityDate,bboxString,L} from "./city.mjs";
 export {structuralTags};
 
@@ -766,16 +767,41 @@ export function getSnapshot({now=Date.now,file=SNAPSHOT_FILE}={}){
 function lastBuild(){
   try{return JSON.parse(readFileSync(SNAPSHOT_STATUS_FILE,"utf8"))}catch{return null}
 }
+// Идущая сборка: итог пишется только в конце, а сборка города идёт десятки
+// минут. Без этого снаружи не отличить «ещё собирается» от «не запускалась».
+// Читаем недостроенную базу только на чтение: сколько мест и категорий готово
+// и когда она последний раз менялась (давно не менялась — сборка встала).
+let buildingCache={at:0,v:null};
+function buildingStatus(){
+  if(Date.now()-buildingCache.at<15000)return buildingCache.v;
+  let v=null;
+  const tmp=SNAPSHOT_FILE+".building";
+  try{
+    const st=statSync(tmp);
+    let mt=st.mtimeMs;try{mt=Math.max(mt,statSync(tmp+"-wal").mtimeMs)}catch{}
+    v={file:tmp,updated_at:new Date(mt).toISOString(),idle_min:Math.round((Date.now()-mt)/60000)};
+    try{
+      const db=new DatabaseSync(tmp,{readOnly:true});
+      v.places=Number(db.prepare("select count(*) n from place").get().n)||0;
+      const r=db.prepare("select v from meta where k='done_tags'").get();
+      v.categories_done=String(r&&r.v||"").split(",").filter(Boolean).length;
+      db.close();
+    }catch(e){v.read_error=String(e&&e.message||e).slice(0,120)}
+  }catch{v=null}
+  buildingCache={at:Date.now(),v};
+  return v;
+}
 export function snapshotStatus(){
   const h=getSnapshot();
   const last=lastBuild();
+  const building=buildingStatus();
   if(!h){
     let reason="missing";
     try{statSync(SNAPSHOT_FILE);reason="unreadable"}catch{}
-    return {ready:false,reason,file:SNAPSHOT_FILE,last_build:last};
+    return {ready:false,reason:building?"building":reason,file:SNAPSHOT_FILE,last_build:last,building};
   }
   return {ready:true,places:h.places,built_at:new Date(h.builtAt).toISOString(),
-    age_hours:Math.round(h.ageMs()/36e5),stale:h.stale(),file:SNAPSHOT_FILE,last_build:last};
+    age_hours:Math.round(h.ageMs()/36e5),stale:h.stale(),file:SNAPSHOT_FILE,last_build:last,building};
 }
 
 // Мгновенный ответ из локального снимка, если он есть; иначе null.
