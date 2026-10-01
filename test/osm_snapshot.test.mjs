@@ -1,5 +1,6 @@
 // Локальный снимок мест: поиск обслуживается из SQLite, а Overpass остаётся
 // способом обновить снимок, а не путём к ответу пользователя.
+import "./_moscow.mjs";                       // тест про Москву: координаты и часовой пояс
 import test from "node:test";
 import assert from "node:assert/strict";
 import {mkdtempSync,rmSync,existsSync,writeFileSync} from "node:fs";

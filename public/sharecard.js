@@ -4,6 +4,12 @@
 "use strict";
 const W=1080,H=1350;
 const CAT_EMOJI={bar:"🍸",food:"🍽️",hookah:"💨",club:"🪩",karaoke:"🎤",coffee:"☕",culture:"🖼️",active:"🎳",spa:"🧖",walk:"🌳",event:"🎟️",other:"📍"};
+// Подписи карточки на языке города: opts.lang="en" — английские, иначе русские.
+const STR={
+  ru:{head:"ПЛАН ВЕЧЕРА",notFound:" — не найдено",metro:"м. ",walk:"пешком",taxi:"такси",other:"переход",min:"мин",km:"км",time:"время",stops:"точек",transfers:"переходы",budget:"бюджет",from:"от ",menu:"по меню",foot:"Собрано в FREE · не ищите, разговаривайте",currency:"₽",locale:"ru-RU"},
+  en:{head:"EVENING PLAN",notFound:" — not found",metro:"",walk:"walk",taxi:"taxi",other:"transfer",min:"min",km:"km",time:"time",stops:"stops",transfers:"transfers",budget:"budget",from:"from ",menu:"à la carte",foot:"Made with FREE · don't search, just ask",currency:"AED",locale:"en-AE"}
+};
+function strings(opts){const base=STR[opts.lang==="en"?"en":"ru"];return {...base,currency:opts.currency||base.currency,locale:opts.locale||base.locale}}
 function guess(text){const P=root.FreePlanner;return P?P.guessCategory(text):"other"}
 function coords(c){const P=root.FreePlanner;return P?P.coordsPair(c):null}
 function ellipsis(ctx,text,max){text=String(text||"");if(ctx.measureText(text).width<=max)return text;let t=text;while(t.length>1&&ctx.measureText(t+"…").width>max)t=t.slice(0,-1);return t+"…"}
@@ -31,6 +37,7 @@ function drawRoute(ctx,stops,x,y,w,h){
   P.forEach((p,i)=>{ctx.beginPath();ctx.arc(p.x,p.y,22,0,Math.PI*2);ctx.fillStyle="#fff";ctx.fill();ctx.lineWidth=6;ctx.strokeStyle="#111316";ctx.stroke();ctx.fillStyle="#111316";ctx.font="700 22px -apple-system,Inter,Arial,sans-serif";ctx.textAlign="center";ctx.fillText(String(i+1),p.x,p.y+8);ctx.textAlign="left"});
 }
 async function render(plan,opts={}){
+  const S=strings(opts||{});
   const c=document.createElement("canvas");c.width=W;c.height=H;const ctx=c.getContext("2d");
   const stops=(plan.stops||[]).slice(0,4);
   // фон
@@ -38,7 +45,7 @@ async function render(plan,opts={}){
   const g=ctx.createRadialGradient(W/2,-100,50,W/2,-100,900);g.addColorStop(0,"rgba(255,255,255,.9)");g.addColorStop(1,"rgba(255,255,255,0)");ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
   // шапка
   ctx.fillStyle="#111316";ctx.font="800 44px -apple-system,Inter,Arial,sans-serif";ctx.fillText("FREE",72,110);
-  ctx.fillStyle="#727780";ctx.font="600 26px -apple-system,Inter,Arial,sans-serif";ctx.letterSpacing="4px";ctx.fillText("ПЛАН ВЕЧЕРА",72,160);ctx.letterSpacing="0px";
+  ctx.fillStyle="#727780";ctx.font="600 26px -apple-system,Inter,Arial,sans-serif";ctx.letterSpacing="4px";ctx.fillText(S.head,72,160);ctx.letterSpacing="0px";
   const dateLabel=opts.date||"";
   if(dateLabel){ctx.textAlign="right";ctx.fillStyle="#727780";ctx.font="600 28px -apple-system,Inter,Arial,sans-serif";ctx.fillText(dateLabel,W-72,110);ctx.textAlign="left"}
   ctx.fillStyle="#111214";ctx.font="800 72px -apple-system,Inter,Arial,sans-serif";
@@ -58,19 +65,19 @@ async function render(plan,opts={}){
     const emoji=CAT_EMOJI[p?guess([p.category,p.name].join(" ")):guess(s.query)]||"📍";
     rr(ctx,250,y-46,68,68,20);ctx.fillStyle="#fff";ctx.fill();ctx.strokeStyle="rgba(20,24,28,.1)";ctx.lineWidth=2;ctx.stroke();
     ctx.font="34px -apple-system,'Apple Color Emoji','Segoe UI Emoji',sans-serif";ctx.fillStyle="#111";ctx.textAlign="center";ctx.fillText(emoji,284,y+1);ctx.textAlign="left";
-    ctx.fillStyle="#111214";ctx.font="700 38px -apple-system,Inter,Arial,sans-serif";ctx.fillText(ellipsis(ctx,p?p.name:(s.query+" — не найдено"),W-72-340),340,y);
-    ctx.fillStyle="#727780";ctx.font="500 26px -apple-system,Inter,Arial,sans-serif";ctx.fillText(ellipsis(ctx,p?[p.category,p.metro?"м. "+p.metro:p.area].filter(Boolean).join(" · "):"",W-72-340),340,y+38);
-    if(s.travel_to_next){const tr=s.travel_to_next;const lab=(tr.mode==="walk"?"пешком":tr.mode==="taxi"?"такси":"переход")+" ~"+tr.minutes+" мин"+(tr.km?" · "+tr.km+" км":"");
+    ctx.fillStyle="#111214";ctx.font="700 38px -apple-system,Inter,Arial,sans-serif";ctx.fillText(ellipsis(ctx,p?p.name:(s.query+S.notFound),W-72-340),340,y);
+    ctx.fillStyle="#727780";ctx.font="500 26px -apple-system,Inter,Arial,sans-serif";ctx.fillText(ellipsis(ctx,p?[p.category,p.metro?S.metro+p.metro:p.area].filter(Boolean).join(" · "):"",W-72-340),340,y+38);
+    if(s.travel_to_next){const tr=s.travel_to_next;const lab=(tr.mode==="walk"?S.walk:tr.mode==="taxi"?S.taxi:S.other)+" ~"+tr.minutes+" "+S.min+(tr.km?" · "+tr.km+" "+S.km:"");
       ctx.strokeStyle="rgba(20,24,28,.18)";ctx.lineWidth=3;ctx.setLineDash([2,10]);ctx.beginPath();ctx.moveTo(284,y+36);ctx.lineTo(284,y+rowH-52);ctx.stroke();ctx.setLineDash([]);
       ctx.fillStyle="#9a9ea6";ctx.font="500 24px -apple-system,Inter,Arial,sans-serif";ctx.fillText("↓ "+lab,340,y+Math.max(78,rowH-56))}
     y+=rowH;
   });
   // итог
-  const stats=[[`${t.start||"–"}–${t.end||"–"}`,"время"],[String(t.found??stops.length),"точек"],[t.travel_km?`${t.travel_km} км`:"—","переходы"],[t.price_from?`от ${Number(t.price_from).toLocaleString("ru-RU")} ₽`:"по меню","бюджет"]];
+  const stats=[[`${t.start||"–"}–${t.end||"–"}`,S.time],[String(t.found??stops.length),S.stops],[t.travel_km?`${t.travel_km} ${S.km}`:"—",S.transfers],[t.price_from?`${S.from}${Number(t.price_from).toLocaleString(S.locale)} ${S.currency}`:S.menu,S.budget]];
   const by=H-250;rr(ctx,72,by,W-144,150,28);ctx.fillStyle="#111316";ctx.fill();
   const cols=[1.45,0.75,1.0,1.2],total=cols.reduce((a,b)=>a+b,0),inner=W-144-80;let sx=72+40;
   stats.forEach(([v,l],i)=>{const cw=inner*cols[i]/total;ctx.fillStyle="#fff";ctx.font="800 34px -apple-system,Inter,Arial,sans-serif";ctx.fillText(ellipsis(ctx,v,cw-16),sx,by+70);ctx.fillStyle="rgba(255,255,255,.55)";ctx.font="600 22px -apple-system,Inter,Arial,sans-serif";ctx.fillText(l.toUpperCase(),sx,by+108);sx+=cw});
-  ctx.fillStyle="#9a9ea6";ctx.font="600 24px -apple-system,Inter,Arial,sans-serif";ctx.fillText("Собрано в FREE · не ищите, разговаривайте",72,H-52);
+  ctx.fillStyle="#9a9ea6";ctx.font="600 24px -apple-system,Inter,Arial,sans-serif";ctx.fillText(S.foot,72,H-52);
   if(opts.host){ctx.textAlign="right";ctx.fillText(opts.host,W-72,H-52);ctx.textAlign="left"}
   return new Promise(res=>c.toBlob(b=>res(b),"image/png"));
 }

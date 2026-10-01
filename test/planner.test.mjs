@@ -1,11 +1,15 @@
+import "./_moscow.mjs";                       // тест про русские фразы планировщика
 import test from "node:test";
 import assert from "node:assert/strict";
 import {buildPlan,parseStops,travel,planSummary} from "../planner.mjs";
+import {LANG} from "../city.mjs";
+// Русские поисковые фразы точек: для английского города (CITY=dubai) план собирается по-английски.
+const RU_ONLY={skip:LANG!=="ru"&&"русские формулировки плана"};
 
 const place=(id,name,extra={})=>({id,name,category:"Бар",kind:"venue",area:"Москва",coords:{lat:55.76,lon:37.60},price_min:null,...extra});
 const searchBy=(map)=>async(args)=>{const key=Object.keys(map).find(k=>args.query.includes(k));return {results:key?map[key]:[]}};
 
-test("парсинг фразы на остановки", ()=>{
+test("парсинг фразы на остановки", RU_ONLY, ()=>{
   assert.deepEqual(parseStops("хочу поужинать, потом в бар, а после кальян").map(s=>s.query),["ужин ресторан","бар","кальянная"]);
   assert.deepEqual(parseStops("выставка и потом кофе").map(s=>s.query),["выставка","кофейня"]);
   assert.deepEqual(parseStops("просто бар"),[]);
@@ -17,7 +21,7 @@ test("переходы: пешком до ~2 км, дальше такси, бе
   assert.equal(travel(null,{lat:1,lon:1}).mode,"unknown");
 });
 
-test("план из трёх точек: время идёт последовательно, следующая точка ищется рядом с предыдущей", async ()=>{
+test("план из трёх точек: время идёт последовательно, следующая точка ищется рядом с предыдущей", RU_ONLY, async ()=>{
   const seen=[];
   const search=async(args)=>{seen.push(args);
     if(args.query.includes("ужин"))return {results:[place("r","Ресторан",{category:"Ресторан",price_min:2500,coords:{lat:55.760,lon:37.600}})]};
@@ -73,7 +77,7 @@ test("план не собирается из случайного «потом�
 // вечера». Дыры в нём обходились дорого: обычные формулировки молча
 // превращались в одиночный поиск вместо маршрута.
 
-test("обычные разговорные формулировки собираются в план", ()=>{
+test("обычные разговорные формулировки собираются в план", RU_ONLY, ()=>{
   const cases=[
     ["выпить, а после кальян",["бар","кальянная"]],
     ["хочу поесть потом погулять",["ужин ресторан","прогулка парк"]],
@@ -86,7 +90,7 @@ test("обычные разговорные формулировки собир�
     assert.deepEqual(parseStops(phrase).map(s=>s.query),want,phrase);
 });
 
-test("конец вечера не считается точкой и не рушит план", ()=>{
+test("конец вечера не считается точкой и не рушит план", RU_ONLY, ()=>{
   // Раньше слово «домой» обнуляло весь разбор, и маршрут не собирался вовсе.
   assert.deepEqual(parseStops("бар, потом клуб, потом домой").map(s=>s.query),["бар","ночной клуб"]);
   assert.deepEqual(parseStops("поесть потом спать").map(s=>s.query),[]);
@@ -99,7 +103,7 @@ test("непонятное занятие по-прежнему планом н�
   assert.deepEqual(parseStops("просто бар"),[]);
 });
 
-test("зрелища не сваливаются в одну кучу", ()=>{
+test("зрелища не сваливаются в одну кучу", RU_ONLY, ()=>{
   // «Стендап» и «театр» через поиск слова «концерт» приводили не туда.
   assert.deepEqual(parseStops("на стендап потом выпить").map(s=>s.query),["стендап","бар"]);
   assert.deepEqual(parseStops("театр потом ужин").map(s=>s.query),["театр спектакль","ужин ресторан"]);

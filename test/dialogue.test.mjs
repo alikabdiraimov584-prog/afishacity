@@ -1,3 +1,4 @@
+import "./_moscow.mjs";                       // тест про русские реплики диалога
 import test from "node:test";
 import assert from "node:assert/strict";
 process.env.NODE_ENV="test";
@@ -57,10 +58,10 @@ test("неизвестный id диалога начинает новую ис�
 test("refusal и пустой ответ дают безопасный текст", async ()=>{
   setDialogueClient(mockClient([()=>({model:"m",stop_reason:"refusal",content:[]})]));
   const r=await runDialogue("...",null,{});
-  assert.match(r.reply,/помочь не смогу/);
+  assert.match(r.reply,/помочь не смогу|can't help/);
   setDialogueClient(mockClient([()=>({model:"m",stop_reason:"end_turn",content:[]})]));
   const r2=await runDialogue("...",null,{});
-  assert.match(r2.reply,/подробнее/);
+  assert.match(r2.reply,/подробнее|a bit more/);
 });
 
 test("история режется только по границе реплики пользователя", ()=>{
@@ -134,7 +135,7 @@ test("стриминг: дельты, статус инструмента и don
   assert.equal(types.at(-1),"done");
   const deltas=events.filter(e=>e.type==="delta").map(e=>e.data.text).join("");
   assert.ok(deltas.includes("Сейчас посмотрю.")&&deltas.includes("Вот два бара."));
-  assert.equal(events.find(e=>e.type==="status").data.text,"Ищу: джаз бар");
+  assert.match(events.find(e=>e.type==="status").data.text,/^(Ищу|Searching): джаз бар$/);
   const done=events.at(-1).data;
   assert.equal(done.reply,"Вот два бара.");assert.equal(done.reply_streamed,true);assert.ok(done.response_id);
   }finally{await new Promise(r=>server.close(r))}
@@ -149,7 +150,7 @@ test("после хода без поиска модель получает ук
   let seen=null;
   setDialogueClient(mockClient([(req)=>{seen=req.messages.at(-1).content;return {model:"m",stop_reason:"end_turn",content:[{type:"text",text:"ок"}]}}]));
   await runDialogue("выпить",r.response_id,{});
-  assert.match(seen,/вызови recommend_free сейчас/);
+  assert.match(seen,/вызови recommend_free сейчас|call recommend_free now/);
   // Третий ход после поиска — указания нет
   setDialogueClient(mockClient([
     ()=>({model:"m",stop_reason:"tool_use",content:[{type:"tool_use",id:"t1",name:"recommend_free",input:{query:"бар"}}]}),

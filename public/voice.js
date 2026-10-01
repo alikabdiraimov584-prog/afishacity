@@ -131,12 +131,19 @@ function stopCapture(){
 // ---- Отрисовка ----
 
 const $=(s)=>document.querySelector(s);
+// Строки экрана: переводчик приходит из страницы (init({t})); без него —
+// русские тексты, как и было.
+const RU={"voice.idle":"Нажмите и говорите","voice.listening":"Слушаю…","voice.thinking":"Думаю…","voice.tooShort":"Слишком коротко — попробуйте ещё раз",
+  "voice.sttFail":"Не удалось распознать","voice.notHeard":"Не расслышал. Скажите ещё раз","voice.failed":"Не получилось: ","voice.agentDown":"Консьерж недоступен",
+  "voice.searching":"Ищу","voice.ready":"Нажмите, когда будете готовы","voice.noTts":"нет синтеза","voice.micNeeded":"Нужен доступ к микрофону","voice.micDown":"Микрофон недоступен: ",
+  "voice.hands.title.on":"Разговор идёт сам — нажмите, чтобы отвечать по кнопке","voice.hands.title.off":"Включить разговор без рук","voice.quoteL":"«","voice.quoteR":"»"};
+function T(key){const f=state.api&&state.api.t;const v=typeof f==="function"?f(key):undefined;return typeof v==="string"&&v!==key?v:(RU[key]||key)}
 function setPhase(p,hint){
   state.phase=p;
   const root=$("#voiceScreen");
   if(!root)return;
   root.dataset.phase=p;
-  const labels={idle:"Нажмите и говорите",listening:"Слушаю…",thinking:"Думаю…",speaking:"",error:""};
+  const labels={idle:T("voice.idle"),listening:T("voice.listening"),thinking:T("voice.thinking"),speaking:"",error:""};
   const el=$("#voiceHint");
   // «Нажмите и говорите» — подсказка для первого раза. Над состоявшимся
   // разговором она уже ничего не объясняет и только добавляет третью строку
@@ -152,7 +159,7 @@ function markContent(){
 // всё сказанное человек уже слышал, а прочитать историю можно в переписке.
 function showHeard(text){
   const el=$("#voiceHeard");if(!el)return;
-  el.textContent=text?"«"+text+"»":"";
+  el.textContent=text?T("voice.quoteL")+text+T("voice.quoteR"):"";
   if(text)markContent();
 }
 function showSaid(text){
@@ -193,20 +200,20 @@ async function stopAndSend(){
   const {chunks,rate}=stopCapture();
   if(!chunks.length){setPhase("idle");state.silentRuns++;maybeResume();return}
   const pcm=toPcm16(chunks,rate);
-  if(pcm.length<TARGET_RATE*0.25){setPhase("idle","Слишком коротко — попробуйте ещё раз");state.silentRuns++;maybeResume();return}
+  if(pcm.length<TARGET_RATE*0.25){setPhase("idle",T("voice.tooShort"));state.silentRuns++;maybeResume();return}
   try{
     const r=await state.api.apiFetch(`/api/voice/stt?rate=${TARGET_RATE}`,{
       method:"POST",headers:{"Content-Type":"application/octet-stream"},body:pcm.buffer});
     const d=await r.json().catch(()=>({}));
-    if(!r.ok)throw new Error(d.message||"Не удалось распознать");
+    if(!r.ok)throw new Error(d.message||T("voice.sttFail"));
     const text=String(d.text||"").trim();
-    if(!text){setPhase("idle","Не расслышал. Скажите ещё раз");state.silentRuns++;maybeResume();return}
+    if(!text){setPhase("idle",T("voice.notHeard"));state.silentRuns++;maybeResume();return}
     state.silentRuns=0;                  // услышали — счётчик пустых попыток обнуляем
     showHeard(text);showSaid("");
     await ask(text);
   }catch(e){
     setPhase("error",String(e.message||e));
-    showSaid("Не получилось: "+(e.message||e));
+    showSaid(T("voice.failed")+(e.message||e));
     // После ошибки сам не продолжаем: непрерывный разговор превратился бы
     // в цикл из одной и той же ошибки.
     state.hands=false;updateHandsButton();
@@ -233,7 +240,7 @@ async function ask(text){
         previous_response_id:state.conversation,context:state.api.context?state.api.context():{}})});
     if(!r.ok){
       const d=await r.json().catch(()=>({}));
-      throw new Error(d.message||"Консьерж недоступен");
+      throw new Error(d.message||T("voice.agentDown"));
     }
     if(!r.body||!r.body.getReader)return askPlain(text);   // старый браузер без потоков
     let failed=null;
@@ -244,14 +251,14 @@ async function ask(text){
         // одном и том же.
         showSaid(data.text);
         if(!data.interim)enqueueSpeech(data.text);
-        else setPhase("thinking","Ищу");
+        else setPhase("thinking",T("voice.searching"));
       }else if(type==="status"&&data&&data.text){
         if(state.phase==="thinking")setPhase("thinking",data.text+"…");
       }else if(type==="done"){
         state.conversation=data.response_id||state.conversation;
         renderOut(data);
       }else if(type==="error"){
-        failed=new Error(data.message||"Консьерж недоступен");
+        failed=new Error(data.message||T("voice.agentDown"));
       }
     });
     if(failed)throw failed;
@@ -259,7 +266,7 @@ async function ask(text){
     settle();
   }catch(e){
     resetSpeech();
-    showSaid("Не получилось: "+(e.message||e));
+    showSaid(T("voice.failed")+(e.message||e));
     setPhase("error");
     state.hands=false;updateHandsButton();
     setTimeout(()=>{if(state.phase==="error")setPhase("idle")},2600);
@@ -273,7 +280,7 @@ async function askPlain(text){
     body:JSON.stringify({message:text,voice:true,
       previous_response_id:state.conversation,context:state.api.context?state.api.context():{}})});
   const d=await r.json().catch(()=>({}));
-  if(!r.ok)throw new Error(d.message||"Консьерж недоступен");
+  if(!r.ok)throw new Error(d.message||T("voice.agentDown"));
   state.conversation=d.response_id||state.conversation;
   const said=String(d.reply||"").trim();
   showSaid(said);
@@ -358,7 +365,7 @@ function enqueueSpeech(text){
 async function ttsBlob(text){
   const r=await state.api.apiFetch("/api/voice/tts",{
     method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text})});
-  if(!r.ok)throw new Error("нет синтеза");
+  if(!r.ok)throw new Error(T("voice.noTts"));
   return r.blob();
 }
 
@@ -388,7 +395,7 @@ function maybeResume(){
   if(!state.hands||!state.open)return;
   if(state.phase!=="idle")return;
   if(state.silentRuns>=SILENT_LIMIT){
-    setPhase("idle","Нажмите, когда будете готовы");
+    setPhase("idle",T("voice.ready"));
     return;
   }
   // Небольшая пауза: без неё в запись попадает хвост собственного ответа,
@@ -477,8 +484,8 @@ async function listen(){
     await startCapture();
   }catch(e){
     setPhase("error",e&&e.name==="NotAllowedError"
-      ?"Нужен доступ к микрофону"
-      :"Микрофон недоступен: "+(e.message||e));
+      ?T("voice.micNeeded")
+      :T("voice.micDown")+(e.message||e));
     setTimeout(()=>{if(state.phase==="error")setPhase("idle")},3000);
   }finally{state.busy=false}
 }
@@ -502,7 +509,7 @@ function updateHandsButton(){
   const b=$("#vHands");if(!b)return;
   b.classList.toggle("on",state.hands);
   b.setAttribute("aria-pressed",state.hands?"true":"false");
-  b.title=state.hands?"Разговор идёт сам — нажмите, чтобы отвечать по кнопке":"Включить разговор без рук";
+  b.title=state.hands?T("voice.hands.title.on"):T("voice.hands.title.off");
 }
 
 function open(){

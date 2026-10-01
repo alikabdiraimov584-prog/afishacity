@@ -1,9 +1,25 @@
-// Разбор часов работы: OSM opening_hours ("Mo-Su 12:00-02:00", "24/7", "Mo-Fr 10:00-22:00; Sa,Su 11:00-23:00")
-// и простые русские строки KudaGo/2GIS ("пн–вс 12:00–02:00", "ежедневно 10:00–22:00", "круглосуточно").
+// Разбор часов работы: OSM opening_hours ("Mo-Su 12:00-02:00", "24/7", "Mo-Fr 10:00-22:00; Sa,Su 11:00-23:00"),
+// простые русские строки KudaGo/2GIS ("пн–вс 12:00–02:00", "ежедневно 10:00–22:00", "круглосуточно")
+// и английские строки Foursquare/Google ("Mon-Thu 6pm–2am", "Monday: 12:00 PM – 2:00 AM", "Open 24 hours").
 // parseHours(text, now) → {open_now:boolean|null, closes_at:"HH:MM"|null, opens_at:"HH:MM"|null}
-// для момента `now` (Date или ISO-строка) по московскому времени. Ночные интервалы (до 02:00) поддерживаются.
+// для момента `now` (Date или ISO-строка) по местному времени города (CITY.tz). Ночные интервалы (до 02:00) поддерживаются.
+import {cityNow} from "./city.mjs";
 
 const DAY_INDEX={mo:0,tu:1,we:2,th:3,fr:4,sa:5,su:6};
+// Английские дни: полные и сокращённые формы → двухбуквенные коды OSM.
+// «sun» и «sat» надо свернуть до «su»/«sa» раньше, чем сработает DAY_RE:
+// \b(su)\b не находит «sun», и воскресенье терялось.
+const EN_DAYS=[
+  [/\b(?:monday|mon)\b/g,"mo"],[/\b(?:tuesday|tues|tue)\b/g,"tu"],[/\b(?:wednesday|weds|wed)\b/g,"we"],
+  [/\b(?:thursday|thurs|thur|thu)\b/g,"th"],[/\b(?:friday|fri)\b/g,"fr"],[/\b(?:saturday|sat)\b/g,"sa"],
+  [/\b(?:sunday|sun)\b/g,"su"]
+];
+// 12-часовое время → 24-часовое: «6pm» → 18:00, «6:30 pm» → 18:30, «12 am» → 00:00.
+const TIME_12H=/(\d{1,2})(?:[:.](\d{2}))?\s*([ap])\.?\s?m\.?(?![a-z])/g;
+function to24(_,h,m,ap){
+  let hh=+h%12;if(ap==="p")hh+=12;
+  return `${String(hh).padStart(2,"0")}:${m||"00"}`;
+}
 const RU_DAYS=[
   [/понедельник[а-я]*|(?<![а-я])пн(?![а-я])/g,"mo"],[/вторник[а-я]*|(?<![а-я])вт(?![а-я])/g,"tu"],
   [/сред[аыуе]|(?<![а-я])ср(?![а-я])/g,"we"],[/четверг[а-я]*|(?<![а-я])чт(?![а-я])/g,"th"],
@@ -15,15 +31,22 @@ const DAY_RANGE_RE=/\b(mo|tu|we|th|fr|sa|su)\s*-\s*(mo|tu|we|th|fr|sa|su)\b/g;
 const TIME_RANGE_RE=/(\d{1,2})[:.](\d{2})\s*-\s*(\d{1,2})[:.](\d{2})/g;
 
 function normalizeText(s){
-  return String(s||"").toLowerCase().replace(/ё/g,"е")
+  let t=String(s||"").toLowerCase().replace(/ё/g,"е")
     .replace(/[–—−]/g,"-").replace(/\s+/g," ")
+    // Английские слова-времена и 12-часовой формат — до всего остального,
+    // чтобы дальше работали те же регэкспы, что и для «12:00-02:00».
+    .replace(/\bnoon\b/g,"12:00").replace(/\bmidnight\b/g,"00:00")
+    .replace(TIME_12H,to24)
+    .replace(/(\d{1,2}[:.]\d{2})\s+(?:to|till|until|-)\s+(\d{1,2}[:.]\d{2})/g,"$1-$2")
+    .replace(/\bfrom\s+(?=\d{1,2}[:.]\d{2}-)/g,"")
     .replace(/(^|[\s,;])с\s+(\d{1,2}[:.]\d{2})\s+до\s+(\d{1,2}[:.]\d{2})/g,"$1$2-$3")
-    .replace(/круглосуточн[а-я]*|без перерыва и выходных|24 часа|24\/7/g,"24/7")
-    .replace(/ежедневн[а-я]*|каждый день|daily|без выходных/g,"mo-su")
-    .replace(/будни|в будние дни|по будням|рабочие дни/g,"mo-fr")
-    .replace(/выходные|в выходные|по выходным/g,"sa-su")
-    .replace(/выходной|закрыто|не работает|closed/g,"off")
-    .trim();
+    .replace(/круглосуточн[а-я]*|без перерыва и выходных|24 часа|24\/7|(?:open )?24 hours|\b24h\b|around the clock/g,"24/7")
+    .replace(/ежедневн[а-я]*|каждый день|daily|every ?day|без выходных/g,"mo-su")
+    .replace(/будни|в будние дни|по будням|рабочие дни|weekdays/g,"mo-fr")
+    .replace(/выходные|в выходные|по выходным|weekends/g,"sa-su")
+    .replace(/выходной|закрыто|не работает|closed/g,"off");
+  for(const [re,abbr] of EN_DAYS)t=t.replace(re,abbr);
+  return t.trim();
 }
 function toMin(h,m){const v=+h*60+ +m;return v>1440?null:v}
 function fmt(min){const v=((min%1440)+1440)%1440;return `${String(Math.floor(v/60)).padStart(2,"0")}:${String(v%60).padStart(2,"0")}`}
@@ -92,20 +115,19 @@ export function parseSchedule(text){
   return week; // week[d] = массив интервалов, [] = выходной, null = неизвестно
 }
 
-export function moscowNow(now=new Date()){
-  const d=now instanceof Date?now:new Date(now);
-  if(!Number.isFinite(d.valueOf()))return null;
-  const parts=new Intl.DateTimeFormat("en-US",{timeZone:"Europe/Moscow",weekday:"short",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).formatToParts(d);
-  const get=t=>parts.find(p=>p.type===t)?.value;
-  const wd={Mon:0,Tue:1,Wed:2,Thu:3,Fri:4,Sat:5,Sun:6}[get("weekday")];
-  return {day:wd,minute:(+get("hour")%24)*60+ +get("minute")};
+// Местное время города: {day:0..6 (пн=0), minute}. Имя осталось от времён,
+// когда город был один; теперь это cityNow() из city.mjs.
+export function localNow(now=new Date()){
+  const t=cityNow(now instanceof Date?now:new Date(now));
+  return t?{day:DAY_INDEX[t.weekday],minute:t.minute}:null;
 }
+export const moscowNow=localNow;
 
 const UNKNOWN={open_now:null,closes_at:null,opens_at:null};
 
 export function parseHours(text,now=new Date()){
   const week=parseSchedule(text);if(!week)return UNKNOWN;
-  const t=moscowNow(now);if(!t)return UNKNOWN;
+  const t=localNow(now);if(!t)return UNKNOWN;
   const {day,minute}=t;
   const always=week.every(r=>r&&r.length===1&&r[0].start===0&&r[0].end===1440);
   if(always)return {open_now:true,closes_at:null,opens_at:null};

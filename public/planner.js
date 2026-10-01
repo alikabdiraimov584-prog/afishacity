@@ -7,27 +7,36 @@ const DEFAULT_DURATION={food:90,dinner:90,bar:90,hookah:120,coffee:45,club:150,k
 // Словарь узнаваемых занятий. Он же решает, считать ли фразу планом вечера,
 // поэтому дыры в нём стоили дорого: «выпить, а после кальян» не опознавалось
 // вовсе, потому что глагола «выпить» здесь не было — и план не собирался.
+// Язык и город берём из глобалей страницы/сервера (FREE_LANG, FREE_CITY_NAME):
+// по умолчанию — русский и Москва, как и было.
+const LANG=()=>String(root.FREE_LANG||"ru")==="en"?"en":"ru";
+const CITY_NAME=()=>String(root.FREE_CITY_NAME||"Москва");
 const CAT_RULES=[
-  ["hookah",/кальян|hookah|lounge|лаунж/i],
-  ["bar",/бар|паб|pub|коктейл|пив|вин|выпить|выпива|бухн|накатит|рюмочн|наливк/i],
-  ["food",/ресторан|кафе|ужин|обед|еда|кухн|бранч|завтрак|поесть|поед|покушат|перекус|пожрат|столов|бургер|пицц|суши|шаурм/i],
-  ["coffee",/кофе|coffee|капучино|раф|латте/i],
-  ["club",/клуб|танц|вечерин|дискотек|рейв|потусит|тусовк|тусит/i],
-  ["karaoke",/караоке|спеть|попет/i],
-  ["spa",/спа|баня|саун|массаж|хамам|термы/i],
-  ["cinema",/кино|фильм|киношк/i],
-  ["show",/концерт|стендап|комеди|спектак|театр/i],
-  ["culture",/музей|выстав|галере|лекц/i],
-  ["active",/боулинг|бильярд|квест|vr|каток|картинг|скалодром|батут|пейнтбол|тир/i],
-  ["walk",/прогул|погулят|пройтись|парк|набереж|бульвар|сквер/i]
+  ["hookah",/кальян|hookah|shisha|lounge|лаунж/i],
+  ["bar",/бар|паб|pub|коктейл|пив|вин|выпить|выпива|бухн|накатит|рюмочн|наливк|\bbars?\b|cocktail|\bdrinks?\b|\bbeer\b|\bwine\b|rooftop/i],
+  ["food",/ресторан|кафе|ужин|обед|еда|кухн|бранч|завтрак|поесть|поед|покушат|перекус|пожрат|столов|бургер|пицц|суши|шаурм|restaurant|dinner|lunch|brunch|breakfast|\beat\b|\bfood\b|burger|pizza|sushi|shawarma|steak/i],
+  ["coffee",/кофе|coffee|капучино|раф|латте|\bcaf[eé]\b|espresso|latte/i],
+  ["club",/клуб|танц|вечерин|дискотек|рейв|потусит|тусовк|тусит|\bclubs?\b|nightclub|danc|\bparty\b|\brave\b/i],
+  ["karaoke",/караоке|спеть|попет|karaoke|\bsing/i],
+  ["spa",/спа|баня|саун|массаж|хамам|термы|\bspa\b|sauna|massage|hammam/i],
+  ["cinema",/кино|фильм|киношк|cinema|movie|\bfilm\b|imax/i],
+  ["show",/концерт|стендап|комеди|спектак|театр|concert|stand.?up|comedy|theat(?:er|re)|\bgig\b|\bshow\b/i],
+  ["culture",/музей|выстав|галере|лекц|museum|exhibition|galler|lecture/i],
+  ["active",/боулинг|бильярд|квест|vr|каток|картинг|скалодром|батут|пейнтбол|тир|bowling|billiard|escape room|karting|ice rink|skating|climbing|trampoline|paintball|padel/i],
+  ["walk",/прогул|погулят|пройтись|парк|набереж|бульвар|сквер|\bwalk|stroll|\bpark\b|beach|promenade|corniche|marina walk/i]
 ];
 // Не занятия, а окончание вечера. Раньше такое слово обнуляло весь план:
 // в «бар, потом клуб, потом домой» не оставалось ни одной точки.
-const NOT_A_STOP=/^(домой|спать|дом|такси|метро|на работу|работать|баиньки|отдыхать)$/i;
+const NOT_A_STOP=/^(домой|спать|дом|такси|метро|на работу|работать|баиньки|отдыхать|home|go home|sleep|bed|taxi|work|to work|rest)$/i;
 // «Стендап» и «театр» — не «концерт»: поиск по слову «концерт» приведёт
 // человека совсем не туда, куда он собирался.
 function showQuery(p){
   const t=String(p||"");
+  if(LANG()==="en"){
+    if(/stand.?up|comedy/i.test(t))return "stand-up comedy";
+    if(/theat(?:er|re)/i.test(t))return "theatre show";
+    return "concert";
+  }
   if(/стендап|комеди/i.test(t))return "стендап";
   if(/театр|спектак/i.test(t))return "театр спектакль";
   return "концерт";
@@ -53,7 +62,7 @@ function travel(from,to){
   return {mode:"taxi",minutes:Math.max(8,Math.round(km/22*60)+5),km:+km.toFixed(1)};
 }
 function yandexRouteUrl(points,origin){
-  const pts=[origin,...points].filter(Boolean).map(p=>{const c=coordsPair(p.coords||p);return c?`${c.lat},${c.lon}`:`Москва, ${p.area||p.name||""}`});
+  const pts=[origin,...points].filter(Boolean).map(p=>{const c=coordsPair(p.coords||p);return c?`${c.lat},${c.lon}`:`${CITY_NAME()}, ${p.area||p.name||""}`});
   return "https://yandex.ru/maps/?mode=routes&rtext="+pts.map(encodeURIComponent).join("~");
 }
 function stopDuration(stop,place){
@@ -89,7 +98,7 @@ async function buildPlan(request,search){
     let place=stop.place||null,alternatives=[];
     if(!place){
       const args={query:stop.query,party_size:request.party_size,max_price_rub:request.max_price_rub,target_date:request.target_date,taste_weights:request.taste_weights};
-      if(anchor){args.user_location=anchor;args.query=stop.query+" рядом"}
+      if(anchor){args.user_location=anchor;args.query=stop.query+(LANG()==="en"?" nearby":" рядом")}
       if(cursor!==null)args.after_time=hhmm(cursor);
       let results=[];
       try{results=((await search(args))||{}).results||[]}catch(e){results=[]}
@@ -118,13 +127,15 @@ async function buildPlan(request,search){
 }
 function planSummary(plan){
   if(!plan||!plan.stops?.length)return "";
-  return plan.stops.map(s=>`${s.slot_start}–${s.slot_end} ${s.place?s.place.name:"("+s.query+": не найдено)"}${s.travel_to_next?` → ${s.travel_to_next.mode==="walk"?"пешком":s.travel_to_next.mode==="taxi"?"такси":"переход"} ${s.travel_to_next.minutes} мин`:""}`).join("\n");
+  const en=LANG()==="en";
+  const W=en?{nf:"not found",walk:"walk",taxi:"taxi",other:"transfer",min:"min"}:{nf:"не найдено",walk:"пешком",taxi:"такси",other:"переход",min:"мин"};
+  return plan.stops.map(s=>`${s.slot_start}–${s.slot_end} ${s.place?s.place.name:"("+s.query+": "+W.nf+")"}${s.travel_to_next?` → ${s.travel_to_next.mode==="walk"?W.walk:s.travel_to_next.mode==="taxi"?W.taxi:W.other} ${s.travel_to_next.minutes} ${W.min}`:""}`).join("\n");
 }
 // Разбор фразы вида «ужин, потом бар, а после кальян» на остановки.
 function parseStops(text){
   const n=String(text||"").toLowerCase().replace(/ё/g,"е");
-  const parts=n.split(/\s*,?\s*(?:а\s+|и\s+)?(?:потом|затем|дальше|после)(?=\s|$)\s*/)
-    .map(s=>s.replace(/^(?:этого|него|нее|этой|ужина|бара|концерта|выставки|кино|фильма)\s*/,"").replace(/^(?:в|на|к|и|а)\s+/,"").trim()).filter(Boolean);
+  const parts=n.split(/\s*,?\s*(?:а\s+|и\s+|and\s+)?(?:потом|затем|дальше|после|then|after|afterwards|followed by|next)(?=\s|$)\s*/)
+    .map(s=>s.replace(/^(?:этого|него|нее|этой|ужина|бара|концерта|выставки|кино|фильма|that|this)\s*/,"").replace(/^(?:в|на|к|и|а|to|at|a|an|the|go to|some)\s+/,"").trim()).filter(Boolean);
   // Концовки вроде «потом домой» — это не точка маршрута, а конец вечера:
   // отбрасываем их, а не выбрасываем из-за них весь план.
   const useful=parts.filter(p=>!NOT_A_STOP.test(p.trim()));
@@ -135,7 +146,10 @@ function parseStops(text){
   const stops=[];
   for(const p of useful){
     const cat=guessCategory(p);
-    const q=cat==="food"?"ужин ресторан":cat==="bar"?"бар":cat==="hookah"?"кальянная":cat==="coffee"?"кофейня":cat==="club"?"ночной клуб":cat==="karaoke"?"караоке":cat==="spa"?"спа":cat==="cinema"?"кинотеатр":cat==="show"?showQuery(p):cat==="culture"?"выставка":cat==="active"?"активный отдых":cat==="walk"?"прогулка парк":p.replace(/^(хочу|давай|сначала|потом|можно|нужно|надо)\s+/,"");
+    const Q=LANG()==="en"
+      ?{food:"dinner restaurant",bar:"bar",hookah:"shisha lounge",coffee:"coffee shop",club:"nightclub",karaoke:"karaoke",spa:"spa",cinema:"cinema",culture:"exhibition",active:"activities",walk:"park walk"}
+      :{food:"ужин ресторан",bar:"бар",hookah:"кальянная",coffee:"кофейня",club:"ночной клуб",karaoke:"караоке",spa:"спа",cinema:"кинотеатр",culture:"выставка",active:"активный отдых",walk:"прогулка парк"};
+    const q=cat==="show"?showQuery(p):Q[cat]||p.replace(/^(хочу|давай|сначала|потом|можно|нужно|надо|i want|let's|first|then|maybe|we could)\s+/,"");
     stops.push({query:q});
   }
   return stops;

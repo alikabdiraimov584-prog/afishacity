@@ -1,3 +1,4 @@
+import "./_moscow.mjs";                       // тест про Москву: координаты центра
 import test from "node:test";
 import assert from "node:assert/strict";
 import {buildSearchPlan,searchLiveInventory,structuralTags} from "../providers.mjs";

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Сборка локального снимка мест Москвы из OpenStreetMap.
+// Сборка локального снимка мест города из OpenStreetMap. Город — из CITY
+// (рамка и имя файла берутся из city.mjs): CITY=dubai node scripts/build_osm_snapshot.mjs
 //
 //   node --no-warnings=ExperimentalWarning scripts/build_osm_snapshot.mjs
 //   node ... scripts/build_osm_snapshot.mjs --out data/osm_moscow.db --only bar,food
@@ -14,8 +15,9 @@
 import {CATEGORIES} from "../categories.mjs";
 import {categoryOsmKeys} from "../osm_tags.mjs";
 import {overpassQuery} from "../providers.mjs";
-import {createSnapshot,collectCategory,snapshotAcceptable,MOSCOW_BBOX} from "../osm_snapshot.mjs";
+import {createSnapshot,collectCategory,snapshotAcceptable,CITY_BBOX} from "../osm_snapshot.mjs";
 import {SNAPSHOT_STATUS_FILE} from "../providers.mjs";
+import {CITY} from "../city.mjs";
 import {writeFileSync,mkdirSync} from "node:fs";
 import {dirname} from "node:path";
 
@@ -37,7 +39,7 @@ for(let i=2;i<process.argv.length;i++){
   if(eq>0)args.set(a.slice(2,eq),a.slice(eq+1));
   else args.set(a.slice(2),process.argv[i+1]&&!process.argv[i+1].startsWith("--")?process.argv[++i]:"1");
 }
-const OUT=args.get("out")||join(ROOT,"data","osm_moscow.db");
+const OUT=args.get("out")||process.env.OSM_SNAPSHOT||join(ROOT,"data",CITY.snapshotFile);
 const ONLY=args.get("only")?new Set(String(args.get("only")).split(",").map(x=>x.trim())):null;
 const PAUSE_MS=Number(args.get("pause")||1500);
 const CAP=Number(args.get("cap")||3000);
@@ -97,8 +99,10 @@ function withBudget(run,ms,tag){
 const targets=CATEGORIES.filter(c=>c.osm&&c.osm.length&&(!ONLY||ONLY.has(c.tag)));
 if(!targets.length){console.error("нет категорий для сборки");process.exit(1)}
 
-console.log(`Сборка снимка: ${targets.length} категорий → ${OUT}`);
-console.log(`Рамка ${bboxStr(MOSCOW_BBOX)}, потолок ${CAP} на запрос, пауза ${PAUSE_MS} мс\n`);
+console.log(`Сборка снимка (${CITY.name}): ${targets.length} категорий → ${OUT}`);
+console.log(`Рамка ${bboxStr(CITY_BBOX)}, потолок ${CAP} на запрос, пауза ${PAUSE_MS} мс\n`);
+// Сухая проверка: NODE_ENV=test — показать план и выйти, в сеть не ходить.
+if(process.env.NODE_ENV==="test"){console.log("NODE_ENV=test: сухой запуск, сборка не выполняется");process.exit(0)}
 
 const snap=createSnapshot(OUT,{resume:RESUME});
 const already=snap.done();
@@ -122,7 +126,7 @@ for(const cat of targets){
   const onBatch=(els)=>{got+=els.length;total=snap.put(els,cat.tag)};
   try{
     await withBudget(
-      (signal)=>collectCategory(cat,MOSCOW_BBOX,{fetchCell,cap:CAP,pause:()=>sleep(PAUSE_MS),onBatch,signal}),
+      (signal)=>collectCategory(cat,CITY_BBOX,{fetchCell,cap:CAP,pause:()=>sleep(PAUSE_MS),onBatch,signal}),
       CAT_BUDGET_MS,cat.tag);
     snap.markDone(cat.tag);                    // в следующий раз не переделываем
     console.log(`${label.padEnd(26)} ${String(got).padStart(5)} объектов, всего ${total} (+${total-before})  ${keys.slice(0,2).join(", ")||"по названию"}`);

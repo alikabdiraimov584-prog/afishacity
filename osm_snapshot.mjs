@@ -1,4 +1,4 @@
-// Локальный снимок мест Москвы.
+// Локальный снимок мест города (рамка и файл — из city.mjs).
 //
 // Зачем: сейчас каждый поиск идёт в Overpass — один публичный сервис, один URL.
 // Он отвечает секундами, иногда не отвечает вовсе, и пока он недоступен, мест в
@@ -13,6 +13,7 @@ import {DatabaseSync} from "node:sqlite";
 import {existsSync,mkdirSync,renameSync,rmSync} from "node:fs";
 import {dirname} from "node:path";
 import {CATEGORIES,structuralTags,categoryOsmKeys} from "./osm_tags.mjs";
+import {CITY} from "./city.mjs";
 
 // Тот же norm, что в providers.mjs: снимок и живой поиск должны видеть одинаковый текст.
 export function norm(s=""){
@@ -45,9 +46,15 @@ create virtual table if not exists place_fts using fts5(name_norm, pid unindexed
 create table if not exists meta(k text primary key, v text not null);
 `;
 
-// Рамка Москвы и рамка центра — те же значения, что у живых запросов.
-export const MOSCOW_BBOX={south:55.49,west:37.30,north:55.96,east:37.99};
-export const CENTER_BBOX={south:55.71,west:37.55,north:55.80,east:37.69};
+// Рамка города и рамка центра — из конфигурации города, те же значения, что у
+// живых запросов. MOSCOW_BBOX осталось как прежнее имя: это рамка текущего CITY.
+export const CITY_BBOX=CITY.bbox;
+export const MOSCOW_BBOX=CITY_BBOX;
+export const CENTER_BBOX=CITY.centerBbox;
+// Сжатие долготы при сортировке по близости: cos²(широты центра), чтобы
+// километр на восток весил столько же, сколько километр на север
+// (Москва ≈ 0.32, Дубай ≈ 0.82).
+const LON_WEIGHT=Math.round(Math.cos(CITY.center.lat*Math.PI/180)**2*100)/100;
 
 // Какие структурные ключи принадлежат тегу категории: нужно билдеру, чтобы
 // спросить у Overpass ровно то, что потом будет искаться локально.
@@ -244,13 +251,13 @@ export function openSnapshot(file,{now=Date.now}={}){
     select p.pid,p.otype,p.oid,p.lat,p.lon,p.tags_json
     from ptag t join place p on p.pid=t.pid
     where t.tag=? and t.lat between ? and ? and t.lon between ? and ?
-    order by (t.lat-?)*(t.lat-?)+(t.lon-?)*(t.lon-?)*0.32
+    order by (t.lat-?)*(t.lat-?)+(t.lon-?)*(t.lon-?)*${LON_WEIGHT}
     limit ?`);
   const byName=db.prepare(`
     select p.pid,p.otype,p.oid,p.lat,p.lon,p.tags_json
     from place_fts f join place p on p.pid=f.pid
     where place_fts match ? and p.lat between ? and ? and p.lon between ? and ?
-    order by (p.lat-?)*(p.lat-?)+(p.lon-?)*(p.lon-?)*0.32
+    order by (p.lat-?)*(p.lat-?)+(p.lon-?)*(p.lon-?)*${LON_WEIGHT}
     limit ?`);
 
   const row=(r)=>{
@@ -278,7 +285,7 @@ export function openSnapshot(file,{now=Date.now}={}){
       const ok=(c)=>c&&Number.isFinite(+c.lat)&&Number.isFinite(+c.lon)?{lat:+c.lat,lon:+c.lon}:null;
       const p=ok(point);
       const box=p?{south:p.lat-0.055,north:p.lat+0.055,west:p.lon-0.095,east:p.lon+0.095}
-        :center?CENTER_BBOX:MOSCOW_BBOX;
+        :center?CENTER_BBOX:CITY_BBOX;
       const at=p||ok(order)||{lat:(CENTER_BBOX.south+CENTER_BBOX.north)/2,lon:(CENTER_BBOX.west+CENTER_BBOX.east)/2};
       const seen=new Map();
       const tags=(plan.tags||[]).filter(t=>CATEGORY_KEYS.has(t));

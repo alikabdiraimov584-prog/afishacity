@@ -2,14 +2,19 @@ import {join} from "node:path";
 import {fileURLToPath} from "node:url";
 import {createCache,withBreaker,breakerStatus} from "./cache.mjs";
 
-import {CATEGORIES,SERVICE_TAGS,categoryTags} from "./categories.mjs";
+import {CATEGORIES,SERVICE_TAGS,categoryTags,queriesFor} from "./categories.mjs";
 import {structuralTags,placeTitle} from "./osm_tags.mjs";
 import {openSnapshot} from "./osm_snapshot.mjs";
 import {statSync,readFileSync} from "node:fs";
+import {CITY,cityDate,bboxString} from "./city.mjs";
 export {structuralTags};
 
-const MOSCOW_POINT = "37.6173,55.7558";
+// Центр города в формате «lon,lat» — для 2GIS и Яндекса.
+const CITY_POINT = `${CITY.center.lon},${CITY.center.lat}`;
 const TIMEOUT_MS = 6500;
+// Какие источники включены для этого города (city.mjs → providers).
+const placesOn=(name)=>(CITY.providers?.places||[]).includes(name);
+const eventsOn=(name)=>(CITY.providers?.events||[]).includes(name);
 
 // String() на значении из сети может бросить исключение: объект вида
 // {"toString":1} — валидный JSON, и приведение его к строке падает с
@@ -41,18 +46,17 @@ export function parseMoney(s=""){
   const n=Number(text(m[1]).replace(/\s/g,""));
   return Number.isFinite(n)&&n>=0&&n<=1000000?n:null;
 }
-// Дата берётся по Москве, а не по UTC: событие, начинающееся в 00:30 МСК,
-// иначе получало вчерашнюю дату и не находилось по фильтру «сегодня».
-const MSK_DATE=new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Moscow",year:"numeric",month:"2-digit",day:"2-digit"});
+// Дата берётся по местному времени города, а не по UTC: событие, начинающееся
+// в 00:30 по местному, иначе получало вчерашнюю дату и не находилось по фильтру «сегодня».
 // new Date(x) на объекте тоже приводит его к примитиву и падает на ядовитом
 // toString, поэтому датой считаем только строку или число.
 function dateish(x){return typeof x==="string"||typeof x==="number"?new Date(x):new Date(NaN)}
-export function isoDate(x){if(!x)return null;const d=dateish(x);return Number.isFinite(d.valueOf())?MSK_DATE.format(d):null}
-function hhmm(x){if(!x)return null;const d=dateish(x);if(!Number.isFinite(d.valueOf()))return null;return new Intl.DateTimeFormat("ru-RU",{timeZone:"Europe/Moscow",hour:"2-digit",minute:"2-digit",hour12:false}).format(d)}
-function moscowDate(){return new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Moscow",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date())}
+export function isoDate(x){if(!x)return null;const d=dateish(x);return Number.isFinite(d.valueOf())?cityDate(d):null}
+function hhmm(x){if(!x)return null;const d=dateish(x);if(!Number.isFinite(d.valueOf()))return null;return new Intl.DateTimeFormat("ru-RU",{timeZone:CITY.tz,hour:"2-digit",minute:"2-digit",hour12:false}).format(d)}
+const moscowDate=()=>cityDate();
 function addDays(dateStr,n){const d=new Date(dateStr+"T12:00:00Z");d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10)}
 function dateBounds(targetDate){const start=targetDate||moscowDate();const end=targetDate||addDays(start,30);return {start,end}}
-function toEpoch(date,time="00:00:00"){return Math.floor(Date.parse(`${date}T${time}+03:00`)/1000)}
+function toEpoch(date,time="00:00:00"){return Math.floor(Date.parse(`${date}T${time}${CITY.utcOffset}`)/1000)}
 
 // В JS \b работает только для латиницы, поэтому границы кириллических слов
 // задаём через lookbehind/lookahead. Все регэкспы применяются к norm()-тексту:
@@ -63,7 +67,10 @@ const FAMILY_RE=/ребен|(?<![а-я])дет(и|ей|ям|ьми|ск|ишк)|
 const SPA_RE=/(?<![а-я])бан(я|и|ю|е|ей)(?![а-я])|саун|(?<![а-я])спа(?![а-я])/;
 const ROCK_RE=/(?<![а-я])рок(?![а-я])|(?<![a-z])rock/;
 const ART_RE=/выстав|искусств|галере|(?<![а-я])арт(?![а-я])/;
-const STOP=new Set(["куда","сходить","пойти","хочу","хочется","сегодня","завтра","вечером","после","москва","москве","москву","очень","сильно","много","какой","какое","какие","что","чтобы","можно","найди","найти","место","места","нибудь","что-нибудь","есть","нужно","надо","давай","давайте","посоветуй","подскажи","рядом","около","недалеко","меня","нас","мне","мы","нам","компанией","человек"]);
+// Английские стоп-слова для городов на английском: «where to go tonight» —
+// это общий запрос, а не поиск места с именем «tonight».
+const STOP_EN=["where","what","something","anything","tonight","today","tomorrow","evening","night","want","wanna","looking","find","near","nearby","around","please","some","good","best","place","places","with","friends","girlfriend","boyfriend","there","have","could","would","should","dubai","recommend","suggest"];
+const STOP=new Set([...STOP_EN,"куда","сходить","пойти","хочу","хочется","сегодня","завтра","вечером","после","москва","москве","москву","очень","сильно","много","какой","какое","какие","что","чтобы","можно","найди","найти","место","места","нибудь","что-нибудь","есть","нужно","надо","давай","давайте","посоветуй","подскажи","рядом","около","недалеко","меня","нас","мне","мы","нам","компанией","человек"]);
 
 // Пустая выдача при наличии ошибок — это отказ источника, а не «ничего не нашлось».
 // Предохранитель считает только брошенные исключения, поэтому такой случай надо
@@ -85,14 +92,15 @@ async function fetchJson(url,opts={}){
     else outer.addEventListener("abort",onAbort,{once:true});
   }
   try{
-    const r=await fetch(url,{...opts,signal:ctrl.signal,headers:{"User-Agent":"FREE-Moscow/0.9 (+local prototype)",...(opts.headers||{})}});
+    const r=await fetch(url,{...opts,signal:ctrl.signal,headers:{"User-Agent":`FREE-${CITY.nameEn}/0.9 (+local prototype)`,...(opts.headers||{})}});
     if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);
     return await r.json();
   }finally{clearTimeout(t);if(outer)outer.removeEventListener("abort",onAbort)}
 }
 
 // Правила подбора запросов к провайдерам собираются из общего справочника категорий.
-const PLACE_RULES = CATEGORIES.map(c=>({re:c.re,queries:c.queries,tags:[c.tag,...(c.extraTags||[])]}));
+// Поисковые фразы — на языке города: в Дубае «бар», а не «bar», ничего не найдёт.
+const PLACE_RULES = CATEGORIES.map(c=>({re:c.re,queries:queriesFor(c,CITY.lang),tags:[c.tag,...(c.extraTags||[])]}));
 const EVENT_RULES = [
   {re:/стендап|stand\s?up|комед|юмор/, queries:["стендап"], tags:["comedy"]},
   {re:/джаз|jazz/, queries:["джаз"], tags:["jazz","music"]},
@@ -118,7 +126,7 @@ export function buildSearchPlan(args={}){
   // слово — стоп-слово, план пустой, и поиск не шёл вовсе. Для человека это
   // выглядело как «у сервиса нет данных». Такой запрос — про вечер в городе:
   // бары, еда, кальян, клуб — а дальше ранкер и вкус решат.
-  const GENERIC_RE=/заняться|развлеч|интересн|посоветуй|порекоменд|провести|скучно|сходить|потусить|отдохнуть/;
+  const GENERIC_RE=/заняться|развлеч|интересн|посоветуй|порекоменд|провести|скучно|сходить|потусить|отдохнуть|^(?:do|fun|bored|chill|hang|hangout|plans?|ideas?|entertain\w*|spend|go|out|vibe)$/;
   const fromRules=tags.length>0;               // хоть одно правило узнало категорию
   // Слово «посоветуй» не делает запрос общим: в «посоветуй суши» есть суть.
   // Общий — тот, где кроме этих слов не осталось ничего.
@@ -127,7 +135,7 @@ export function buildSearchPlan(args={}){
   if(!fromRules&&q.trim()&&!restCore){
     generic=true;
     placeQueries.length=0;eventQueries.length=0;  // «заняться» как имя места искать бессмысленно
-    placeQueries.push("бар","ресторан","кальянная");
+    placeQueries.push(...(CITY.lang==="en"?["bar","restaurant","lounge"]:["бар","ресторан","кальянная"]));
     tags.push("bar","food","hookah","nightlife");
   }
   const placeIntent=placeQueries.length>0;
@@ -199,7 +207,7 @@ function normalizeKudagoEvent(e,plan){
     id:`kudago:event:${e.id}`,provider:"KudaGo",live:true,kind:"event",name:e.title||e.short_title||"Событие",
     organizer:place.title||"KudaGo",cat:(e.categories||[])[0]?.name||"Событие",
     tags:inferTags(text),cat_tags:rubricTags((e.categories||[]).map(x=>x.name)),
-    area:place.address||"Москва",metro:place.subway||"",date_start:d.start_date||epochDate(d.start),date_end:d.end_date||d.start_date||epochDate(d.end||d.start),
+    area:place.address||CITY.name,metro:place.subway||"",date_start:d.start_date||epochDate(d.start),date_end:d.end_date||d.start_date||epochDate(d.end||d.start),
     times:uniq(relevant.map(x=>x.start_time?x.start_time.slice(0,5):null).filter(Boolean)).slice(0,8),hours_label:"",
     ...pi,availability:"актуальность из KudaGo",source:e.site_url||place.site_url||"https://kudago.com/msk/",
     point_source:e.site_url||place.site_url||"https://kudago.com/msk/",official_source:null,
@@ -214,7 +222,7 @@ function normalizeKudagoPlace(p,plan){
   return {
     id:`kudago:place:${p.id}`,provider:"KudaGo",live:true,kind:"venue",name:p.title||"Место",organizer:p.title||"",
     cat:(p.categories||[])[0]?.name||"Место",
-    tags:inferTags(text),cat_tags:rubricTags((p.categories||[]).map(x=>x.name)),area:p.address||"Москва",metro:p.subway||"",
+    tags:inferTags(text),cat_tags:rubricTags((p.categories||[]).map(x=>x.name)),area:p.address||CITY.name,metro:p.subway||"",
     // Те же заглушки, что убраны у OSM и 2GIS: модель зачитывала их как факты,
     // а качество карточки считало «часы указаны».
     date_start:null,date_end:null,times:[],hours_label:p.timetable||null,price_label:null,price_min:null,free:false,
@@ -260,7 +268,7 @@ export async function searchKudago(plan){
 }
 
 function timepadBounds(plan){
-  const b=dateBounds(plan.targetDate);return {start:`${b.start}T00:00:00+03:00`,end:`${b.end}T23:59:59+03:00`};
+  const b=dateBounds(plan.targetDate);return {start:`${b.start}T00:00:00${CITY.utcOffset}`,end:`${b.end}T23:59:59${CITY.utcOffset}`};
 }
 function normalizeTimepadEvent(e,plan){
   const reg=e.registration_data||{};
@@ -270,7 +278,7 @@ function normalizeTimepadEvent(e,plan){
   const cats=(e.categories||[]).map(x=>x.name||"");const text=[e.name,e.description_short,cats.join(" "),e.organization?.name].join(" ");
   return {
     id:`timepad:event:${e.id}`,provider:"Timepad",live:true,kind:"event",name:e.name||"Событие",organizer:e.organization?.name||"Timepad",
-    cat:cats[0]||"Событие",tags:inferTags(text),cat_tags:rubricTags(cats),area:e.location?.address||e.location?.city||"Москва",metro:"",
+    cat:cats[0]||"Событие",tags:inferTags(text),cat_tags:rubricTags(cats),area:e.location?.address||e.location?.city||CITY.name,metro:"",
     date_start:isoDate(e.starts_at),date_end:isoDate(e.ends_at)||isoDate(e.starts_at),times:uniq([hhmm(e.starts_at)]),hours_label:"",
     price_label:priceLabel,price_min:pmin,free,availability:reg.is_registration_open===false?"регистрация закрыта":"регистрация на Timepad",
     source:e.url||e.organization?.url||"https://timepad.ru/",point_source:e.url||e.organization?.url||"https://timepad.ru/",
@@ -346,7 +354,7 @@ function normalize2gisItem(x,plan){
     // баром выглядел ровно как бар: на «бар» выдача была из дорогих
     // ресторанов, у которых бар — сопутствующая рубрика.
     primary_tags:rubricTags(rubrics.slice(0,1)),
-    area:x.address_name||x.full_address_name||"Москва",metro:"",
+    area:x.address_name||x.full_address_name||CITY.name,metro:"",
     date_start:null,date_end:null,times:[],hours_label:schedule,price_label:null,price_min:null,free:false,
     availability:null,rating,rating_count,closed,aggregator_image:photo,aggregator_name:photo?"2GIS":null,
     source:`https://2gis.ru/moscow/firm/${encodeURIComponent(x.id)}`,
@@ -363,8 +371,9 @@ function normalize2gisItem(x,plan){
    Яндекса → «API Поиска по организациям». Бесплатная квота небольшая, поэтому
    запросы кешируются (10 минут) и идут только по месту, а не по событиям. */
 export const YANDEX_PLACES_RESULTS=20;
-// Москва целиком: нижний левый ~ верхний правый угол (долгота, широта).
-const YANDEX_MOSCOW_BBOX="37.32,55.55~37.97,55.95";
+// Город целиком в формате Геопоиска: нижний левый ~ верхний правый угол
+// (долгота, широта). null — Яндекс этот город не покрывает, источник выключен.
+const YANDEX_CITY_BBOX=CITY.yandexBbox||null;
 function normalizeYandexItem(f,plan){
   const m=f.properties?.CompanyMetaData||{};
   const cats=(m.Categories||[]).map(c=>c&&c.name||"").filter(Boolean);
@@ -378,7 +387,7 @@ function normalizeYandexItem(f,plan){
   return {
     id:`yandex:place:${m.id}`,provider:"Яндекс Карты",live:true,kind:"venue",name:m.name||"Заведение",organizer:m.name||"",
     cat:cats[0]||"Заведение",tags:inferTags(hay),cat_tags:rubricTags(cats),primary_tags:rubricTags(cats.slice(0,1)),
-    area:m.address||"Москва",metro:"",
+    area:m.address||CITY.name,metro:"",
     date_start:null,date_end:null,times:[],hours_label:m.Hours?.text||null,price_label:null,price_min:null,free:false,
     availability:null,rating:null,rating_count:0,closed:false,aggregator_image:null,aggregator_name:null,
     source:link,point_source:link,official_source:site,
@@ -388,7 +397,7 @@ function normalizeYandexItem(f,plan){
   };
 }
 export async function searchYandexPlaces(plan,key){
-  if(!key)return {items:[],errors:[],disabled:true};
+  if(!key||!YANDEX_CITY_BBOX)return {items:[],errors:[],disabled:true};
   const out=[],errors=[],seen=new Set();
   for(const q of (plan.placeQueries||[]).slice(0,4)){
     try{
@@ -399,8 +408,8 @@ export async function searchYandexPlaces(plan,key){
       // rspn=1: без него Яндекс спокойно отвечает Петербургом.
       const near=searchPoint(plan);
       if(near){u.searchParams.set("ll",`${near.lon},${near.lat}`);u.searchParams.set("spn","0.07,0.04")}
-      else if(centerFor(plan)){u.searchParams.set("ll","37.6173,55.7558");u.searchParams.set("spn","0.12,0.07")}
-      else u.searchParams.set("bbox",YANDEX_MOSCOW_BBOX);
+      else if(centerFor(plan)){u.searchParams.set("ll",CITY_POINT);u.searchParams.set("spn","0.12,0.07")}
+      else u.searchParams.set("bbox",YANDEX_CITY_BBOX);
       u.searchParams.set("rspn","1");
       const d=await fetchJson(u);
       for(const f of (d.features||[])){
@@ -442,7 +451,7 @@ export async function search2GIS(plan,key){
       const u=new URL("https://catalog.api.2gis.com/3.0/items");u.searchParams.set("key",key);u.searchParams.set("q",q);u.searchParams.set("type","branch");
       // Ищем вокруг человека, если знаем, где он; иначе — по всему городу.
       const near=searchPoint(plan);
-      u.searchParams.set("point",near?`${near.lon},${near.lat}`:MOSCOW_POINT);
+      u.searchParams.set("point",near?`${near.lon},${near.lat}`:CITY_POINT);
       // Предел радиуса у Catalog API — сорок километров. Мы просили полсотни
       // при поиске по городу, и 2GIS отвечал отказом, который выглядел как
       // «мест нет»: пять заведений на пробном запросе и ноль в приложении.
@@ -461,15 +470,147 @@ export async function search2GIS(plan,key){
   return {items:out,errors,disabled:false};
 }
 
+/* Foursquare Places API (places-api.foursquare.com, версия 2025-06-17).
+   Основной источник сведений о заведениях там, где нет Яндекса и 2GIS:
+   рейтинг (0–10), число оценок, фото, часы, телефон, сайт, ценовой уровень.
+   Ключ: foursquare.com/developers → Places API → Service Key; передаётся как
+   Authorization: Bearer. Запрашиваем только нужные поля — так ответ меньше и
+   дешевле. Проверено по docs.foursquare.com (migration guide: fsq_id →
+   fsq_place_id, geocodes → latitude/longitude, хост без /v3/). */
+export const FOURSQUARE_HOST="https://places-api.foursquare.com";
+export const FOURSQUARE_VERSION="2025-06-17";
+const FSQ_FIELDS="fsq_place_id,name,categories,location,latitude,longitude,hours,tel,website,rating,stats,price,photos";
+// Фото: prefix + размер + suffix; «original» — исходный кадр.
+function fsqPhoto(p){
+  if(!p||typeof p.prefix!=="string"||typeof p.suffix!=="string")return null;
+  return safeLink(`${p.prefix}original${p.suffix}`);
+}
+// Рейтинг Foursquare — десятибалльный; у нас везде пятибалльный с одним знаком.
+function fsqRating(r){const n=Number(r);return Number.isFinite(n)&&n>0?Math.round(n/2*10)/10:null}
+function priceTier(n){const k=Number(n);return Number.isFinite(k)&&k>=1&&k<=4?"$".repeat(Math.round(k)):null}
+export function normalizeFoursquareItem(x,plan){
+  const id=text(x.fsq_place_id||x.fsq_id);
+  const cats=(Array.isArray(x.categories)?x.categories:[]).map(c=>c&&text(c.name)).filter(Boolean);
+  const hay=[text(x.name),cats.join(" "),text(x.location?.formatted_address)].join(" ");
+  const phone=text(x.tel)||null;
+  const site=safeLink(x.website);
+  const lat=Number(x.latitude??x.geocodes?.main?.latitude),lon=Number(x.longitude??x.geocodes?.main?.longitude);
+  const ph=phone?phone.replace(/[^\d+]/g,""):"";
+  const book=ph?{url:`tel:${ph}`,kind:"phone",provider:"телефон"}:site?{url:site,kind:"site",provider:"сайт"}:{url:null,kind:null,provider:null};
+  const link=`https://foursquare.com/v/${encodeURIComponent(id)}`;
+  const photo=(Array.isArray(x.photos)?x.photos:[]).map(fsqPhoto).find(Boolean)||null;
+  const open=typeof x.hours?.open_now==="boolean"?x.hours.open_now:null;
+  return {
+    id:`fsq:place:${id}`,provider:"Foursquare",live:true,kind:"venue",name:text(x.name)||"Place",organizer:text(x.name)||"",
+    // Рубрики английские: справочник категорий знает и их (inferTags — тот же словарь).
+    cat:cats[0]||"Place",tags:inferTags(hay),cat_tags:uniq([...rubricTags(cats),...inferTags(cats.join(" "))]),
+    primary_tags:rubricTags(cats.slice(0,1)),
+    area:text(x.location?.formatted_address)||CITY.name,metro:"",
+    date_start:null,date_end:null,times:[],hours_label:text(x.hours?.display)||null,open_now:open,
+    price_label:priceTier(x.price),price_min:null,free:false,
+    availability:null,rating:fsqRating(x.rating),rating_count:Number(x.stats?.total_ratings)||0,closed:Boolean(x.date_closed),
+    aggregator_image:photo,aggregator_name:photo?"Foursquare":null,
+    source:link,point_source:link,official_source:site,
+    image_url:null,booking_url:book.url,booking_kind:book.kind,booking_provider:book.provider,
+    phone,desc:cats.length?cats.join(" · "):"Place from Foursquare",keywords:norm(hay),
+    coords:Number.isFinite(lat)&&Number.isFinite(lon)?{lat,lon}:null
+  };
+}
+export async function searchFoursquare(plan,key){
+  if(!key)return {items:[],errors:[],disabled:true};
+  const out=[],errors=[],seen=new Set();
+  for(const q of (plan.placeQueries||[]).slice(0,4)){
+    try{
+      const u=new URL(FOURSQUARE_HOST+"/places/search");
+      const near=searchPoint(plan);
+      const at=near||CITY.center;
+      u.searchParams.set("ll",`${at.lat},${at.lon}`);
+      // Вокруг человека — узко, по городу — широко; «центр» — между ними.
+      u.searchParams.set("radius",String(near?4000:centerFor(plan)?6000:12000));
+      u.searchParams.set("query",q);u.searchParams.set("limit","20");u.searchParams.set("fields",FSQ_FIELDS);
+      const d=await fetchJson(u,{headers:{Authorization:`Bearer ${key}`,"X-Places-Api-Version":FOURSQUARE_VERSION,Accept:"application/json"}});
+      for(const x of (d.results||[])){
+        const id=x&&(x.fsq_place_id||x.fsq_id);
+        if(!id||seen.has(id))continue;
+        seen.add(id);out.push(normalizeFoursquareItem(x,plan));
+      }
+    }catch(e){errors.push(`Foursquare: ${e.message}`)}
+  }
+  return providerResult(out,errors);
+}
 
-const MOSCOW_BBOX = "55.49,37.30,55.96,37.99";
+/* Google Places API (New), Text Search. Ключ: Google Cloud → Places API (New).
+   Фото отдаются только с ключом, поэтому карточке даём адрес без ключа:
+   сервер (/api/gphoto и /api/img) подставляет ключ сам, клиент его не видит. */
+export const GOOGLE_PLACES_URL="https://places.googleapis.com/v1/places:searchText";
+export const GOOGLE_FIELD_MASK="places.id,places.displayName,places.formattedAddress,places.location,places.rating,places.userRatingCount,places.currentOpeningHours,places.regularOpeningHours.weekdayDescriptions,places.internationalPhoneNumber,places.websiteUri,places.priceLevel,places.primaryTypeDisplayName,places.types,places.photos";
+export const GOOGLE_PHOTO_NAME=/^places\/[A-Za-z0-9_-]+\/photos\/[A-Za-z0-9_-]+$/;
+// Публичный адрес кадра без ключа: именно его сервер умеет дополнить ключом.
+export function googlePhotoUrl(name){return GOOGLE_PHOTO_NAME.test(text(name))?`https://places.googleapis.com/v1/${name}/media?maxWidthPx=800`:null}
+const GOOGLE_PRICE={PRICE_LEVEL_FREE:"Free",PRICE_LEVEL_INEXPENSIVE:"$",PRICE_LEVEL_MODERATE:"$$",PRICE_LEVEL_EXPENSIVE:"$$$",PRICE_LEVEL_VERY_EXPENSIVE:"$$$$"};
+export function normalizeGoogleItem(x,plan){
+  const id=text(x.id);
+  const name=text(x.displayName?.text)||"Place";
+  const primary=text(x.primaryTypeDisplayName?.text);
+  // types — машинные имена вроде «shisha_bar»: превращаем в слова для словаря категорий.
+  const types=(Array.isArray(x.types)?x.types:[]).map(t=>text(t).replace(/_/g," ")).filter(t=>t&&!/point of interest|establishment/.test(t));
+  const cats=uniq([primary,...types]);
+  const hay=[name,cats.join(" "),text(x.formattedAddress)].join(" ");
+  const phone=text(x.internationalPhoneNumber)||null;
+  const site=safeLink(x.websiteUri);
+  const lat=Number(x.location?.latitude),lon=Number(x.location?.longitude);
+  const ph=phone?phone.replace(/[^\d+]/g,""):"";
+  const book=ph?{url:`tel:${ph}`,kind:"phone",provider:"телефон"}:site?{url:site,kind:"site",provider:"сайт"}:{url:null,kind:null,provider:null};
+  const link=`https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(id)}`;
+  const photo=(Array.isArray(x.photos)?x.photos:[]).map(p=>googlePhotoUrl(p&&p.name)).find(Boolean)||null;
+  const hours=(x.regularOpeningHours?.weekdayDescriptions||[]).map(text).filter(Boolean).join("; ")||null;
+  const open=typeof x.currentOpeningHours?.openNow==="boolean"?x.currentOpeningHours.openNow:null;
+  const rating=Number(x.rating);
+  return {
+    id:`google:place:${id}`,provider:"Google",live:true,kind:"venue",name,organizer:name,
+    cat:primary||cats[0]||"Place",tags:inferTags(hay),cat_tags:uniq([...rubricTags(cats),...inferTags(cats.join(" "))]),
+    primary_tags:rubricTags(cats.slice(0,1)),
+    area:text(x.formattedAddress)||CITY.name,metro:"",
+    date_start:null,date_end:null,times:[],hours_label:hours,open_now:open,
+    price_label:GOOGLE_PRICE[text(x.priceLevel)]||null,price_min:null,free:false,
+    availability:null,rating:Number.isFinite(rating)&&rating>0?Math.round(rating*10)/10:null,rating_count:Number(x.userRatingCount)||0,
+    closed:/CLOSED_PERMANENTLY|CLOSED_TEMPORARILY/.test(text(x.businessStatus)),
+    aggregator_image:photo,aggregator_name:photo?"Google":null,
+    source:link,point_source:link,official_source:site,
+    image_url:null,booking_url:book.url,booking_kind:book.kind,booking_provider:book.provider,
+    phone,desc:cats.length?cats.slice(0,4).join(" · "):"Place from Google Maps",keywords:norm(hay),
+    coords:Number.isFinite(lat)&&Number.isFinite(lon)?{lat,lon}:null
+  };
+}
+export async function searchGooglePlaces(plan,key){
+  if(!key)return {items:[],errors:[],disabled:true};
+  const out=[],errors=[],seen=new Set();
+  for(const q of (plan.placeQueries||[]).slice(0,4)){
+    try{
+      const near=searchPoint(plan);const at=near||CITY.center;
+      const body={textQuery:`${q} ${CITY.nameEn}`,maxResultCount:20,languageCode:CITY.lang,
+        locationBias:{circle:{center:{latitude:at.lat,longitude:at.lon},radius:near?4000:centerFor(plan)?6000:12000}}};
+      const d=await fetchJson(GOOGLE_PLACES_URL,{method:"POST",body:JSON.stringify(body),
+        headers:{"Content-Type":"application/json","X-Goog-Api-Key":key,"X-Goog-FieldMask":GOOGLE_FIELD_MASK}});
+      for(const x of (d.places||[])){
+        if(!x||!x.id||seen.has(x.id))continue;
+        seen.add(x.id);out.push(normalizeGoogleItem(x,plan));
+      }
+    }catch(e){errors.push(`Google Places: ${e.message}`)}
+  }
+  return providerResult(out,errors);
+}
+
+
+// Рамки Overpass «юг,запад,север,восток» — из конфигурации города.
+const CITY_BBOX = bboxString(CITY.bbox);
 const OVERPASS_TIMEOUT_S=12;
 // Версия формата карточки. Поднимайте её, когда меняется то, что кладут
 // normalize*-функции: это разом обесценивает файловый кеш.
 const ITEM_SCHEMA=3;
-// Центр — примерно кольцо радиусом 5 км вокруг Кремля: Садовое и ближние районы.
-const CENTER_BBOX = "55.71,37.55,55.80,37.69";
-export function wantsCenter(area){return /центр/.test(text(area).toLowerCase())}
+// Центр — в Москве примерно кольцо радиусом 5 км вокруг Кремля: Садовое и ближние районы.
+const CENTER_BBOX = bboxString(CITY.centerBbox);
+export function wantsCenter(area){return /центр|\bcent(?:er|re)\b|downtown/i.test(text(area))}
 function centerFor(plan){return wantsCenter(plan.area)&&!(plan.near&&plan.userLocation)}
 // Точка человека сужает область поиска только когда он сам попросил «рядом».
 // Иначе «бар в центре» из Кузьминок искался вокруг Кузьминок, а «планетарий»
@@ -511,7 +652,7 @@ function osmAddress(t={}){
     t["addr:street"] && [t["addr:street"],t["addr:housenumber"]].filter(Boolean).join(", "),
     t["addr:place"], t["addr:suburb"]
   ].filter(Boolean);
-  return parts.join(" · ") || "Москва";
+  return parts.join(" · ") || CITY.name;
 }
 function osmSource(x){return `https://www.openstreetmap.org/${x.type}/${x.id}`}
 function messagingUrl(v,type){
@@ -599,7 +740,7 @@ export function osmFilters(plan){
 // остаётся запасным путём. Файл подменяется целиком при пересборке, поэтому
 // следим за временем изменения и переоткрываем — иначе сервер продолжал бы
 // читать удалённый файл по старому дескриптору до перезапуска.
-const SNAPSHOT_FILE=process.env.OSM_SNAPSHOT||join(fileURLToPath(new URL(".",import.meta.url)),"data","osm_moscow.db");
+const SNAPSHOT_FILE=process.env.OSM_SNAPSHOT||join(fileURLToPath(new URL(".",import.meta.url)),"data",CITY.snapshotFile);
 export const SNAPSHOT_STATUS_FILE=SNAPSHOT_FILE.replace(/\.db$/,"")+".status.json";
 let snapCache={handle:null,mtime:0,checked:0};
 export function getSnapshot({now=Date.now,file=SNAPSHOT_FILE}={}){
@@ -661,7 +802,7 @@ export async function searchOSM(plan,opts={}){
   // Знаем, где человек, — ищем вокруг него (~6 км), а не по всей Москве.
   const u=searchPoint(plan);
   const bbox=u?`${(u.lat-0.055).toFixed(4)},${(u.lon-0.095).toFixed(4)},${(u.lat+0.055).toFixed(4)},${(u.lon+0.095).toFixed(4)}`
-    :centerFor(plan)?CENTER_BBOX:MOSCOW_BBOX;
+    :centerFor(plan)?CENTER_BBOX:CITY_BBOX;
   // Overpass просили считать до 18 с, а клиент обрывал на 6.5 с: тяжёлые запросы
   // всегда падали по таймауту и накручивали предохранителю отказы. Сводим вместе.
   // «out … 80» без qt отдавал 80 объектов с наименьшими id — самые давно
@@ -687,9 +828,9 @@ export async function searchOSM(plan,opts={}){
    у OpenStreetMap точнее координаты и структурные теги, у 2GIS — рейтинг,
    фото, часы и контакты. */
 const FROM_2GIS=["rating","rating_count","aggregator_image","aggregator_name",
-  "hours_label","phone","booking_url","booking_kind","booking_provider","closed"];
-// Источники, которые дополняют карточку с карты: 2GIS и Яндекс Карты.
-export const ENRICH_PROVIDERS=new Set(["2GIS","Яндекс Карты"]);
+  "hours_label","phone","booking_url","booking_kind","booking_provider","closed","price_label","open_now"];
+// Источники, которые дополняют карточку с карты: 2GIS, Яндекс Карты, Foursquare, Google.
+export const ENRICH_PROVIDERS=new Set(["2GIS","Яндекс Карты","Foursquare","Google"]);
 const isEnrich=x=>ENRICH_PROVIDERS.has(x.provider);
 function mergePlaces(a,b){
   const from2=isEnrich(b)&&!isEnrich(a)?b:isEnrich(a)&&!isEnrich(b)?a:isEnrich(a)&&isEnrich(b)?b:null;
@@ -720,13 +861,16 @@ const LIVE_TTL_MS=10*60_000;          // свежий ответ переисп�
 const LIVE_STALE_MS=6*60*60_000;      // при сбое источника отдаём сохранённый ответ до 6 часов
 const BREAKER={failures:3,cooldownMs:5*60_000};
 const CACHE_FILE=process.env.NODE_ENV==="test"?null:join(fileURLToPath(new URL(".",import.meta.url)),"data","live_cache.json");
-const PROVIDER_LABEL={kudago:"KudaGo",timepad:"Timepad",osm:"OpenStreetMap/Overpass",dgis:"2GIS",yandex:"Яндекс Карты"};
+const PROVIDER_LABEL={kudago:"KudaGo",timepad:"Timepad",osm:"OpenStreetMap/Overpass",dgis:"2GIS",yandex:"Яндекс Карты",foursquare:"Foursquare",google:"Google Places"};
+// Слоты, которые есть всегда (Москва), плюс те, что добавляет город.
+const BASE_SLOTS=["kudago","timepad","osm","dgis","yandex"];
+const EXTRA_SLOTS=["foursquare","google"].filter(placesOn);
 let liveCache=null;
 // Состояние источников: какой из них сейчас отключён предохранителем и почему.
 // Иначе «часть источников временно недоступна» в интерфейсе ничем не объяснить.
 export function providerHealth(){
   const out={};
-  for(const n of ["kudago","timepad","osm","dgis","yandex"]){
+  for(const n of [...BASE_SLOTS,...EXTRA_SLOTS]){
     const b=breakerStatus(n,{cooldownMs:BREAKER.cooldownMs});
     out[n]={ok:!b.open,failures:b.failures,last_error:b.lastError||null,retry_in_sec:Math.round(b.retryInMs/1000)};
     // Заблокированный ключ — не временный сбой: предохранитель будет размыкаться
@@ -734,6 +878,11 @@ export function providerHealth(){
     if(n==="dgis"&&/apiKeyIsBlocked|key is blocked/i.test(b.lastError||""))out[n].key_blocked=true;
   }
   if(!process.env.TIMEPAD_TOKEN)out.timepad={...out.timepad,ok:false,disabled:true,reason:"нет TIMEPAD_TOKEN — Timepad требует токен (dev.timepad.ru)"};
+  // Источник, которого в этом городе нет, — не сбой, а настройка.
+  for(const n of ["kudago","timepad"])if(!eventsOn(n))out[n]={...out[n],ok:false,disabled:true,reason:`не используется в городе ${CITY.name}`};
+  for(const n of ["dgis","yandex"])if(!placesOn(n))out[n]={...out[n],ok:false,disabled:true,reason:`не используется в городе ${CITY.name}`};
+  if(placesOn("foursquare")&&!process.env.FOURSQUARE_API_KEY)out.foursquare={...out.foursquare,ok:false,disabled:true,reason:"нет FOURSQUARE_API_KEY"};
+  if(placesOn("google")&&!process.env.GOOGLE_PLACES_API_KEY)out.google={...out.google,ok:false,disabled:true,reason:"нет GOOGLE_PLACES_API_KEY"};
   return out;
 }
 export function getLiveCache(){return liveCache||(liveCache=createCache({ttlMs:LIVE_TTL_MS,staleMs:LIVE_STALE_MS,file:CACHE_FILE}))}
@@ -746,13 +895,17 @@ function cacheKeyFor(name,plan,hasKey){
   // Точка округлена до ~1 км: соседние запросы из одного двора делят кеш,
   // а выдача другого района в него не попадает.
   const pt=plan.userLocation?[Math.round(plan.userLocation.lat*100)/100,Math.round(plan.userLocation.lon*60)/60]:null;
-  const base={v:ITEM_SCHEMA,t:plan.tags,c:centerFor(plan),loc:searchPoint(plan)?pt:null,n:Boolean(searchPoint(plan))};
+  // Город — в ключе только когда он не Москва: файловый кеш общий, а
+  // ключи Москвы менять незачем.
+  const base={v:ITEM_SCHEMA,...(CITY.id==="moscow"?{}:{city:CITY.id}),t:plan.tags,c:centerFor(plan),loc:searchPoint(plan)?pt:null,n:Boolean(searchPoint(plan))};
   const part={
     kudago:{e:plan.eventQueries.slice(0,3),p:plan.placeQueries.slice(0,3),f:plan.freeOnly,d:plan.targetDate},
     timepad:{e:plan.eventQueries.length?plan.eventQueries.slice(0,3):[plan.coreQuery||""],d:plan.targetDate,f:plan.freeOnly,m:plan.maxPrice},
     osm:{f:osmFilters(plan)},
     dgis:{p:plan.placeQueries.slice(0,4),k:!!hasKey},
-    yandex:{p:plan.placeQueries.slice(0,4),k:!!hasKey}
+    yandex:{p:plan.placeQueries.slice(0,4),k:!!hasKey},
+    foursquare:{p:plan.placeQueries.slice(0,4),k:!!hasKey},
+    google:{p:plan.placeQueries.slice(0,4),k:!!hasKey}
   }[name];
   return `${name}:${JSON.stringify({...base,...part})}`;
 }
@@ -782,27 +935,42 @@ async function cachedProvider(name,key,fn,{cache,now,breaker}){
 // opts: {providers:{kudago,timepad,osm,dgis}, cache, now, breaker} — для тестов и прогрева.
 export async function searchLiveInventory(args={},env=process.env,opts={}){
   const plan=buildSearchPlan(args);
-  const P={kudago:searchKudago,timepad:searchTimepad,osm:searchOSM,dgis:search2GIS,yandex:searchYandexPlaces,...(opts.providers||{})};
+  const P={kudago:searchKudago,timepad:searchTimepad,osm:searchOSM,dgis:search2GIS,yandex:searchYandexPlaces,
+    foursquare:searchFoursquare,google:searchGooglePlaces,...(opts.providers||{})};
   const ctx={cache:opts.cache||getLiveCache(),now:opts.now||Date.now,breaker:{...BREAKER,...(opts.breaker||{})}};
   const dgisKey=env.DGIS_API_KEY||env.TWOGIS_API_KEY||"";
   const timepadToken=env.TIMEPAD_TOKEN||"";
   const yandexKey=env.YANDEX_MAPS_API_KEY||"";
+  const fsqKey=env.FOURSQUARE_API_KEY||"";
+  const googleKey=env.GOOGLE_PLACES_API_KEY||"";
   const skipEvents=plan.serviceOnly;
   const none={items:[],errors:[],from_cache:false,degraded:false,disabled:true};
-  const [k,t,o,d,y]=await Promise.all([
-    skipEvents?none:cachedProvider("kudago",cacheKeyFor("kudago",plan),()=>P.kudago(plan),ctx),
-    skipEvents?none:cachedProvider("timepad",cacheKeyFor("timepad",plan),()=>P.timepad(plan,timepadToken),ctx),
+  // Источник включён, если его перечислил город — или тест подменил его явно
+  // (opts.providers): тесты описывают поведение слота, а не города.
+  const injected=(n)=>Boolean(opts.providers&&opts.providers[n]);
+  const evOn=(n)=>injected(n)||eventsOn(n);
+  const plOn=(n)=>injected(n)||placesOn(n);
+  const [k,t,o,d,y,f,g]=await Promise.all([
+    skipEvents||!evOn("kudago")?none:cachedProvider("kudago",cacheKeyFor("kudago",plan),()=>P.kudago(plan),ctx),
+    skipEvents||!evOn("timepad")?none:cachedProvider("timepad",cacheKeyFor("timepad",plan),()=>P.timepad(plan,timepadToken),ctx),
     // Снимок читается до предохранителя: три сбоя сети размыкали цепь, и пять
     // минут все поиски мест отвечали пустотой, хотя SQLite ответил бы сразу.
     snapshotFirst(plan,opts)||cachedProvider("osm",cacheKeyFor("osm",plan),()=>P.osm(plan),ctx),
-    dgisKey?cachedProvider("dgis",cacheKeyFor("dgis",plan,true),()=>P.dgis(plan,dgisKey),ctx):{items:[],errors:[],from_cache:false,degraded:false,disabled:true},
+    dgisKey&&plOn("dgis")?cachedProvider("dgis",cacheKeyFor("dgis",plan,true),()=>P.dgis(plan,dgisKey),ctx):none,
     // Яндекс Карты — основной источник сведений о заведениях (часы, телефон,
     // сайт); 2GIS остаётся дополнительным, если его ключ жив.
-    yandexKey?cachedProvider("yandex",cacheKeyFor("yandex",plan,true),()=>P.yandex(plan,yandexKey),ctx):{items:[],errors:[],from_cache:false,degraded:false,disabled:true}
+    yandexKey&&plOn("yandex")?cachedProvider("yandex",cacheKeyFor("yandex",plan,true),()=>P.yandex(plan,yandexKey),ctx):none,
+    // Foursquare и Google — то же самое для городов без Яндекса и 2GIS.
+    fsqKey&&plOn("foursquare")?cachedProvider("foursquare",cacheKeyFor("foursquare",plan,true),()=>P.foursquare(plan,fsqKey),ctx):none,
+    googleKey&&plOn("google")?cachedProvider("google",cacheKeyFor("google",plan,true),()=>P.google(plan,googleKey),ctx):none
   ]);
-  const items=dedupe([...(d.items||[]),...(y.items||[]),...(o.items||[]),...(k.items||[]),...(t.items||[])]);
+  const items=dedupe([...(d.items||[]),...(y.items||[]),...(f.items||[]),...(g.items||[]),...(o.items||[]),...(k.items||[]),...(t.items||[])]);
   const degraded={kudago:k.degraded,timepad:t.degraded,osm:o.degraded,dgis:d.degraded,yandex:y.degraded};
   const from_cache={kudago:k.from_cache,timepad:t.from_cache,osm:o.from_cache,dgis:d.from_cache,yandex:y.from_cache};
+  // Дополнительные слоты попадают в сводки только там, где они есть, чтобы
+  // московские ответы не менялись.
+  const extra={foursquare:f,google:g};
+  for(const n of Object.keys(extra))if(plOn(n)){degraded[n]=extra[n].degraded;from_cache[n]=extra[n].from_cache}
   // Примечание про источники — только когда не ответил источник, который
   // этому запросу нужен, и найденного мало. Раньше оно вставало, стоило
   // любому из четырёх не ответить: на «бар рядом» человек читал «часть
@@ -813,6 +981,8 @@ export async function searchLiveInventory(args={},env=process.env,opts={}){
   if(plan.placeIntent||!plan.eventIntent)relevant.push(o);
   if(!d.disabled)relevant.push(d);
   if(!y.disabled)relevant.push(y);
+  if(!f.disabled)relevant.push(f);
+  if(!g.disabled)relevant.push(g);
   const relevantDegraded=relevant.filter(x=>x.degraded);
   const thin=items.length<3;
   const anyStale=relevantDegraded.some(x=>x.from_cache);
@@ -822,8 +992,9 @@ export async function searchLiveInventory(args={},env=process.env,opts={}){
     :anyStale?"Часть источников не ответила — показываю сохранённое.":"Часть источников не ответила — показываю, что нашлось.");
   return {
     plan,items,
-    errors:[...(k.errors||[]),...(t.errors||[]),...(o.errors||[]),...(d.errors||[]),...(y.errors||[])],
-    providers:{kudago:!skipEvents,timepad:!skipEvents&&!t.disabled,osm:true,dgis:!d.disabled,yandex:!y.disabled},
+    errors:[...(k.errors||[]),...(t.errors||[]),...(o.errors||[]),...(d.errors||[]),...(y.errors||[]),...(f.errors||[]),...(g.errors||[])],
+    providers:{kudago:!skipEvents&&evOn("kudago"),timepad:!skipEvents&&!t.disabled,osm:true,dgis:!d.disabled,yandex:!y.disabled,
+      ...(plOn("foursquare")?{foursquare:!f.disabled}:{}),...(plOn("google")?{google:!g.disabled}:{})},
     degraded,from_cache,
     note:notes.length?notes.join(" "):null
   };

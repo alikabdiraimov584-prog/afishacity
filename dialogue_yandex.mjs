@@ -10,12 +10,36 @@
 // проверяется тестами без сети и без сервера.
 import {agentSystem,parseAgentReply,toolResultForAgent,CONCIERGE} from "./agent.mjs";
 import {yandexComplete,yandexConfig} from "./yandex.mjs";
+import {LANG} from "./city.mjs";
 
 export const MAX_ROUNDS=3;                    // ход модели + инструмент + вывод
 export const VOICE_ROUNDS=2;                  // вслух: спросил инструмент — ответил
 export const MAX_HISTORY=24;                  // чтобы подсказка не росла бесконечно
 
-const TOOL_MARK="[РЕЗУЛЬТАТ ПОИСКА]";
+// Служебные реплики протокола — на языке модели: русские для Вари, английские для Noor.
+const M=LANG==="en"?{
+  mark:"[SEARCH RESULT]",
+  unavailable:(t)=>`tool "${t}" is unavailable. Answer with what you already know and don't call it again.`,
+  result:"Tell the person about this in your own words. Don't add anything of your own.",
+  failed:"the search didn't work right now. Don't explain why and don't apologise. In one short sentence suggest trying again or rephrasing.",
+  noMoreFailed:"there will be no more tools, and the search didn't work. In one sentence suggest trying again.",
+  noMore:"there will be no more tools. Answer from what's already found, in one or two sentences.",
+  searching:"Searching",
+  foundFallback:"Here's what I found — check the cards.",
+  nothingFallback:"Nothing yet. Try saying it differently?"
+}:{
+  mark:"[РЕЗУЛЬТАТ ПОИСКА]",
+  unavailable:(t)=>`инструмент «${t}» недоступен. Ответь тем, что уже знаешь, и не вызывай его снова.`,
+  result:"Скажи об этом человеку своими словами. Ничего не добавляй от себя.",
+  failed:"поиск сейчас не сработал. Не объясняй причину и не извиняйся. Одним коротким предложением предложи повторить или переформулировать.",
+  noMoreFailed:"больше инструментов не будет, и поиск не сработал. Одной фразой предложи повторить.",
+  noMore:"больше инструментов не будет. Ответь по тому, что уже найдено, одной-двумя фразами.",
+  searching:"Ищу",
+  foundFallback:"Вот что нашлось — смотри карточки.",
+  nothingFallback:"Пока не нашла. Скажи иначе?"
+};
+export const TOOL_MARK=M.mark;
+export const VOICE_FALLBACK={found:M.foundFallback,nothing:M.nothingFallback};
 
 /**
  * «Секунду, смотрю» — это не ответ, а обещание ответа.
@@ -27,7 +51,7 @@ const TOOL_MARK="[РЕЗУЛЬТАТ ПОИСКА]";
  */
 // \b в JavaScript считает границей только край латиницы, поэтому для русских
 // слов он не срабатывает вовсе: «ищу» в конце строки границей не заканчивалось.
-const FILLER_START=/^(?:ладно[,!. ]*|окей[,!. ]*|ок[,!. ]+)?(?:секунд|минут|момент|сейчас|щас|ща(?![а-яё])|подожд|погод|ищу(?![а-яё])|ищем(?![а-яё])|смотрю(?![а-яё])|гляну|глянем|посмотрю|поищу|поищем|проверю)/i;
+const FILLER_START=/^(?:ладно[,!. ]*|окей[,!. ]*|ок[,!. ]+|okay[,!. ]*|ok[,!. ]+|sure[,!. ]*|alright[,!. ]*)?(?:секунд|минут|момент|сейчас|щас|ща(?![а-яё])|подожд|погод|ищу(?![а-яё])|ищем(?![а-яё])|смотрю(?![а-яё])|гляну|глянем|посмотрю|поищу|поищем|проверю|one sec|one moment|just a sec|just a moment|hold on|hang on|let me (?:check|look|see)|checking|looking|searching|give me a (?:sec|moment))/i;
 export function isFiller(say){
   const t=String(say||"").trim();
   if(!t)return true;
@@ -93,12 +117,12 @@ export async function runYandexDialogue(message,history=[],{
 
     const runner=deps[parsed.tool];
     if(typeof runner!=="function"){
-      messages.push({role:"user",text:`${TOOL_MARK} инструмент «${parsed.tool}» недоступен. Ответь тем, что уже знаешь, и не вызывай его снова.`});
+      messages.push({role:"user",text:`${TOOL_MARK} ${M.unavailable(parsed.tool)}`});
       lastWasTool=true;                    // ответа по существу ещё не было
       continue;
     }
 
-    send("status",deps.status?deps.status(parsed.tool,parsed.args):{stage:"searching",text:"Ищу"});
+    send("status",deps.status?deps.status(parsed.tool,parsed.args):{stage:"searching",text:M.searching});
     if(parsed.say)send("break",{});
     toolUsed=true;lastWasTool=true;
     try{
@@ -114,7 +138,7 @@ export async function runYandexDialogue(message,history=[],{
         const found=(out.results||[]).slice(0,5);
         if(found.length||!results.length)results=found;
       }
-      messages.push({role:"user",text:`${TOOL_MARK} ${toolResultForAgent(parsed.tool,out)}\nСкажи об этом человеку своими словами. Ничего не добавляй от себя.`});
+      messages.push({role:"user",text:`${TOOL_MARK} ${toolResultForAgent(parsed.tool,out)}\n${M.result}`});
     }catch(e){
       // Отказ поиска — факт, который агент обязан озвучить, а не замолчать.
       // Но не текстом исключения: «fetch failed» и «504 Gateway Timeout»
@@ -122,7 +146,7 @@ export async function runYandexDialogue(message,history=[],{
       // в лог, человеку — короткое «сейчас не вышло, давай ещё раз».
       console.error("инструмент",parsed.tool,"не сработал:",e&&e.message||e);
       toolFailed=true;
-      messages.push({role:"user",text:`${TOOL_MARK} поиск сейчас не сработал. Не объясняй причину и не извиняйся. Одним коротким предложением предложи повторить или переформулировать.`});
+      messages.push({role:"user",text:`${TOOL_MARK} ${M.failed}`});
     }
   }
 
@@ -131,8 +155,8 @@ export async function runYandexDialogue(message,history=[],{
   // Один добавочный ход без инструментов, чтобы ответ по существу был.
   if(lastWasTool&&!(signal&&signal.aborted)){
     const what=toolFailed
-      ?`${TOOL_MARK} больше инструментов не будет, и поиск не сработал. Одной фразой предложи повторить.`
-      :`${TOOL_MARK} больше инструментов не будет. Ответь по тому, что уже найдено, одной-двумя фразами.`;
+      ?`${TOOL_MARK} ${M.noMoreFailed}`
+      :`${TOOL_MARK} ${M.noMore}`;
     messages.push({role:"user",text:what});
     try{
       const reply=await yandexComplete([{role:"system",text:system},...messages],{cfg,fetchImpl,signal,voice});
@@ -151,7 +175,7 @@ export async function runYandexDialogue(message,history=[],{
   // Что бы ни случилось, вслух должно прозвучать хоть что-то: иначе экран
   // остаётся в «думаю» навсегда, а карточки уже показаны.
   if(voice&&!spoken){
-    const fallback=results.length?"Вот что нашлось — смотри карточки.":"Пока не нашла. Скажи иначе?";
+    const fallback=results.length?M.foundFallback:M.nothingFallback;
     says.push(fallback);say(fallback,false);
   }
   // Вслух итог — только последняя реплика: предыдущие человек уже услышал,

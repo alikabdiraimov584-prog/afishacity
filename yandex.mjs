@@ -16,8 +16,11 @@ const STT_URL="https://stt.api.cloud.yandex.net/speech/v1/stt:recognize";
 const TTS_URL="https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize";
 const TTS_V3_URL="https://tts.api.cloud.yandex.net/tts/v3/utteranceSynthesis";
 
+import {CITY} from "./city.mjs";
+
 // Голоса, которых в первой версии API нет вовсе. Именно они звучат моложе и
 // естественнее — старые голоса первой версии слышно как «робот читает».
+
 export const V3_ONLY_VOICES=new Set(["dasha","julia","lera","masha","alexander","kirill","anton"]);
 
 export const STT_MAX_BYTES=1024*1024;        // предел короткого распознавания
@@ -34,7 +37,10 @@ export function yandexConfig(env=process.env){
     // два предложения, а лишняя секунда молчания в живом диалоге заметнее, чем
     // разница в формулировке. Для переписки остаётся старшая модель.
     voiceModel:env.YANDEX_VOICE_MODEL||"yandexgpt-lite/latest",
-    voice:env.YANDEX_VOICE||"masha",
+    // Голос по умолчанию — из конфигурации города: masha для Москвы, john для Дубая.
+    voice:env.YANDEX_VOICE||CITY.agent.voice||"masha",
+    // Язык распознавания и синтеза: ru-RU для Москвы, en-US для Дубая.
+    lang:env.YANDEX_LANG||CITY.agent.lang||"ru-RU",
     emotion:env.YANDEX_EMOTION||"neutral",
     // Подъём интонационного контура: голос звучит живее и моложе. Только v3.
     pitchShift:Number(env.YANDEX_PITCH_SHIFT||0),
@@ -139,7 +145,7 @@ export async function yandexComplete(messages,{cfg=yandexConfig(),fetchImpl=fetc
  * Распознавание короткой реплики. audio — Buffer с LPCM 16 бит моно.
  * SpeechKit принимает не больше мегабайта и тридцати секунд за раз.
  */
-export async function yandexStt(audio,{cfg=yandexConfig(),fetchImpl=fetch,lang="ru-RU",
+export async function yandexStt(audio,{cfg=yandexConfig(),fetchImpl=fetch,lang=cfg.lang||"ru-RU",
   sampleRateHertz=16000,format="lpcm",timeoutMs=15000,signal=null}={}){
   const buf=Buffer.isBuffer(audio)?audio:Buffer.from(audio||[]);
   if(!buf.length)throw new YandexError("Пустая запись",{status:0});
@@ -234,7 +240,7 @@ function v3Missing(e){
 }
 
 /** Синтез речи. Возвращает Buffer с MP3. */
-export async function yandexTts(text,{cfg=yandexConfig(),fetchImpl=fetch,lang="ru-RU",
+export async function yandexTts(text,{cfg=yandexConfig(),fetchImpl=fetch,lang=cfg.lang||"ru-RU",
   voice,emotion,role,speed,format="mp3",timeoutMs=15000,signal=null}={}){
   const t=String(text||"").trim();
   if(!t)throw new YandexError("Нечего произносить",{status:0});

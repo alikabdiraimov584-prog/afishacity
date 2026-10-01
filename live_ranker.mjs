@@ -1,4 +1,5 @@
-import {parseHours,moscowNow} from "./hours.mjs";
+import {parseHours,localNow} from "./hours.mjs";
+import {CITY,cityDate} from "./city.mjs";
 
 import {CATEGORIES,SERVICE_TAGS} from "./categories.mjs";
 import {tagTitle as tagRu} from "./osm_tags.mjs";
@@ -49,10 +50,11 @@ function termRe(t){
   return re;
 }
 function hasTerm(n,t){return t instanceof RegExp?t.test(n):termRe(t).test(n)}
-// Кремль: точка отсчёта для запросов «в центре».
-const CENTER={lat:55.7539,lon:37.6208};
+// Точка отсчёта для запросов «в центре»: в Москве — Кремль (как и было),
+// в остальных городах — центр из конфигурации.
+const CENTER=CITY.id==="moscow"?{lat:55.7539,lon:37.6208}:CITY.center;
 function requestedTags(query,plan){const n=norm(query),out=[...(plan.tags||[])];for(const [tag,terms] of Object.entries(SYN))if(terms.some(t=>hasTerm(n,t)))out.push(tag);return [...new Set(out)]}
-function moscowDate(){return new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Moscow",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date())}
+const moscowDate=()=>cityDate();
 function itemText(x){return norm([x.name,x.organizer,x.cat,x.area,x.metro,x.desc,x.keywords,(x.tags||[]).join(" ")].filter(Boolean).join(" "))}
 function toMin(t){const m=text(t).match(/^(\d{1,2}):(\d{2})/);return m?+m[1]*60 + +m[2]:null}
 function dateOkay(x,args){
@@ -65,7 +67,7 @@ function timeOkay(x,args){if(!args.after_time||!x.times?.length)return true;cons
 // Если просят другой день без времени, часы не проверяем — «открыто сейчас» ничего не значит.
 function hoursMoment(args){
   const m=text(args.after_time).match(/^(\d{1,2}):(\d{2})/);
-  if(m)return new Date(`${args.target_date||moscowDate()}T${m[1].padStart(2,"0")}:${m[2]}:00+03:00`);
+  if(m)return new Date(`${args.target_date||moscowDate()}T${m[1].padStart(2,"0")}:${m[2]}:00${CITY.utcOffset}`);
   if(args.target_date&&args.target_date!==moscowDate())return null;
   return args.now?new Date(args.now):new Date();
 }
@@ -74,7 +76,7 @@ function venueHours(x,moment){
   const h=parseHours(x.hours_label,moment);
   if(h.open_now===null)return null;
   let closes_in=null;
-  if(h.open_now&&h.closes_at){const t=moscowNow(moment);closes_in=(toMin(h.closes_at)-t.minute+1440)%1440}
+  if(h.open_now&&h.closes_at){const t=localNow(moment);closes_in=(toMin(h.closes_at)-t.minute+1440)%1440}
   return {...h,closes_in};
 }
 function priceOkay(x,args){if(args.max_price_rub===undefined||args.max_price_rub===null)return true;if(x.price_min===null||x.price_min===undefined)return true;return x.price_min<=+args.max_price_rub}
@@ -118,9 +120,12 @@ export function placeDna(x){
 function coordsPair(c){
   if(!c)return null;
   if(Array.isArray(c)&&c.length>=2){
+    // Порядок в массиве неизвестен ([lat,lon] у KudaGo, [lon,lat] у GeoJSON):
+    // угадываем по рамке города с запасом в несколько градусов.
     const a=+c[0],b=+c[1];if(Number.isFinite(a)&&Number.isFinite(b)){
-      if(a>50&&a<60&&b>30&&b<45)return {lat:a,lon:b};
-      if(b>50&&b<60&&a>30&&a<45)return {lat:b,lon:a};
+      const B=CITY.bbox,isLat=v=>v>B.south-5&&v<B.north+5,isLon=v=>v>B.west-5&&v<B.east+5;
+      if(isLat(a)&&isLon(b))return {lat:a,lon:b};
+      if(isLat(b)&&isLon(a))return {lat:b,lon:a};
     }
   }
   const lat=+(c.lat??c.latitude),lon=+(c.lon??c.lng??c.longitude);
@@ -275,7 +280,7 @@ export function rankLive(items,args={},plan={}){
     }
     if(rain&&dna.outdoors>=55)s-=42;
     if(rain&&dna.outdoors<40)s+=8;
-    if(x.live)s+=8;if(/2GIS|Яндекс Карты/.test(x.provider||""))s+=5;
+    if(x.live)s+=8;if(/2GIS|Яндекс Карты|Foursquare|Google/.test(x.provider||""))s+=5;
     const quality=qualityScore(x);
     s+=quality;
     // Место подходит по сопутствующей рубрике, а не по основной: ресторан,

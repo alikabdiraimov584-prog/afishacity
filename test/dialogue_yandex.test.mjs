@@ -2,7 +2,10 @@
 // его сами и возвращаем факты. Сеть подменена, поэтому проверяется сама логика.
 import test from "node:test";
 import assert from "node:assert/strict";
-import {runYandexDialogue,trimHistory,MAX_HISTORY} from "../dialogue_yandex.mjs";
+import {runYandexDialogue,trimHistory,MAX_HISTORY,TOOL_MARK,VOICE_FALLBACK} from "../dialogue_yandex.mjs";
+import {LANG} from "../city.mjs";
+// Проверки текста русской персоны: для английского города (CITY=dubai) они не о том.
+const RU_ONLY={skip:LANG!=="ru"&&"проверка русских формулировок"};
 
 const CFG={key:"k",folder:"f",ready:true,model:"yandexgpt/latest",voice:"alena",
   emotion:"good",temperature:0.3,maxTokens:1500};
@@ -33,7 +36,7 @@ test("агент ищет и рассказывает о найденном", as
   assert.equal(r.results.length,1);
   // Факты попали в диалог как отдельная реплика, а не были выдуманы моделью.
   const second=m.seen[1];
-  assert.ok(second.some(x=>x.role==="user"&&/РЕЗУЛЬТАТ ПОИСКА/.test(x.text)));
+  assert.ok(second.some(x=>x.role==="user"&&x.text.startsWith(TOOL_MARK)));
   assert.ok(second.some(x=>/Ровесник/.test(x.text)));
 });
 
@@ -45,7 +48,7 @@ test("без инструмента разговор заканчивается 
   assert.equal(m.seen.length,1,"лишних обращений к модели быть не должно");
 });
 
-test("отказ поиска агент озвучивает, а не замалчивает", async () => {
+test("отказ поиска агент озвучивает, а не замалчивает", RU_ONLY, async () => {
   const m=model(
     JSON.stringify({say:"Ищу",tool:"recommend_free",args:{query:"бар"}}),
     JSON.stringify({say:"Источник сейчас недоступен, попробуем через минуту",tool:null})
@@ -57,7 +60,7 @@ test("отказ поиска агент озвучивает, а не зама�
     "модель должна узнать причину отказа");
 });
 
-test("несуществующий инструмент не роняет разговор", async () => {
+test("несуществующий инструмент не роняет разговор", RU_ONLY, async () => {
   const m=model(
     JSON.stringify({say:"Сейчас",tool:"сделай_хорошо",args:{}}),
     JSON.stringify({say:"Могу поискать места",tool:null})
@@ -90,10 +93,10 @@ test("цикл не может зациклиться на инструмент�
   // Раунды плюс один заключительный ход без инструментов: иначе, если модель
   // на последнем раунде снова просит поиск, ответа по нему не прозвучит.
   assert.ok(m.seen.length<=4,"обращений к модели не больше раундов + один заключительный");
-  assert.match(m.seen.at(-1).at(-1).text,/больше инструментов не будет/);
+  assert.match(m.seen.at(-1).at(-1).text,/больше инструментов не будет|no more tools/);
 });
 
-test("голосовой режим меняет правила речи в подсказке", async () => {
+test("голосовой режим меняет правила речи в подсказке", RU_ONLY, async () => {
   const m=model(JSON.stringify({say:"Есть три варианта",tool:null}));
   await runYandexDialogue("бар",[],{cfg:CFG,fetchImpl:m.fetchImpl,deps:{},voice:true});
   const system=m.seen[0][0];
@@ -126,7 +129,7 @@ test("история обрезается по границе реплики ч�
   assert.equal(cut[0].role,"user","история начинается с реплики человека");
   // Пара «запрос — результат инструмента» не должна разрываться.
   const withTool=[{role:"user",text:"бар"},{role:"assistant",text:"{}"},
-    {role:"user",text:"[РЕЗУЛЬТАТ ПОИСКА] {}"},{role:"assistant",text:"готово"}];
+    {role:"user",text:TOOL_MARK+" {}"},{role:"assistant",text:"готово"}];
   assert.deepEqual(trimHistory(withTool,2)[0].role,"user");
   assert.ok(!trimHistory(withTool,2)[0].text.startsWith("[РЕЗУЛЬТАТ"),
     "обрезка не начинается с результата без запроса");
@@ -176,13 +179,13 @@ test("вслух агент не ходит к модели третий раз"
   // Два хода с инструментами и один заключительный без них — чтобы человек
   // услышал ответ, а не только «секунду, смотрю».
   assert.equal(m.seen.length,3,"вслух — два хода с поиском плюс заключительный ответ");
-  assert.match(m.seen.at(-1).at(-1).text,/больше инструментов не будет/);
+  assert.match(m.seen.at(-1).at(-1).text,/больше инструментов не будет|no more tools/);
 });
 
 const FEMALE_VOICES=new Set(["alena","jane","omazh","dasha","julia","lera","marina","masha"]);
-const MALE_VOICES=new Set(["filipp","ermil","zahar","madirus","anton","alexander","kirill"]);
+const MALE_VOICES=new Set(["filipp","ermil","zahar","madirus","anton","alexander","kirill","john"]);
 const FEMALE_NAMES=new Set(["Варя","Маша","Рита","Ася","Женя","Ника","Мира"]);
-const MALE_NAMES=new Set(["Савва","Гриша","Тимур","Лёва","Марк","Женя"]);
+const MALE_NAMES=new Set(["Савва","Гриша","Тимур","Лёва","Марк","Женя","Noor"]);
 
 test("пол голоса и имя агента не расходятся", async () => {
   const {CONCIERGE}=await import("../agent.mjs");
@@ -198,7 +201,7 @@ test("пол голоса и имя агента не расходятся", asy
     `голос ${CONCIERGE.voice} мужской, а имя «${CONCIERGE.name}» женское`);
 });
 
-test("описание личности согласовано по роду", async () => {
+test("описание личности согласовано по роду", {skip:LANG!=="ru"&&"в английском род не выражен"}, async () => {
   const {CONCIERGE,agentSystem}=await import("../agent.mjs");
   const female=FEMALE_VOICES.has(CONCIERGE.voice);
   const text=[...CONCIERGE.traits,agentSystem({})].join(" ");
@@ -222,7 +225,7 @@ test("личность и умолчание клиента не разъезж�
   assert.equal(CONCIERGE.voiceRole,yandexConfig({}).role);
 });
 
-test("агент умеет попросить о близости отдельно от центра", async () => {
+test("агент умеет попросить о близости отдельно от центра", RU_ONLY, async () => {
   const {AGENT_TOOLS,agentSystem}=await import("../agent.mjs");
   const rec=AGENT_TOOLS.find(t=>t.name==="recommend_free");
   assert.ok(rec.args.near,"у поиска есть признак близости");
@@ -235,7 +238,7 @@ test("агент умеет попросить о близости отдель�
 // «Нужен слог молодёжный, но не прямо чтобы пиздюк»: две границы сразу,
 // и обе легко потерять при следующей правке подсказки.
 
-test("агент говорит на «ты» и не языком поддержки", async () => {
+test("агент говорит на «ты» и не языком поддержки", RU_ONLY, async () => {
   const {agentSystem}=await import("../agent.mjs");
   const t=agentSystem({voice:true});
   assert.match(t,/На «ты»/);
@@ -245,7 +248,7 @@ test("агент говорит на «ты» и не языком поддер�
   assert.match(t,/Отличный выбор!/,"образец языка поддержки показан как антипример");
 });
 
-test("вторая граница: свой — не значит наглый", async () => {
+test("вторая граница: свой — не значит наглый", RU_ONLY, async () => {
   const {CONCIERGE,agentSystem}=await import("../agent.mjs");
   const never=CONCIERGE.never.join(" ").toLowerCase();
   assert.match(never,/не дерзит/);
@@ -257,7 +260,7 @@ test("вторая граница: свой — не значит наглый",
   assert.match(agentSystem({voice:true}),/это перебор/);
 });
 
-test("сленг дозирован, а не запрещён и не насыпан", async () => {
+test("сленг дозирован, а не запрещён и не насыпан", RU_ONLY, async () => {
   const {agentSystem}=await import("../agent.mjs");
   const t=agentSystem({});
   assert.match(t,/одно на реплику/);
@@ -287,7 +290,7 @@ test("реплика без поиска произносится сразу", a
   assert.deepEqual(seen.map(d=>d.interim),[false],"тут нечего ждать — это и есть ответ");
 });
 
-test("модели уходят только известные факты, без пустот и служебного примечания", async () => {
+test("модели уходят только известные факты, без пустот и служебного примечания", RU_ONLY, async () => {
   const {toolResultForAgent}=await import("../agent.mjs");
   // Жалоба: «постоянно говорит, что у него нет данных». Модели уходили
   // цена:null, часы:null, открыто:"неизвестно" и примечание про источники —
@@ -306,14 +309,14 @@ test("модели уходят только известные факты, бе
   assert.equal(p2.цена,"1500 ₽");assert.equal(p2.открыто_сейчас,true);assert.equal(p2.район,"Китай-город");
 });
 
-test("агенту запрещены фразы про отсутствие данных", async () => {
+test("агенту запрещены фразы про отсутствие данных", RU_ONLY, async () => {
   const {agentSystem}=await import("../agent.mjs");
   const t=agentSystem({voice:true});
   assert.match(t,/«у меня нет данных»/);
   assert.match(t,/Имени и категории достаточно/);
 });
 
-test("рейтинг попадает модели только с числом отзывов", async () => {
+test("рейтинг попадает модели только с числом отзывов", RU_ONLY, async () => {
   const {toolResultForAgent}=await import("../agent.mjs");
   const base={name:"Бар",category:"Бар"};
   const say=(r)=>JSON.parse(toolResultForAgent("recommend_free",{results:[{...base,...r}]})).места[0];
@@ -370,6 +373,6 @@ test("если в конце только обещание, вслух уход�
     emit:(t,d)=>{if(t==="delta")seen.push(d)},deps:{recommend_free:async()=>PLACES}});
   const spoken=seen.filter(d=>!d.interim);
   assert.equal(spoken.length,1);
-  assert.equal(spoken[0].text,"Вот что нашлось — смотри карточки.");
-  assert.equal(out.text,"Вот что нашлось — смотри карточки.");
+  assert.equal(spoken[0].text,VOICE_FALLBACK.found);
+  assert.equal(out.text,VOICE_FALLBACK.found);
 });

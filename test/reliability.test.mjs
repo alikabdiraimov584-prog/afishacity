@@ -1,3 +1,4 @@
+import "./_moscow.mjs";                       // тест про Москву: координаты и часовой пояс
 import test from "node:test";
 import assert from "node:assert/strict";
 import {searchLiveInventory} from "../providers.mjs";

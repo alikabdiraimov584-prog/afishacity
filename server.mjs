@@ -19,6 +19,8 @@ import {rankLive,resultPayload} from "./live_ranker.mjs";
 import {startWarmup} from "./warmup.mjs";
 import {createCache} from "./cache.mjs";
 import {loadDotenv} from "./env.mjs";
+import {CITY} from "./city.mjs";
+import {GOOGLE_PHOTO_NAME} from "./providers.mjs";
 
 const __dirname=fileURLToPath(new URL(".",import.meta.url));
 const PUBLIC=join(__dirname,"public");
@@ -286,7 +288,26 @@ export function pruneImgCache({dir=IMG_DIR,now=Date.now,max=IMG_MAX_FILES,maxByt
   return n;
 }
 
-async function proxyImage(res,raw){
+/* Фото Google Places отдаются только с ключом. Карточке уходит адрес без
+   ключа (places.googleapis.com/v1/places/…/photos/…/media), а ключ подставляет
+   сервер — здесь или в /api/img, куда клиент заворачивает любую картинку.
+   Кеш — по адресу без ключа, так что в файлах ключа тоже нет. */
+function googlePhotoName(raw){
+  let u;try{u=new URL(String(raw))}catch{return null}
+  if(u.hostname!=="places.googleapis.com")return null;
+  const m=u.pathname.match(/^\/v1\/(places\/[A-Za-z0-9_-]+\/photos\/[A-Za-z0-9_-]+)\/media$/);
+  return m?m[1]:null;
+}
+async function proxyGooglePhoto(res,name){
+  const key=process.env.GOOGLE_PLACES_API_KEY||"";
+  if(!key)return send(res,404,"google photos disabled");
+  if(!GOOGLE_PHOTO_NAME.test(String(name||"")))return send(res,400,"bad photo name");
+  const pub=`https://places.googleapis.com/v1/${name}/media?maxWidthPx=800`;
+  return proxyImage(res,pub,{fetchUrl:pub+"&key="+encodeURIComponent(key)});
+}
+// raw — адрес картинки и ключ кеша; fetchUrl — откуда качать на самом деле
+// (совпадает с raw, кроме фото Google, где к адресу добавляется ключ).
+async function proxyImage(res,raw,{fetchUrl=raw}={}){
   const hit=process.env.NODE_ENV==="test"?null:readImgCache(raw);
   if(hit){
     res.writeHead(200,{"Content-Type":hit.type,"Cache-Control":"public, max-age=86400","X-Img-Cache":"hit",
@@ -295,7 +316,7 @@ async function proxyImage(res,raw){
   }
   // Только растровые форматы: SVG — это документ со скриптами, и отданный с
   // нашего адреса он выполнялся бы в нашем origin.
-  const r=await guardedFetch(raw,{maxBytes:IMG_MAX,timeoutMs:IMG_TIMEOUT_MS,
+  const r=await guardedFetch(fetchUrl,{maxBytes:IMG_MAX,timeoutMs:IMG_TIMEOUT_MS,
     accept:t=>RASTER_IMAGE.test(t),headers:{"Accept":"image/avif,image/webp,image/*;q=0.8"}});
   if(!r.ok){
     if(r.reason==="too_large")return send(res,413,"too large");
@@ -452,7 +473,13 @@ async function recommend(args){
   return value;
 }
 
-const recommendTool={
+// Описания инструментов и системная подсказка — парой констант по языку
+// города: русские для Москвы (без изменений), английские для Дубая.
+import {CITY as PROMPT_CITY,LANG as PROMPT_LANG} from "./city.mjs";
+const PROMPT_EN=PROMPT_LANG==="en";
+const PROMPT_CITY_NAME=PROMPT_EN?(PROMPT_CITY.nameEn||"Dubai"):"Москва";
+
+const recommendToolRu={
   name:"recommend_free",
   description:"Ищет реальные заведения и мероприятия Москвы в live-источниках FREE (KudaGo, Timepad, OpenStreetMap, Яндекс Карты, 2GIS). Вызывай перед любой рекомендацией, куда пойти, где поесть, выпить, покурить кальян, послушать музыку, посмотреть событие и т.п. Возвращает только факты из источников.",
   input_schema:{
@@ -471,8 +498,28 @@ const recommendTool={
     required:["query"]
   }
 };
+const recommendToolEn={
+  name:"recommend_free",
+  description:`Searches real venues and events in ${PROMPT_CITY_NAME} across FREE's live sources (OpenStreetMap, Foursquare, Google, Platinumlist). Call it before any recommendation: where to go, eat, drink, smoke shisha, hear music, see an event, get a service. Returns only facts from the sources.`,
+  input_schema:{
+    type:"object",
+    properties:{
+      query:{type:"string",description:"The full meaning of the user's request, in English."},
+      party_size:{type:"integer",minimum:1,maximum:20},
+      after_time:{type:"string",description:"Earliest time HH:MM, if known."},
+      target_date:{type:"string",description:"Date YYYY-MM-DD, if known."},
+      max_price_rub:{type:"integer",minimum:0,description:"Budget per person in AED, if stated."},
+      interests:{type:"array",items:{type:"string"}},
+      exclusions:{type:"array",items:{type:"string"}},
+      area:{type:"string",description:`District or part of ${PROMPT_CITY_NAME} (Downtown, Marina, JBR, DIFC, Business Bay, Jumeirah, Deira, Al Quoz, Palm).`},
+      weather_context:{type:"object",properties:{rain:{type:"boolean"},temperature_c:{type:"number"}},description:"Weather context, if the request needs it."}
+    },
+    required:["query"]
+  }
+};
+const recommendTool=PROMPT_EN?recommendToolEn:recommendToolRu;
 
-const planTool={
+const planToolRu={
   name:"plan_evening",
   description:"Собирает связку из 2–4 точек на вечер (например: ужин → бар → кальян) с реальными местами, временем каждой точки, переходами и маршрутом. Вызывай ТОЛЬКО когда пользователь сам перечислил несколько активностей подряд («поужинать, а потом в бар») или прямо попросил план вечера. Для любого одиночного запроса используй recommend_free.",
   input_schema:{
@@ -489,6 +536,24 @@ const planTool={
     required:["stops"]
   }
 };
+const planToolEn={
+  name:"plan_evening",
+  description:"Builds a chain of 2–4 stops for the evening (e.g. dinner → bar → shisha) with real places, a time for each stop, transfers and a route. Call it ONLY when the user themselves listed several activities in a row (\"dinner, then a bar\") or explicitly asked for an evening plan. For any single request use recommend_free.",
+  input_schema:{
+    type:"object",
+    properties:{
+      stops:{type:"array",minItems:1,maxItems:4,items:{type:"object",properties:{query:{type:"string",description:"What to search for at this step, in English: \"dinner italian restaurant\", \"cocktail bar\", \"shisha lounge\""},duration_min:{type:"integer",minimum:15,maximum:300}},required:["query"]},description:"Stops in order."},
+      start_time:{type:"string",description:"Start of the evening HH:MM. Default 19:00."},
+      target_date:{type:"string",description:"Date YYYY-MM-DD, if known."},
+      party_size:{type:"integer",minimum:1,maximum:20},
+      max_price_rub:{type:"integer",minimum:0,description:"Budget per person for the whole evening in AED, if stated."},
+      anchor:{type:"object",properties:{lat:{type:"number"},lon:{type:"number"}},description:"Starting point: the user's coordinates or the selected place."},
+      area:{type:"string",description:"District, if the user named one."}
+    },
+    required:["stops"]
+  }
+};
+const planTool=PROMPT_EN?planToolEn:planToolRu;
 function planId(){return randomUUID().replace(/-/g,"").slice(0,10)}
 
 // ---- Обложка места ----
@@ -609,7 +674,7 @@ async function planEvening(args,context={}){
   if(context.taste_weights&&typeof context.taste_weights==="object")req.taste_weights=context.taste_weights;
   if(!req.anchor&&context.user_location&&Number.isFinite(+context.user_location.lat))req.anchor={lat:+context.user_location.lat,lon:+context.user_location.lon};
   const now=new Date();
-  const msk=new Intl.DateTimeFormat("ru-RU",{timeZone:"Europe/Moscow",hour:"2-digit",minute:"2-digit",hour12:false}).format(now).split(":").map(Number);
+  const msk=new Intl.DateTimeFormat("ru-RU",{timeZone:CITY.tz,hour:"2-digit",minute:"2-digit",hour12:false}).format(now).split(":").map(Number);
   req.now_min=Math.max(msk[0]*60+msk[1]+30,18*60);
   return buildPlan(req,recommend);
 }
@@ -711,7 +776,7 @@ function dialogueContextSummary(context={}){
 }
 
 // Стабильная часть системного промпта кешируется; изменчивый UI-контекст идёт отдельным блоком после неё.
-const DIALOGUE_SYSTEM=[
+const DIALOGUE_SYSTEM_RU=[
   "Ты FREE — разговорный AI-консьерж по Москве. Ты закрываешь ЛЮБОЙ городской запрос: не только бары, рестораны и события, но и услуги — барбершоп, маникюр, спа, врач, аптека, ветеринар, автосервис, коворкинг, химчистка, ремонт, курсы, отель, парк, каток.",
   "Главный интерфейс — свободный диалог, а не анкета и не фиксированный сценарий.",
   "Понимай обычную человеческую речь, в том числе короткие, разговорные и неидеальные формулировки.",
@@ -733,11 +798,38 @@ const DIALOGUE_SYSTEM=[
   "Если пользователь говорит про чрезмерное количество алкоголя, можно подобрать подходящий бар по атмосфере, но не оптимизируй рекомендации по опасному объёму алкоголя.",
   "Отвечай по-русски, естественно, коротко, без канцелярита. Не используй markdown-разметку: интерфейс показывает обычный текст."
 ].join("\n");
+// Та же подсказка для англоязычного города: структура и правила те же, что в
+// русской, плюс местный контекст (алкоголь только в лицензированных местах,
+// выходные — суббота и воскресенье, жара летом).
+const DIALOGUE_SYSTEM_EN=[
+  `You are FREE — a conversational AI concierge for ${PROMPT_CITY_NAME}. You cover ANY city request: not only bars, restaurants and events, but services too — barbershop, nails, spa, doctor, pharmacy, vet, car service, coworking, laundry, repairs, courses, hotel, park, beach.`,
+  "The main interface is free conversation, not a questionnaire and not a fixed script.",
+  "Understand everyday speech, including short, casual and imperfect phrasing.",
+  "MAIN RULE: show options first, clarify later. As soon as the direction is clear (a drink, food, shisha, an event, dancing) — call recommend_free right away, without waiting for details.",
+  "NEVER ask two questions in a row and never ask a question if you already asked one on the previous turn. Instead of a second question — search.",
+  "Don't ask about budget, area, time or party size unless the user mentioned them. Those are filters, not preconditions for a search.",
+  "A clarifying question is allowed only after cards are shown, as one short phrase, and only if it would really change the picks.",
+  "If the request is completely unclear — ask exactly one question: what they're in the mood for. Then search by what you heard.",
+  "If the user changes topic — e.g. after shisha writes \"now I want to dance\" — that is a new intent. Don't carry the old intent over automatically.",
+  "Use the selected place as context only if the user explicitly links the next request to it with words like \"after that\", \"nearby\", \"and then\", \"continue the evening\".",
+  "When the user asks where to go, eat, drink, smoke shisha, dance, see an event or spend time — call recommend_free once there's enough to go on.",
+  "The default mode is to find ONE place for the task and offer a few options via recommend_free. Don't build an evening plan on your own initiative and don't offer one unasked.",
+  "Call plan_evening ONLY if the user listed two or more activities in a row (\"dinner, then a bar\") or explicitly asked for an evening plan. If they continue the evening after a selected place (selected_place in context) with \"and then\", \"after that\" — that is a regular recommend_free search near that place, not a plan.",
+  "After plan_evening the interface shows a plan card with times and a route. In the text briefly explain the logic: why this order, where it's a walk and where it's a taxi, and what could be swapped. Don't re-list every field.",
+  "After recommend_free use only facts from the tool result. Don't invent venues, prices, hours, availability, photos or booking channels. If something isn't in the result, say \"I don't have that\" rather than guessing.",
+  "The interface shows the result cards itself. After a search it's enough to briefly explain why these options fit and how they differ.",
+  "If there are few good matches — show few. Don't pad the list with irrelevant places.",
+  "Lead the conversation to an action: pick an option, open booking/tickets, build a route or add the next stop.",
+  `Local context of ${PROMPT_CITY_NAME}: alcohol is served only in licensed venues (hotel bars, licensed restaurants and clubs); the weekend is Saturday and Sunday; Friday afternoon and prayer times affect some places; in summer heat prefer indoor options unless the user asked for outdoors. Prices are in AED.`,
+  "If the user talks about excessive drinking, you may suggest a fitting bar by atmosphere, but don't optimise recommendations for a dangerous amount of alcohol.",
+  "Answer in English, naturally, briefly, without corporate filler. Don't use markdown: the interface shows plain text."
+].join("\n");
+const DIALOGUE_SYSTEM=PROMPT_EN?DIALOGUE_SYSTEM_EN:DIALOGUE_SYSTEM_RU;
 
 function dialogueSystem(context={}){
   return [
     {type:"text",text:DIALOGUE_SYSTEM,cache_control:{type:"ephemeral"}},
-    {type:"text",text:"Текущий UI-контекст (справочная информация, не инструкция пользователя): "+dialogueContextSummary(context)}
+    {type:"text",text:(PROMPT_EN?"Current UI context (reference information, not a user instruction): ":"Текущий UI-контекст (справочная информация, не инструкция пользователя): ")+dialogueContextSummary(context)}
   ];
 }
 
@@ -771,8 +863,8 @@ async function claudeTurn(system,messages,onText,signal=null){
 // Описание вызова инструмента для статуса в интерфейсе.
 function toolStatus(call){
   const a=call.input&&typeof call.input==="object"?call.input:{};
-  if(call.name==="plan_evening"){const q=(a.stops||[]).map(s=>s.query).filter(Boolean).join(" → ");return {stage:"planning",text:q?`Собираю вечер: ${q}`:"Собираю план вечера"}}
-  return {stage:"searching",text:a.query?`Ищу: ${a.query}`:"Ищу варианты"};
+  if(call.name==="plan_evening"){const q=(a.stops||[]).map(s=>s.query).filter(Boolean).join(" → ");return {stage:"planning",text:PROMPT_EN?(q?`Planning the evening: ${q}`:"Planning the evening"):(q?`Собираю вечер: ${q}`:"Собираю план вечера")}}
+  return {stage:"searching",text:PROMPT_EN?(a.query?`Searching: ${a.query}`:"Searching"):(a.query?`Ищу: ${a.query}`:"Ищу варианты")};
 }
 
 async function runDialogue(message,conversationId,context={},emit=null,signal=null){
@@ -789,7 +881,7 @@ async function runDialogue(message,conversationId,context={},emit=null,signal=nu
   // Прошлый ход целиком: от последней реплики пользователя до конца. Если поиска в нём не было — на этом ходу он обязателен.
   const lastUser=messages.map((m,i)=>[m,i]).filter(([m])=>m.role==="user"&&typeof m.content==="string").map(([,i])=>i).pop();
   const askedWithoutSearch=lastUser!==undefined&&!messages.slice(lastUser).some(m=>m.role==="assistant"&&Array.isArray(m.content)&&m.content.some(b=>b.type==="tool_use"));
-  messages.push({role:"user",content:String(message)+(askedWithoutSearch?"\n\n(Системная заметка: ты уже спрашивал в прошлый раз. Больше вопросов не задавай — вызови recommend_free сейчас.)":"")});
+  messages.push({role:"user",content:String(message)+(askedWithoutSearch?(PROMPT_EN?"\n\n(System note: you already asked a question last turn. No more questions — call recommend_free now.)":"\n\n(Системная заметка: ты уже спрашивал в прошлый раз. Больше вопросов не задавай — вызови recommend_free сейчас.)"):"")});
 
   let latestResults=[];
   let latestPlan=null;
@@ -854,12 +946,13 @@ async function runDialogue(message,conversationId,context={},emit=null,signal=nu
   let reply=extractText(response);
   const streamedFinal=streamedText.trim().length>0;
   if(response?.stop_reason==="refusal"){
-    reply="С этим запросом помочь не смогу. Давайте подберём что-то другое: место, событие или формат вечера.";
+    reply=PROMPT_EN?"I can't help with that one. Let's pick something else: a place, an event or a format for the evening."
+      :"С этим запросом помочь не смогу. Давайте подберём что-то другое: место, событие или формат вечера.";
   }
   if(!reply){
     reply=latestResults.length
-      ?"Нашёл несколько подходящих вариантов. Посмотрите карточки ниже — помогу выбрать между ними."
-      :"Расскажите чуть подробнее, что сейчас для вас важнее.";
+      ?(PROMPT_EN?"Found a few options that fit. Check the cards below — I'll help you choose.":"Нашёл несколько подходящих вариантов. Посмотрите карточки ниже — помогу выбрать между ними.")
+      :(PROMPT_EN?"Tell me a bit more about what matters most right now.":"Расскажите чуть подробнее, что сейчас для вас важнее.");
   }
 
   store.setConversation(id,conversationTrim(messages),context.user_id||null);
@@ -1023,8 +1116,16 @@ const server=http.createServer(async(req,res)=>{
         voice_ready:Boolean(YANDEX.ready),
         voice_model:YANDEX.ready?`speechkit/${YANDEX.voice}`:null,
         live_session:false,
-        providers:{kudago:true,timepad:Boolean(process.env.TIMEPAD_TOKEN),osm:true,dgis:Boolean(process.env.DGIS_API_KEY||process.env.TWOGIS_API_KEY),
-          yandex_maps:Boolean(process.env.YANDEX_MAPS_API_KEY)},
+        // Город: по этому полю клиент узнаёт язык, валюту, часовой пояс и
+        // какие кнопки такси показывать.
+        city:{id:CITY.id,name:CITY.name,lang:CITY.lang,tz:CITY.tz,currency:CITY.currency,taxi:CITY.taxi,providers:CITY.providers},
+        providers:{kudago:CITY.providers.events.includes("kudago"),timepad:Boolean(process.env.TIMEPAD_TOKEN)&&CITY.providers.events.includes("timepad"),osm:true,
+          dgis:Boolean(process.env.DGIS_API_KEY||process.env.TWOGIS_API_KEY)&&CITY.providers.places.includes("dgis"),
+          yandex_maps:Boolean(process.env.YANDEX_MAPS_API_KEY)&&Boolean(CITY.yandexBbox),
+          foursquare:Boolean(process.env.FOURSQUARE_API_KEY)&&CITY.providers.places.includes("foursquare"),
+          google_places:Boolean(process.env.GOOGLE_PLACES_API_KEY)&&CITY.providers.places.includes("google")},
+        foursquare:{enabled:Boolean(process.env.FOURSQUARE_API_KEY)&&CITY.providers.places.includes("foursquare"),gives:["рейтинг и число оценок","фотографии","часы, телефон и сайт","ценовой уровень"]},
+        google_places:{enabled:Boolean(process.env.GOOGLE_PLACES_API_KEY)&&CITY.providers.places.includes("google"),gives:["рейтинг и число отзывов","фотографии (через /api/gphoto)","часы, телефон и сайт","ценовой уровень"]},
         // Яндекс Карты: часы, телефон, сайт и рубрики заведений. Рейтинга и фото
         // API не отдаёт — это было только у 2GIS.
         yandex_maps:{enabled:Boolean(process.env.YANDEX_MAPS_API_KEY),gives:["часы работы","телефон и сайт","рубрики","точные координаты"]},
@@ -1036,7 +1137,10 @@ const server=http.createServer(async(req,res)=>{
         // Держим на сервере, чтобы подключение к программе Яндекс Go не
         // требовало правки клиентского кода.
         taxi:{ref:process.env.YANDEX_GO_REF||"free",
-          tracking_id:process.env.YANDEX_GO_TRACKING_ID||"1178268795219780156"},
+          tracking_id:process.env.YANDEX_GO_TRACKING_ID||"1178268795219780156",
+          // Какие кнопки такси показывать (из конфигурации города) и
+          // партнёрский client_id Uber, если он есть.
+          providers:CITY.taxi,uber_client_id:process.env.UBER_CLIENT_ID||""},
         provider_health:providerHealth(),
         osm_snapshot:snapshotStatus()
       });
@@ -1194,18 +1298,30 @@ const server=http.createServer(async(req,res)=>{
       // так же, как остальные дорогие маршруты: иначе это бесплатный загрузчик.
       const rl=imageLimiter.check(`ip:${clientKey(req)}`);
       if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return send(res,429,"too many requests")}
-      return proxyImage(res,url.searchParams.get("u")||"");
+      const raw=url.searchParams.get("u")||"";
+      // Фото Google клиент заворачивает сюда же, как любую картинку: ключ
+      // подставляем на сервере.
+      const gname=googlePhotoName(raw);
+      if(gname)return proxyGooglePhoto(res,gname);
+      return proxyImage(res,raw);
+    }
+
+    // Фото Google Places по имени кадра (places/…/photos/…): ключ остаётся на сервере.
+    if(req.method==="GET"&&url.pathname==="/api/gphoto"){
+      const rl=imageLimiter.check(`ip:${clientKey(req)}`);
+      if(!rl.ok){res.setHeader("Retry-After",String(rl.retryAfterSec));return send(res,429,"too many requests")}
+      return proxyGooglePhoto(res,url.searchParams.get("name")||"");
     }
 
     if(req.method==="GET"&&url.pathname==="/api/weather"){
-      const lat=Number(url.searchParams.get("lat")||55.7558),lon=Number(url.searchParams.get("lon")||37.6173);
+      const lat=Number(url.searchParams.get("lat")||CITY.center.lat),lon=Number(url.searchParams.get("lon")||CITY.center.lon);
       if(!Number.isFinite(lat)||!Number.isFinite(lon))return json(res,400,{error:"bad_coordinates"});
       try{
         const u=new URL("https://api.open-meteo.com/v1/forecast");
         u.searchParams.set("latitude",String(lat));u.searchParams.set("longitude",String(lon));
         u.searchParams.set("current","temperature_2m,precipitation,rain");
         u.searchParams.set("hourly","precipitation_probability,rain");
-        u.searchParams.set("forecast_days","3");u.searchParams.set("timezone","Europe/Moscow");
+        u.searchParams.set("forecast_days","3");u.searchParams.set("timezone",CITY.weatherTz);
         const wr=await fetch(u,{signal:AbortSignal.timeout(6000)});if(!wr.ok)throw new Error("weather "+wr.status);
         const w=await wr.json();
         const maxProb=Math.max(0,...(w.hourly?.precipitation_probability||[]).slice(0,48));
@@ -1241,8 +1357,16 @@ export {runDialogue,conversationTrim,recommendTool,planTool,dialogueSystem,share
 if(process.env.NODE_ENV!=="test"){
   server.listen(PORT,HOST,()=>{
     console.log(`FREE v18: http://${HOST}:${PORT}`);
+    console.log(`Город: ${CITY.name} (CITY=${CITY.id}, ${CITY.tz}, ${CITY.lang}), такси: ${CITY.taxi.join(", ")}`);
     console.log("Telegram auth: "+(TG_REQUIRED?"required (TELEGRAM_BOT_TOKEN set)":"off"));
-    console.log("Live providers: KudaGo"+(process.env.TIMEPAD_TOKEN?" + Timepad":"")+" + OpenStreetMap/Overpass"+(process.env.YANDEX_MAPS_API_KEY?" + Яндекс Карты":"")+(process.env.DGIS_API_KEY||process.env.TWOGIS_API_KEY?" + 2GIS":""));
+    const live=["OpenStreetMap/Overpass"];
+    if(CITY.providers.events.includes("kudago"))live.unshift("KudaGo");
+    if(CITY.providers.events.includes("timepad")&&process.env.TIMEPAD_TOKEN)live.push("Timepad");
+    if(CITY.yandexBbox&&process.env.YANDEX_MAPS_API_KEY)live.push("Яндекс Карты");
+    if(CITY.providers.places.includes("dgis")&&(process.env.DGIS_API_KEY||process.env.TWOGIS_API_KEY))live.push("2GIS");
+    if(CITY.providers.places.includes("foursquare"))live.push(process.env.FOURSQUARE_API_KEY?"Foursquare":"Foursquare (нет FOURSQUARE_API_KEY)");
+    if(CITY.providers.places.includes("google"))live.push(process.env.GOOGLE_PLACES_API_KEY?"Google Places":"Google Places (нет GOOGLE_PLACES_API_KEY)");
+    console.log("Live providers: "+live.join(" + "));
     console.log("Диалог: "+(AI_PROVIDER==="claude"?`Claude ${TEXT_MODEL}`:AI_PROVIDER==="yandex"?`YandexGPT, агент ${CONCIERGE.name}`:"сценарный запасной режим (ключей нет)"));
   console.log("Речь: "+(YANDEX.ready?`SpeechKit, голос ${YANDEX.voice}`:"распознавание в браузере"));
     console.log("Voice: browser speech recognition → text dialogue");

@@ -132,6 +132,48 @@ curl -s https://ДОМЕН/api/health | grep -o '"osm_snapshot":{[^}]*}'
 **Зеркала.** Overpass опрашивается по списку зеркал (`OVERPASS_URLS`),
 рабочее запоминается и пробуется первым.
 
+## Дубай
+
+Тот же код обслуживает второй город; выбирается переменной `CITY` в `.env`
+(systemd читает его через `EnvironmentFile`, ничего больше настраивать не
+нужно). Без `CITY` сервер работает как Москва.
+
+**Что вписать в `/opt/afishacity/.env`**
+
+```
+CITY=dubai
+FOURSQUARE_API_KEY=...        # foursquare.com/developers → Places API → Service Key
+GOOGLE_PLACES_API_KEY=...     # Google Cloud → Places API (New) → API key
+UBER_CLIENT_ID=...            # необязательно, developer.uber.com
+```
+
+Что меняется автоматически: язык (английский), часовой пояс `Asia/Dubai`,
+валюта AED, рамка поиска (от Джебель-Али до Дейры), источники мест
+(OpenStreetMap + Foursquare + Google вместо Яндекс/2GIS/KudaGo — Яндекс и
+KudaGo город не покрывают и выключаются), кнопки такси — Uber и Careem
+вместо Яндекс Go, имя файла снимка `data/osm_dubai.db`.
+
+**Снимок мест.** Собирается тем же скриптом, рамка и имя файла берутся из
+`CITY`:
+
+```
+cd /opt/afishacity && sudo -u free CITY=dubai node --no-warnings=ExperimentalWarning scripts/build_osm_snapshot.mjs
+```
+
+Если сервис `free-snapshot` запускается с тем же `.env`, он соберёт снимок
+Дубая сам. Сухая проверка без сети: `CITY=dubai NODE_ENV=test node scripts/build_osm_snapshot.mjs`.
+
+**Проверка**
+
+```
+curl -s https://ДОМЕН/api/health | grep -o '"city":{[^}]*}'
+curl -s https://ДОМЕН/api/health | grep -o '"foursquare":{[^}]*}'
+```
+
+В `city` должно быть `"id":"dubai"`, в `taxi.providers` — `["uber","careem"]`.
+Фото Google Places отдаются через `/api/gphoto` (и через `/api/img`): ключ
+остаётся на сервере, в кеш картинок он не попадает.
+
 ## Голосовой консьерж на Yandex Cloud
 
 Агента зовут **Варя**. Он ведёт разговор, ищет места и собирает маршрут.

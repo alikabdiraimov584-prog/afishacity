@@ -1,6 +1,7 @@
 // Клиент Yandex Cloud. Сеть в тестах подменяется: проверяем форму запроса,
 // разбор ответа и — главное — что ошибки не проглатываются, а называются.
 import test from "node:test";
+import {CITY} from "../city.mjs";
 import assert from "node:assert/strict";
 import {yandexComplete,yandexStt,yandexTts,yandexConfig,modelUri,yandexStatus,YandexError,STT_MAX_BYTES,
   parseV3Audio,V3_ONLY_VOICES,resetTtsEngine,ttsEngineState} from "../yandex.mjs";
@@ -91,13 +92,13 @@ test("синтез речи отдаёт mp3 и обрезает слишком 
 });
 
 test("состояние настроек видно до первого разговора", () => {
-  assert.deepEqual(yandexStatus({}),{ready:false,has_key:false,has_folder:false,model:null,voice:"masha"});
+  assert.deepEqual(yandexStatus({}),{ready:false,has_key:false,has_folder:false,model:null,voice:CITY.agent.voice});
   const s=yandexStatus({YANDEX_API_KEY:"k",YANDEX_FOLDER_ID:"f",YANDEX_VOICE:"zahar"});
   assert.equal(s.ready,true);
   assert.equal(s.model,"gpt://f/yandexgpt/latest");
   assert.equal(s.voice,"zahar","настройка голоса перебивает умолчание");
   assert.deepEqual(yandexStatus({YANDEX_API_KEY:"k"}),
-    {ready:false,has_key:true,has_folder:false,model:null,voice:"masha"},"видно, чего именно не хватает");
+    {ready:false,has_key:true,has_folder:false,model:null,voice:CITY.agent.voice},"видно, чего именно не хватает");
 });
 
 test("обрыв по таймауту сообщается как повторяемая ошибка", async () => {

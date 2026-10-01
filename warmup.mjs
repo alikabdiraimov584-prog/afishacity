@@ -2,8 +2,12 @@
 // последовательно с небольшой паузой — при старте (через 10 с) и затем каждые 30 минут.
 // Отключается переменной окружения FREE_WARMUP=0.
 import {searchLiveInventory} from "./providers.mjs";
+import {CITY} from "./city.mjs";
 
-export const WARMUP_QUERIES=["бар","ресторан","кальянная","стендап","концерт","выставка","спектакль","караоке","ночной клуб","кофейня","свидание","с детьми"];
+// Запросы — на языке города: англоязычному городу русские слова ничего не прогреют.
+export const WARMUP_QUERIES_RU=["бар","ресторан","кальянная","стендап","концерт","выставка","спектакль","караоке","ночной клуб","кофейня","свидание","с детьми"];
+export const WARMUP_QUERIES_EN=["bar","restaurant","shisha lounge","brunch","rooftop bar","nightclub","karaoke","coffee shop","beach club","date night","with kids","spa"];
+export const WARMUP_QUERIES=CITY.lang==="en"?WARMUP_QUERIES_EN:WARMUP_QUERIES_RU;
 
 export function startWarmup({intervalMs=30*60_000,initialDelayMs=10_000,gapMs=1500,queries=WARMUP_QUERIES,search=searchLiveInventory,env=process.env,log=(m)=>console.log(m),unref=true}={}){
   if(String(env.FREE_WARMUP??"")==="0")return {enabled:false,runs:0,stop(){},runOnce:async()=>null};
