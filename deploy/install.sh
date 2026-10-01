@@ -144,13 +144,16 @@ curl -fsS http://127.0.0.1:3000/api/health >/dev/null || { journalctl -u free -n
 echo "   сервис отвечает на 127.0.0.1:3000"
 
 say "Снимок мест: таймер обновления"
+CITY_ID="$(sed -n 's/^CITY=\(.*\)$/\1/p' "$DIR/.env" | tail -1)"; CITY_ID="${CITY_ID:-moscow}"
+SNAP="$DIR/data/osm_${CITY_ID}.db"; SNAP_STATUS="$DIR/data/osm_${CITY_ID}.status.json"
+echo "   город: $CITY_ID"
 cp "$DIR/deploy/free-snapshot.service" /etc/systemd/system/free-snapshot.service
 cp "$DIR/deploy/free-snapshot.timer" /etc/systemd/system/free-snapshot.timer
 systemctl daemon-reload
 systemctl enable -q free-snapshot.timer
 systemctl start free-snapshot.timer
-if [ -s "$DIR/data/osm_moscow.db" ]; then
-  echo "   снимок на месте: $(du -h "$DIR/data/osm_moscow.db" | cut -f1)"
+if [ -s "$SNAP" ]; then
+  echo "   снимок на месте: $(du -h "$SNAP" | cut -f1)"
 elif systemctl is-active --quiet free-snapshot.service; then
   # Повторная установка во время сборки начинала её заново, и снимок не
   # успевал собраться никогда: десятки минут работы отбрасывались каждым
@@ -160,9 +163,9 @@ elif systemctl is-active --quiet free-snapshot.service; then
 else
   # Первая сборка идёт десятки минут, поэтому запускаем её фоном: сервер уже
   # отвечает, просто места пока ищутся через Overpass.
-  if [ -s "$DIR/data/osm_moscow.status.json" ]; then
+  if [ -s "$SNAP_STATUS" ]; then
     echo "   прошлая сборка не удалась:"
-    sed -n 's/.*"reason": *"\([^"]*\)".*/     \1/p' "$DIR/data/osm_moscow.status.json" | head -1
+    sed -n 's/.*"reason": *"\([^"]*\)".*/     \1/p' "$SNAP_STATUS" | head -1
   fi
   echo "   снимка ещё нет — собираю в фоне, места пока ищутся напрямую"
   echo "   следить: journalctl -u free-snapshot -f"

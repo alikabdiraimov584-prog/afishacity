@@ -1,4 +1,4 @@
-# Пересборка локального снимка мест Москвы. Запускается таймером, не сервером:
+# Пересборка локального снимка мест города (CITY из .env). Запускается таймером, не сервером:
 # пользовательский запрос никогда не ждёт выгрузку города.
 [Unit]
 Description=FREE: пересборка снимка мест из OpenStreetMap
@@ -18,6 +18,9 @@ StartLimitBurst=6
 Type=oneshot
 User=free
 WorkingDirectory=/opt/afishacity
+# Город (CITY) и прочие настройки — из того же .env, что у сервиса: без этого
+# сборка всегда шла бы по Москве, даже когда сервер работает на Дубай.
+EnvironmentFile=-/opt/afishacity/.env
 ExecStart=/usr/bin/node --no-warnings=ExperimentalWarning --max-old-space-size=160 scripts/build_osm_snapshot.mjs
 # Фоновая сборка не имеет права мешать живому сервису. Клетки уходят в базу по
 # мере готовности и нигде не копятся, поэтому и ста шестидесяти мегабайт кучи
