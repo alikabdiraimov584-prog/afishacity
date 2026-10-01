@@ -161,7 +161,7 @@ html{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-we
 .hint{font-size:10px;color:#888d95;text-align:center;margin-top:7px}
 .bottom{position:fixed;left:50%;bottom:calc(12px + max(env(safe-area-inset-bottom,0px),var(--sab,0px)));transform:translateX(-50%);width:min(520px,calc(100% - 20px));z-index:60;background:rgba(246,247,248,.86);border:1px solid rgba(255,255,255,.92);box-shadow:0 10px 36px rgba(31,36,46,.12);backdrop-filter:blur(24px);border-radius:22px;padding:7px;display:grid;grid-template-columns:repeat(4,1fr)}
 .nav{border:0;background:transparent;border-radius:15px;padding:8px 4px;color:#777d86;font-size:10px}.nav b{display:block;font-size:17px}.nav.on{background:#111;color:#fff}
-.overlay{display:none;position:fixed;inset:0;z-index:120;background:rgba(228,232,237,.45);backdrop-filter:blur(16px);padding:18px;align-items:center;justify-content:center}.overlay.on{display:flex}
+.overlay{display:none;position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;z-index:9999;background:rgba(228,232,237,.72);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);padding:18px;align-items:center;justify-content:center;transform:translateZ(0);-webkit-overflow-scrolling:touch}.overlay.on{display:flex}
 .sheet{width:min(590px,100%);max-height:90vh;overflow:auto;background:rgba(250,251,252,.94);border:1px solid #fff;border-radius:28px;padding:23px;box-shadow:0 30px 90px rgba(31,36,46,.18)}.close{float:right;width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#fff}.sheet h2{font-size:30px;letter-spacing:-.04em;margin:8px 0}.sheet p{color:#737983;font-size:12px;line-height:1.5}.detailGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0}.detail{background:#fff;border:1px solid var(--line);border-radius:14px;padding:11px;font-size:11px}.sheetActions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.sheetActions button,.sheetActions a{border:1px solid var(--line);background:#fff;color:#222;border-radius:13px;padding:11px;text-align:center;text-decoration:none;font-size:11px;font-weight:700}.sheetActions .primary{background:#111;color:#fff}
 .routeStatus{display:none;position:fixed;left:50%;bottom:104px;transform:translateX(-50%);z-index:170;background:#111;color:#fff;border-radius:14px;padding:11px 14px;font-size:12px}.routeStatus.on{display:block}
 .panel{display:none}.panel.on{display:block;padding-bottom:calc(110px + env(safe-area-inset-bottom,0px))}.panelHeader{padding:30px 0 14px}.panelHeader h2{font-size:36px;letter-spacing:-.05em;margin:6px 0}.list{display:flex;flex-direction:column;gap:9px}.row{background:#fff;border:1px solid var(--line);border-radius:19px;padding:14px;display:flex;justify-content:space-between;gap:12px;align-items:center}.row h3{margin:0 0 4px;font-size:17px}.row p{margin:0;color:#7b8189;font-size:11px}.row button{border:0;background:#111;color:#fff;border-radius:10px;padding:8px 10px;font-size:10px}
@@ -790,18 +790,24 @@ function cards(rs){
 }
 // root задаёт область: карточки живут и в переписке, и на экране разговора,
 // а без области обработчики перевешивались бы на все карточки сразу.
+// Делегирование на документ: в Telegram-вебвью перерисовка пузыря иногда
+// теряет onclick у кнопок, и «Подробнее» молчало. Слушатель на документе
+// переживает любую перерисовку; прямые onclick ниже остаются как ускорение.
+document.addEventListener("click",e=>{
+  const t=e.target instanceof Element?e.target:null;if(!t)return;
+  const d=t.closest("[data-detail]");
+  if(d){if(!$("#detail").classList.contains("on")){e.preventDefault();openDetail(d.dataset.detail)}return}
+  if(t.closest("button,a,input"))return;
+  const card=t.closest(".placeCard");
+  if(card){const id=card.querySelector("[data-detail]")?.dataset.detail;if(id&&!$("#detail").classList.contains("on"))openDetail(id)}
+},true);
 function bindCards(root){
   const scope=root||document;
   const all=(sel)=>[...scope.querySelectorAll(sel)];
   all("[data-book]").forEach(b=>b.onclick=()=>openBooking(b.dataset.book));
   all("[data-pick]").forEach(b=>b.onclick=()=>selectPlace(b.dataset.pick));
-  all("[data-detail]").forEach(b=>b.onclick=()=>openDetail(b.dataset.detail));
-  // Тап по самой карточке (обложка, название, адрес) тоже открывает подробности:
-  // маленькую кнопку внизу в Telegram легко не заметить и не попасть.
-  all(".placeCard").forEach(c=>{if(c.dataset.tapBound)return;c.dataset.tapBound="1";
-    const id=c.querySelector("[data-detail]")?.dataset.detail;if(!id)return;
-    c.style.cursor="pointer";
-    c.addEventListener("click",e=>{if(e.target.closest("button,a"))return;openDetail(id)});});
+  // «Подробнее» и тап по карточке обрабатывает делегированный слушатель выше.
+  all(".placeCard").forEach(c=>{c.style.cursor="pointer"});
   all("[data-route]").forEach(b=>b.onclick=()=>routePlace(b.dataset.route));
   all("[data-save]").forEach(b=>b.onclick=()=>toggleSave(b.dataset.save));
 }
@@ -1372,7 +1378,10 @@ function orderTaxi(items){
 }
 function toggleSave(id){const r=placeById(id);if(!r)return;const i=saved.findIndex(x=>x.id===id);if(i>=0)saved.splice(i,1);else{saved.unshift(r);learn("save",r);haptic()}save();toast(i>=0?"Удалено из сохранённого":"Сохранено")}
 function openDetail(id){
-  const r=placeById(id);if(!r)return;
+  try{openDetailInner(id)}catch(e){toast("Не удалось открыть карточку: "+(e&&e.message||e));console.error(e)}
+}
+function openDetailInner(id){
+  const r=placeById(id);if(!r){toast("Карточка не найдена, повторите поиск");return}
   $("#detail").innerHTML=`<div class="sheet"><button class="close">×</button>
     ${r.image_url?`<div class="placeMedia ${placeEmoji(r).cls}" data-emoji="${placeEmoji(r).emoji}" style="margin:0 0 15px"><img src="${esc(mediaSrc(r))}" alt="" referrerpolicy="no-referrer" onerror="noImg(this)"></div>`:""}
     <div class="eyebrow">${esc(r.kind==="event"?"СОБЫТИЕ":"МЕСТО")}</div><h2>${esc(r.name)}</h2><p>${esc(r.category||"")} · ${esc(r.area||"")}</p>
