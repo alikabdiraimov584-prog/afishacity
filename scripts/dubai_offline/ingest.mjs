@@ -95,17 +95,29 @@ function enStreet(t){
   ARABIC.lastIndex=0;
   if(STREETS[v]){t["addr:street:en"]=STREETS[v];translated++}
 }
+// Только английское имя (name:en без name): в OSM Дубая так записаны Ossiano и
+// CÉ LA VI — снимок требует name и молча выбрасывал такие места.
+function nameFromEn(t){if(!t.name&&t["name:en"]){t.name=t["name:en"];namedFromEn++}}
+let namedFromEn=0,closedDropped=0;
+// free:status=closed (curate.py) — место закрыто навсегда: в карту не попадает.
+// temporarily_closed остаётся с пометкой: о нём спрашивают, и ответ «закрыто
+// до 2027» полезнее, чем «не нашёл».
+const open=(e)=>{if(e.tags?.["free:status"]==="closed"){closedDropped++;return false}return true};
+// Обработка каждого места — цепочка функций (tags, element, category) → void.
+// Новый шаг (часы и цены с сайтов, ссылки на бронь) — ещё одна функция в APPLY.
+const APPLY=[
+  (t,e)=>cleanNames(e),
+  nameFromEn,enStreet,dropBadSite,attachPhoto,
+  // Контора с пометкой «достопримечательность» (муниципалитет, офис) — не
+  // то, куда зовут гулять: пометку снимаем, рубрика остаётся.
+  (t,e)=>{if(t.tourism==="attraction"&&t.office){delete t.tourism;e._notSight=true}},
+  // Место пришло в категорию по имени («Shisha Art»), а своей рубрики в OSM
+  // нет — подписывалось «Venue» и не считалось этой категорией.
+  (t,e,c)=>{if(!t["free:category"]&&!structuralTags(t).length){t["free:category"]=c.tag;labelled++}}
+];
 for(const c of targets){
-  const els=(data[c.tag]||[]).filter(readable);
-  for(const e of els){
-    cleanNames(e);enStreet(e.tags);dropBadSite(e.tags);attachPhoto(e.tags);
-    // Контора с пометкой «достопримечательность» (муниципалитет, офис) — не
-    // то, куда зовут гулять: пометку снимаем, рубрика остаётся.
-    if(e.tags.tourism==="attraction"&&e.tags.office){delete e.tags.tourism;e._notSight=true}
-    // Место пришло в категорию по имени («Shisha Art»), а своей рубрики в OSM
-    // нет — подписывалось «Venue» и не считалось этой категорией.
-    if(!e.tags["free:category"]&&!structuralTags(e.tags).length){e.tags["free:category"]=c.tag;labelled++}
-  }
+  const els=(data[c.tag]||[]).filter(readable).filter(open);
+  for(const e of els)for(const f of APPLY)f(e.tags,e,c);
   if(!els.length)empty.push(c.tag);
   const keep=c.tag==="sights"?els.filter(e=>!e._notSight):els;
   for(let i=0;i<keep.length;i+=2000)total=snap.put(keep.slice(i,i+2000),c.tag);
@@ -113,4 +125,4 @@ for(const c of targets){
 }
 const v=snapshotAcceptable({total,failed:0,targets:targets.length});
 const res=snap.finish({source:"osm+overture"});
-console.log(JSON.stringify({site_photos:SITE_PHOTO.size,with_photo:photos,text_dropped:textDropped,dead_sites:deadSites,foreign_site:foreignDropped,dropped_nonlatin:dropped,labelled,translated,streets:Object.keys(STREETS).length,categories:targets.length,places:res.places,verdict:v,empty,size_mb:+(fs.statSync(OUT).size/1048576).toFixed(1)}));
+console.log(JSON.stringify({site_photos:SITE_PHOTO.size,with_photo:photos,text_dropped:textDropped,dead_sites:deadSites,foreign_site:foreignDropped,dropped_nonlatin:dropped,closed_dropped:closedDropped,named_from_en:namedFromEn,labelled,translated,streets:Object.keys(STREETS).length,categories:targets.length,places:res.places,verdict:v,empty,size_mb:+(fs.statSync(OUT).size/1048576).toFixed(1)}));

@@ -1,4 +1,6 @@
 import json,re,sys,math,duckdb,unicodedata,hashlib,os
+sys.path.insert(0,os.path.dirname(os.path.abspath(__file__)))
+import curate
 S=sys.argv[1]
 osm=json.load(open(f"{S}/dubai_by_cat.json"))
 cfg=json.load(open(f"{S}/cats.json"))
@@ -8,7 +10,9 @@ RULES=[
  ("bar",r"(^|_)(bar|pub|lounge|brewery|beer_garden|wine_bar|cocktail_bar|sports_bar|speakeasy|taproom)$"),
  ("bowling",r"bowling"),("billiards",r"billiard"),("quest",r"escape"),("vr",r"virtual_reality"),
  ("shooting",r"shooting|gun_range|archery"),("karting",r"kart|motor_?sport|raceway|autodrome"),
- ("cinema",r"movie_theat|cinema|drive_in_theat"),("theatre",r"^(?!.*(movie|home_theat|cinema)).*theat(er|re)$|performing_arts|(^|_)opera(_house)?$"),("concert",r"music_venue|concert|stadium|arena"),
+ ("cinema",r"movie_theat|cinema|drive_in_theat"),("theatre",r"^(?!.*(movie|home_theat|cinema)).*theat(er|re)$|performing_arts|(^|_)opera(_house)?$"),
+ # Концерт — только музыкальные площадки: стадионы, арены и крикет-поля сюда не идут.
+ ("concert",r"music_venue|concert_hall|jazz_and_blues|live_music"),
 ("aquapark",r"water_park"),
  ("themepark",r"amusement_park|theme_park|arcade|kids_recreation|trampoline|indoor_playcentre|indoor_play"),
  ("zoo",r"(^|_)zoo|aquarium|wildlife|safari_park"),
@@ -22,7 +26,7 @@ RULES=[
  ("perfume",r"fragrance|perfume|oud"),("jewelry",r"jewel|watch_store|gold"),
  ("hardware",r"hardware_store|home_improvement_store|paint_store|tool_store|diy|building_supply_store|lumber"),
  ("electronics",r"electronics_store|mobile_phone_store|computer_store|camera|audio_visual|appliance_store|video_game_store"),
- ("clothes",r"clothing|apparel|fashion|boutique|shoe_store|bridal|lingerie|uniform_store|sportswear|abaya"),
+ ("clothes",r"clothing|apparel|fashion|boutique|shoe_store|bridal|lingerie|uniform_store|sportswear|abaya|department_store"),
  ("hospital",r"hospital|emergency|urgent_care"),("dentist",r"dent|orthodont"),("pharmacy",r"pharmacy|drug_store|drugstore"),
  ("optics",r"eyewear|optician|optical|optometr"),
  ("clinic",r"outpatient|clinic|naturopath|ayurved|chiropract|acupunct|physiotherap|homeopath|doctors_office|medical_center|health_care$|dermatolog|physical_therapy|laboratory_testing|pediatric|gynecolog|cardiolog|family_practice|general_practice"),
@@ -44,7 +48,7 @@ RULES=[
  ("legal",r"attorney|law_firm|(^|_)law(_|$)|notary|legal"),
  ("carwash",r"car_wash|auto_detailing"),("carrepair",r"automotive_repair|auto_body|tire|automotive_service|car_repair|mechanic|oil_change|car_window"),
  ("fuel",r"gas_station|fuel|ev_charg"),("parking",r"^parking"),
- ("mall",r"shopping_mall|department_store|^shopping$|outlet_mall"),("flowers",r"florist|flowers"),
+ ("mall",r"shopping_mall|outlet_mall"),("flowers",r"florist|flowers"),
  ("gifts",r"gift|souvenir|party_supply|toy_store"),("books",r"book_?store"),
  ("hotel",r"hotel|resort|hostel|^lodging|service_apartment|guest_house|motel|bed_and_breakfast"),
  ("winestore",r"liquor|wine_shop|beer_store|wine_store"),
@@ -67,7 +71,7 @@ NAME_FALLBACK=[(t,re.compile(p,re.I)) for t,p in [
  ("clinic",r"\b(medical cent(er|re)|polyclinic|clinic)\b"),("boat",r"\b(yachts?|boats?|cruises?|dhow|jet ?ski|water ?sports?|kayak)\b"),
  ("tours",r"\b(desert safari|safari|tours?|sightseeing|excursions?|balloon)\b"),("perfume",r"\b(perfumes?|oud|fragrances?|attar)\b"),("bank",r"\b(exchange|remittance)\b")]]
 B2B_NAME=re.compile(r"\b(contracting|contractors?|landscap\w*|construction|maintenance|technical services|manufactur\w*|wholesale|industries|industrial|logistics|freight|cargo|engineering|consultan\w*|real estate|properties|investments?|holding|fit ?out|interiors? design|joinery|scaffold\w*|recruitment|manpower|cleaning services|pest control|facility management|facilities management|welding|machinery|equipment|steel|metals?|chemicals?|plastics?|electromechanical|hvac|elevators?|generators?|scrap|packaging|printing press|transport(?:ation)? (?:llc|co)|shipping (?:llc|co)|ship ?chandl\w*|marine services|publishing|publishers?|printing and publishing|advertising|marketing agency|media production|management training|corporate training|certification|business setup|company formation|visa services|pro services|typing cent(?:er|re)|(?:seafood|foodstuffs?|meat|poultry|vegetables?|fruits?|spices?|rice|sugar) trading|will open|opening soon|coming soon|closed permanently|permanently closed)\b",re.I)
-ELSEWHERE=re.compile(r"abu ?dhabi|abudhabi|ras al ?khaimah|\brak\b|fujairah|\bal ain\b|umm al quwain|lahore|karachi|islamabad|rawalpindi|mumbai|bombay|new delhi|kerala|kochi|hyderabad|bangalore|chennai|cairo|riyadh|jeddah|\bdoha\b|kuwait|bahrain|muscat|ethiopia|addis ababa|nairobi|manila|kathmandu|dhaka|colombo|tehran|istanbul|london|moscow|yas island|yas waterworld",re.I)
+ELSEWHERE=re.compile(r"abu ?dh?abi|abudh?abi|ras al ?khaimah|\brak\b|fujairah|\bal ain\b|umm al quwain|lahore|karachi|islamabad|rawalpindi|mumbai|bombay|new delhi|kerala|kochi|hyderabad|bangalore|chennai|cairo|riyadh|jeddah|\bdoha\b|kuwait|bahrain|muscat|ethiopia|addis ababa|nairobi|manila|kathmandu|dhaka|colombo|tehran|istanbul|london|moscow|yas island|yas waterworld",re.I)
 COURIER=re.compile(r"\b(emirates post|empost|dhl|fedex|aramex|ups|tnt|smsa|courier|post office|postal)\b",re.I)
 VALIDATE={t:re.compile(p,re.I) for t,p in {"planetarium":r"planetar|astronom|observator|space|star|thuraya","golf":r"golf","icerink":r"\bice\b|skat|hockey|rink","climbing":r"climb|boulder|wall|rock|vertical","shooting":r"shoot|gun|range|archery|rifle|pistol|clay","karting":r"kart|karting|raceway|racing|autodrome|speedway|drift|circuit","mall":r"mall|cent(?:er|re)|souk|market|plaza|walk|outlet|galleria|avenue|village|square|boulevard|arcade|emporium|department|store|lafayette|harvey|bloomingdale|debenhams|marks|centrepoint|city","bowling":r"bowl|strike|lanes|games|fun|entertain|arcade","zoo":r"zoo|aquarium|safari|wildlife|bird|butterfly|reptile|farm|animal|green planet|dolphin|crocodile|petting","aquapark":r"water|aqua|wadi|splash|wave|slide","spa":r"\bspa\b|massage|wellness|hammam|\bbath|retreat|sauna|salon|beauty|thai|bali|ayurved|relax|oasis|sense|zen|lotus|therapy|resort|hotel|club","beach":r"beach|bay|cove|shore|plage|lagoon|coast|sand|island|kite|marina|resort|club|la mer|jbr|walk|\bsea\b|nikki|zero gravity|cove|surf|water|park","theatre":r"theat|opera|stage|playhouse|perform|drama|comedy|arts|show|auditorium","museum":r"museum|gallery|heritage|house|history|histor|frame|future|exhibit|centre|center|fort|archive|collection|majlis","vr":r"\bvr\b|virtual","quest":r"escape|quest|room|puzzle|mystery|exit|clue|locked|breakout|hysteria|blackout","karaoke":r"karaoke|sing|ktv|lounge|bar|club|box|room"}.items()}
 VR_NAME=re.compile(r"(^|[^a-z])vr([^a-z0-9]|$)|virtual reality",re.I)
@@ -141,6 +145,8 @@ def clean_addr(a):
   if not re.search(r"[A-Za-z]",a) or a.lower() in("dubai","sharjah","uae","dubai, uae","dubai, united arab emirates","united arab emirates"):return ""
   return a
 PLACE_NAMES={"dubai","dubai uae","uae","united arab emirates","dubai united arab emirates","dubai marina","downtown","downtown dubai","business bay","palm jumeirah","jumeirah","deira","bur dubai","jbr","jlt","al barsha","sharjah","abu dhabi","jumeirah beach residence","jumeirah lake towers","difc","al quoz","dubai hills","dubai creek","dubai creek harbour","city walk","la mer","the palm","palm"}
+PLACE_NAMES|={" ".join(w for w in d["name"].lower().split() if w not in("dubai","the")) for d in cfg.get("districts",[])}
+CUR=curate.Curator(S,cfg,lambda s:norm(s))
 def dist(a,b,c,d):
   return 6371000*2*math.asin(math.sqrt(math.sin(math.radians(c-a)/2)**2+math.cos(math.radians(a))*math.cos(math.radians(c))*math.sin(math.radians(d-b)/2)**2))
 # Индекс OSM-мест по сетке для склейки дублей
@@ -206,15 +212,85 @@ rows=c.execute(f"""SELECT o.id,o.name,{"coalesce(list_filter(n.rules, x -> x.lan
  FROM '{S}/dubai_overture.parquet' o {"LEFT JOIN '"+S+"/dubai_names.parquet' n ON n.id=o.id" if hasn else ""} WHERE confidence>=0.5 AND (operating_status IS NULL OR operating_status='open') ORDER BY confidence DESC""").fetchall()
 # Точки, куда геокодер Overture складывает места без точного адреса
 # («Downtown Dubai», «Bur Dubai»): десятки разных заведений в одной точке.
-# Такие места показывали ложное «0.3 км от вас» — выбрасываем, если в этой
-# точке нет торгового центра (там сотни магазинов стоят законно).
+# Такие места показывали ложное «0.3 км от вас». Что из такой точки оставить —
+# решает проверка стопок ниже (ТЦ и одно здание — законно).
 from collections import Counter
 cc=Counter((round(r[13],4),round(r[14],4)) for r in rows)
-MALLS=[(e.get("lat",e.get("center",{}).get("lat")),e.get("lon",e.get("center",{}).get("lon"))) for k,e in allosm.items() if e["tags"].get("shop") in("mall","department_store") or e["tags"].get("building") in("retail","commercial") and e["tags"].get("shop")]
-def near_mall(la,lo):
-  return any(abs(la-a)<0.002 and abs(lo-b)<0.002 for a,b in MALLS if a is not None)
-DEFAULT_PTS={k for k,n in cc.items() if n>=10 and not near_mall(*k)}
-print("точек-заглушек:",len(DEFAULT_PTS),"мест в них:",sum(cc[k] for k in DEFAULT_PTS),file=sys.stderr)
+LAT=re.compile(r"[A-Za-z]")
+def name_addr(r):
+  nm=r[2] if r[2] and LAT.search(r[2]) else r[1]
+  if nm and not LAT.search(nm):nm=r[10] if r[10] and LAT.search(r[10]) else None
+  a=(r[12] or [{}])[0] or {}
+  return nm or "",clean_addr(", ".join(x for x in[a.get("freeform"),a.get("locality")] if x))
+# Стопка — пять и больше мест Overture в одной точке (до 11 м). Законная, если
+# это одно здание: точка у ТЦ, или у трёх и больше мест в адресе один и тот же
+# ориентир рядом с точкой, или у большинства один адрес. Иначе это точка, куда
+# геокодер сложил места без адреса (20 заведений Dubai Marina в Бур-Дубае), —
+# из неё берём только места, подтверждённые OSM.
+STACKS={k for k,n in cc.items() if n>=5}
+_by={}
+for r in rows:
+  k=(round(r[13],4),round(r[14],4))
+  if k in STACKS:_by.setdefault(k,[]).append(name_addr(r))
+def _addr_core(a):
+  w=[x for x in re.sub(r"[^a-z ]"," ",a.lower()).split() if x not in("dubai","uae","united","arab","emirates","shop","no","floor","unit","ground","first","level","the","of","near","opp","opposite","street","st","road","rd","building","bldg")]
+  return " ".join(w[:3])
+STACK_OK={}
+# Настоящий ТЦ рядом — законная стопка. Только ТЦ с контуром, wikidata или
+# сайтом и «торговым» именем: точки shop=mall из съёмки 2017 года стоят
+# в каждом квартале Дейры и ничего не доказывают.
+REAL_MALLS=[ll for ll,e in(((e.get("lat",e.get("center",{}).get("lat")),e.get("lon",e.get("center",{}).get("lon"))),e) for e in allosm.values())
+  if e["tags"].get("shop")=="mall" and ll[0] is not None and curate.MALL_NAME.search(e["tags"].get("name:en") or e["tags"].get("name") or "")
+  and (e["type"]!="node" or e["tags"].get("wikidata") or e["tags"].get("website"))]
+BLD=re.compile(r"\b(mall|cent(?:re|er)|towers?|plaza|building|bldg|complex|hotel|souq|souk|market|hypermarket|arcade|galleria|residences?|house|court|gate|pavilion)\b",re.I)
+for k,lst in _by.items():
+  if any(abs(k[0]-a)<0.0015 and abs(k[1]-b)<0.0015 for a,b in REAL_MALLS):STACK_OK[k]="mall";continue
+  lm=0
+  for nm,a in lst:
+    txt=curate.fold(nm+" , "+a)
+    if any(rx.search(txt) and dist(k[0],k[1],at[0],at[1])/1000<=rad+CUR.geo.MARGIN_KM for rx,at,rad,_ in CUR.geo.landmarks):lm+=1
+  cores=Counter(_addr_core(a) for nm,a in lst if a)
+  top=cores.most_common(1)[0] if cores else ("",0)
+  if lm>=3 and lm>=0.4*len(lst):STACK_OK[k]="landmark"
+  # Один адрес у большинства — и это здание («Al Fattan Marine Towers»), а не
+  # улица или район («Jumeira Street 1», «Dubai Investment Park-2»).
+  elif top[0] and top[1]>=max(3,0.6*len(lst)) and top[0] not in PLACE_NAMES and any(BLD.search(a) for nm,a in lst if a and _addr_core(a)==top[0]):STACK_OK[k]="same_address"
+print("стопок:",len(STACKS),"мест в них:",sum(cc[k] for k in STACKS),"законных:",len(STACK_OK),dict(Counter(STACK_OK.values())),file=sys.stderr)
+OSM_MALLS=[(la,lo) for la,lo in((e.get("lat",e.get("center",{}).get("lat")),e.get("lon",e.get("center",{}).get("lon"))) for e in allosm.values() if e["tags"].get("shop")=="mall") if la is not None]
+# Настоящие концертные площадки Дубая — их не отсеиваем никогда.
+CONCERT_KEEP=re.compile(r"coca[ -]?cola arena|dubai opera|madinat arena|festival arena|the agenda\b|zabeel theatre",re.I)
+CONCERT_JUNK=re.compile(r"\b(city|mosq|mosque|workshop|services?|school|academy|outsource|aviation|philippines|gardens?|pavilion|convention|exhibition)\b",re.I)
+def fix_tags(tags,nm,cat,conf,lat,lon,contact=True):
+  """Рубрики Overture, которые чаще врут: отель, ТЦ, пляж, концерт."""
+  tags=list(tags)
+  if "hotel" in tags:
+    new,why=curate.hotel_fix(nm,cat)
+    if new is not None:
+      tags=[t for t in new if t]+[t for t in tags if t!="hotel"]
+      stats["hotel:"+why]=stats.get("hotel:"+why,0)+1
+    # Отель из Overture без сайта и телефона — почти всегда двойник известного
+    # отеля с опечаткой, служебное общежитие или так и не построенный проект.
+    elif not contact:
+      tags=[t for t in tags if t!="hotel"];stats["hotel:no_contact"]=stats.get("hotel:no_contact",0)+1
+  if "mall" in tags:
+    f=curate.fold(nm);inside=False
+    for rx,at,rad,_ in CUR.geo.landmarks:
+      m=rx.search(f)
+      if m and re.sub(r"\b(the|dubai|at|in)\b|[^a-z0-9]+"," ",f[:m.start()]).strip():inside=True
+    near=any(abs(lat-a)<0.003 and abs(lon-b)<0.003 and dist(lat,lon,a,b)<300 for a,b in OSM_MALLS)
+    if conf<0.85 or not curate.MALL_NAME.search(nm) or inside or near:
+      tags=[t for t in tags if t!="mall"];stats["mall_rejected"]=stats.get("mall_rejected",0)+1
+  # Пляж — название пляжа и точка у моря («Zumerah Beach» в пустыне — нет).
+  if "beach" in tags and not (curate.BEACH_NAME.search(nm) and (not curate.NOT_BEACH.search(nm) or re.search(r"beach club",nm,re.I)) and CUR.coast.near(lat,lon,500)):
+    tags=[t for t in tags if t!="beach"];stats["beach_rejected"]=stats.get("beach_rejected",0)+1
+  # Концертная площадка — с контактами и без признаков события, школы, «города».
+  if "concert" in tags and not CONCERT_KEEP.search(nm) and (curate.EVENT_NAME.search(nm) or CONCERT_JUNK.search(nm) or not contact or conf<0.75):
+    tags=[t for t in tags if t!="concert"];stats["concert_rejected"]=stats.get("concert_rejected",0)+1
+  out_=[]
+  for t in tags:
+    if t not in out_ and t in VALID:out_.append(t)
+  if not out_:stats["category_rejected"]=stats.get("category_rejected",0)+1
+  return out_
 stats={"overture":len(rows),"merged":0,"added":0,"skipped":0,"nonlatin":0}
 out={t:list(v) for t,v in osm.items()}
 OVGRID={}
@@ -235,6 +311,8 @@ for (oid,name,name_en,cat,basic,alts,conf,webs,phones,socials,brand,bwd,addrs,la
   if not nm:stats["skipped"]+=1;continue
   tags=tags_for(cat,basic,nm,alts)
   if not tags:stats["skipped"]+=1;continue
+  tags=fix_tags(tags,nm,cat,conf,lat,lon,bool(webs or phones))
+  if not tags:continue
   a=(addrs or [{}])[0] or {};addr=clean_addr(", ".join(x for x in[a.get("freeform"),a.get("locality")] if x))
   extra={}
   if phones:extra["phone"]=phones[0]
@@ -244,9 +322,18 @@ for (oid,name,name_en,cat,basic,alts,conf,webs,phones,socials,brand,bwd,addrs,la
   if bwd:extra["brand:wikidata"]=bwd
   cu=cuisine_of([cat,*(alts or [])])
   if cu:extra["cuisine"]=cu
+  # Вне эмирата Дубай (Шарджа, Аджман за границей рамки) — не наш город.
+  if CUR.area.outside(lat,lon):stats["out_of_area"]=stats.get("out_of_area",0)+1;continue
   hit=near_osm(lat,lon,nm)
   nn=norm(nm)
-  if not hit and (round(lat,4),round(lon,4)) in DEFAULT_PTS:stats["default_geo"]=stats.get("default_geo",0)+1;continue
+  if not hit:
+    if curate.ADDR_ELSEWHERE.search(addr):stats["addr_elsewhere"]=stats.get("addr_elsewhere",0)+1;continue
+    # Адрес или имя называют место далеко от точки («Waitrose, Dubai Marina Mall»
+    # в Бур-Дубае, «Ossiano- Atlantis, The Palm» в 30 км от Пальмы).
+    v,why=CUR.geo.verdict(nm,addr,lat,lon)
+    if v=="contra":stats["geo_contradiction"]=stats.get("geo_contradiction",0)+1;CUR.log.append(("geo_contradiction",oid,f"{nm} | {addr} | {why} | {lat:.4f},{lon:.4f}"));continue
+    key=(round(lat,4),round(lon,4))
+    if key in STACKS and key not in STACK_OK:stats["stacked_point"]=stats.get("stacked_point",0)+1;continue
   # Место из другого эмирата или страны с координатами Дубая («Tamaseel Theatre
   # Lahore», «Piercing Abudhabi», «Ice Land Waterpark, Ras Al Khaimah»).
   if not hit and ELSEWHERE.search(nm+" "+addr):stats["elsewhere"]=stats.get("elsewhere",0)+1;continue
@@ -272,12 +359,19 @@ for (oid,name,name_en,cat,basic,alts,conf,webs,phones,socials,brand,bwd,addrs,la
       # имени и 120 м приклеила к Burj Khalifa бренд «OYO».
       if k in("brand","brand:wikidata"):continue
       if k=="addr:full" and any(hit["tags"].get(x) for x in("addr:street","addr:full")):continue
+      # Достопримечательность (Deira Gold Souk, Al Fahidi) — не магазин: телефон
+      # и сайт одноимённой лавки из Overture ей не подходят.
+      ht=hit["tags"]
+      if k in("phone","website","addr:full") and ht.get("wikidata") and (ht.get("tourism") in("attraction","viewpoint") or ht.get("amenity")=="marketplace" or ht.get("historic")):continue
       if not hit["tags"].get(k) and not hit["tags"].get("contact:"+k):hit["tags"][k]=v
     hit["tags"]["source:overture"]=oid
+    hs=CUR.structural(hit["tags"])
     # OSM-место с одним арабским именем получает английское из Overture.
     if not hit["tags"].get("name:en") and not LAT.search(hit["tags"].get("name","")) and LAT.search(nm):hit["tags"]["name:en"]=nm
     stats["merged"]+=1
     for t in tags:
+      # Рубрика Overture не делает ресторан в OSM отелем, а магазин — торговым центром.
+      if t in("hotel","mall","beach","concert") and hs and t not in hs:continue
       if t in out and hit not in out[t] and (hit["type"],hit["id"]) not in seen:out[t].append(hit)
     continue
   ktag,kval=SYN.get(tags[0],("amenity","yes"))
@@ -285,8 +379,12 @@ for (oid,name,name_en,cat,basic,alts,conf,webs,phones,socials,brand,bwd,addrs,la
       "tags":{"name":nm,ktag:kval,"free:category":tags[0],"source":"overture","overture:category":"" if nm in NAMED_OVERRIDE else (cat or basic or ""),**extra}}
   for t in tags:out.setdefault(t,[]).append(el)
   stats["added"]+=1
-json.dump(out,open(f"{S}/dubai_merged.json","w"))
 print(json.dumps(stats))
+out=CUR.run(out)
+print("чистка:",json.dumps(dict(CUR.stats),ensure_ascii=False))
+with open(f"{S}/curate_log.tsv","w",encoding="utf-8") as f:
+  for row in CUR.log:f.write("\t".join(str(x) for x in row)+"\n")
+json.dump(out,open(f"{S}/dubai_merged.json","w"))
 for t in sorted(out,key=lambda t:-len(out[t]))[:90]:
   els=out[t];n=len(els) or 1
   ph=round(100*sum(1 for e in els if e["tags"].get("phone") or e["tags"].get("contact:phone"))/n)

@@ -1,0 +1,17 @@
+{
+  "_about": "Сезонные места Дубая: free:season=\"MM-DD/MM-DD\" (может переходить через год), free:status_note — пояснение, free:status_src — источник. Проверено 2026-10-02. Ski Dubai, Dubai Butterfly Garden и пляжи работают круглый год — их здесь нет.",
+  "rules": [
+    {"match": {"name": "^global village$", "near": [25.0700, 55.3085], "radius_m": 1500},
+     "season": "10-14/05-10",
+     "note": "Season 31 opens 14 October 2026 and runs to May 2027 (closing date not yet announced; Season 30 was extended to 31 May)",
+     "src": "https://www.khaleejtimes.com/uae/dubai-global-village-season-31-opening-key-rules-timings-guide"},
+    {"match": {"name": "miracle garden", "near": [25.0601, 55.2443], "radius_m": 1500},
+     "season": "10-08/05-31",
+     "note": "Season 15 opens 8 October 2026; the garden closes for the summer (season runs October to May)",
+     "src": "https://gulfnews.com/uae/dubai-miracle-garden-season-15-opening-date-announced-heres-when-the-attraction-will-reopen-1.500682598"},
+    {"match": {"name": "^dubai safari( park| zoo)?$|^dubai safari zoo park$", "near": [25.1765, 55.4508], "radius_m": 2500},
+     "season": "10-12/06-01",
+     "note": "Season 8 opens 12 October 2026; the park closes for the summer (last season closed on 1 June)",
+     "src": "https://www.emirates247.com/uae-guide/dubai-safari-park-reopens-october-12-what-to-know-before-you-visit/5625"}
+  ]
+}

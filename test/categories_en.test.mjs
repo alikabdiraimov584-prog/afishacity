@@ -28,6 +28,8 @@ const MUST=[
   ["car wash","carwash"],["petrol station","fuel"],["atm","bank"],
   ["kids activities","family"],["vet clinic","vet"],["coworking","work"],
   ["date night","date"],["birthday party","birthday"],
+  ["nearest metro station","metro"],["where is the metro","metro"],["dubai tram","metro"],["tram stop jbr","metro"],
+  ["live music tonight","concert"],
 ];
 
 const NEVER=[
@@ -36,6 +38,9 @@ const NEVER=[
   ["parking","park"],["park my car","park"],
   ["yogurt","yoga"],["clubhouse sandwich","club"],
   ["business","bar"],
+  // «near the metro» — ищут ресторан, а не станцию; арена — не концерт.
+  ["restaurant near the metro","metro"],["hotel by the metro","metro"],["metro card top up","metro"],
+  ["padel arena","concert"],["laser arena","concert"],
 ];
 
 test("en: категория определяется там, где должна", () => {
