@@ -8,26 +8,39 @@ import {CITY} from "./city.mjs";
 
 function uniq(a){return [...new Set(a.filter(Boolean))]}
 
-const OSM_TAG_MAP=(()=>{
-  const m=new Map();
-  for(const c of CATEGORIES)for(const f of c.osm||[])
-    for(const [,key,op,vals] of f.matchAll(/\["([a-z:_]+)"([=~])"([^"]+)"\]/g)){
-      if(!/^[a-z_|]+$/.test(vals))continue;               // regex по имени — не категория
-      // Одно значение заявляют несколько категорий (hairdresser — и barber, и
-      // beauty), поэтому копим все, иначе последняя затирает предыдущие.
-      for(const v of (op==="~"?vals.split("|"):[vals])){
-        const k=`${key}=${v}`;
-        // Вместе с extraTags категории («nightlife» у бара): иначе бар с латинским
-        // названием, чьё имя не ловится регэкспом, терял баллы за эти теги.
-        m.set(k,uniq([...(m.get(k)||[]),c.tag,...(c.extraTags||[])]));
-      }
+// Каждый фильтр категории — набор условий, которые должны выполняться ВСЕ:
+// «leisure=sports_centre И sport=swimming» — бассейн, а не любой спорткомплекс.
+// Раньше условия разбирались по одному, и любой спорткомплекс становился
+// бассейном, любой фитнес — йогой и спа, любое кафе — местом для работы.
+const OSM_FILTERS=(()=>{
+  const out=[];
+  for(const c of CATEGORIES)for(const f of c.osm||[]){
+    const conds=[];let structural=true;
+    for(const [,key,op,raw] of f.matchAll(/\["([a-z:_]+)"([=~])"([^"]+)"\]/g)){
+      if(op==="~"&&raw==="."){conds.push([key,null]);continue}   // ключ есть, значение любое
+      // Регэкспы фильтров закреплены «^(…)$» (иначе shop~"pet" ловил «carpet»):
+      // для словаря снимаем якоря и берём сами значения.
+      const vals=op==="~"?raw.replace(/^\^\((.*)\)\$$/,"$1"):raw;
+      if(!/^[a-z_|]+$/.test(vals)){structural=false;break}        // regex по имени — не категория
+      conds.push([key,new Set(op==="~"?vals.split("|"):[vals])]);
     }
-  return m;
+    if(!structural||!conds.length)continue;
+    // Вместе с extraTags категории («nightlife» у бара): иначе бар с латинским
+    // названием, чьё имя не ловится регэкспом, терял баллы за эти теги.
+    out.push({conds,tags:[c.tag,...(c.extraTags||[])]});
+  }
+  return out;
 })();
 // Категория места по данным источника, а не по тексту названия.
+// Значения через «;» («climbing;swimming») считаются каждое отдельно.
 export function structuralTags(fields){
-  const out=[];
-  for(const [k,v] of Object.entries(fields||{}))out.push(...(OSM_TAG_MAP.get(`${k}=${v}`)||[]));
+  const f=fields||{};const out=[];
+  const has=(k,set)=>{
+    const v=f[k];if(v===undefined||v===null||v==="")return false;
+    if(!set)return true;
+    return String(v).split(";").some(x=>set.has(x.trim()));
+  };
+  for(const r of OSM_FILTERS)if(r.conds.every(([k,set])=>has(k,set)))out.push(...r.tags);
   return uniq(out);
 }
 
@@ -36,7 +49,10 @@ export function structuralTags(fields){
 export function categoryOsmKeys(c){
   const out=[];
   for(const f of c.osm||[])
-    for(const [,key,op,vals] of f.matchAll(/\["([a-z:_]+)"([=~])"([^"]+)"\]/g)){
+    for(const [,key,op,raw] of f.matchAll(/\["([a-z:_]+)"([=~])"([^"]+)"\]/g)){
+      // Регэкспы фильтров закреплены «^(…)$» (иначе shop~"pet" ловил «carpet»):
+      // для словаря снимаем якоря и берём сами значения.
+      const vals=op==="~"?raw.replace(/^\^\((.*)\)\$$/,"$1"):raw;
       if(!/^[a-z_|]+$/.test(vals))continue;
       for(const v of (op==="~"?vals.split("|"):[vals]))out.push(`${key}=${v}`);
     }

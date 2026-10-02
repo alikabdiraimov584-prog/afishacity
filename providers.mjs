@@ -3,7 +3,7 @@ import {fileURLToPath} from "node:url";
 import {createCache,withBreaker,breakerStatus} from "./cache.mjs";
 
 import {CATEGORIES,SERVICE_TAGS,categoryTags,queriesFor} from "./categories.mjs";
-import {structuralTags,placeTitle} from "./osm_tags.mjs";
+import {structuralTags,placeTitle,tagTitle} from "./osm_tags.mjs";
 import {openSnapshot} from "./osm_snapshot.mjs";
 import {statSync,readFileSync} from "node:fs";
 import {DatabaseSync} from "node:sqlite";
@@ -101,7 +101,7 @@ async function fetchJson(url,opts={}){
 
 // Правила подбора запросов к провайдерам собираются из общего справочника категорий.
 // Поисковые фразы — на языке города: в Дубае «бар», а не «bar», ничего не найдёт.
-const PLACE_RULES = CATEGORIES.map(c=>({re:c.re,queries:queriesFor(c,CITY.lang),tags:[c.tag,...(c.extraTags||[])]}));
+const PLACE_RULES = CATEGORIES.map(c=>({re:c.re,cat:c.tag,queries:queriesFor(c,CITY.lang),tags:[c.tag,...(c.extraTags||[])]}));
 const EVENT_RULES = [
   {re:/стендап|stand\s?up|комед|юмор/, queries:["стендап"], tags:["comedy"]},
   {re:/джаз|jazz/, queries:["джаз"], tags:["jazz","music"]},
@@ -115,7 +115,189 @@ const EVENT_RULES = [
   {re:/космос|планетар|астроном/, queries:["космос"], tags:["space","science"]}
 ];
 
+// Район из запроса («hotel in Marina», «bar in JBR»): точка поиска — центр района.
+function districtOf(q){
+  for(const d of CITY.districts||[])if(d.re.test(q))return d;
+  return null;
+}
+// Кухни: «sushi», «italian», «indian» — не категория, а уточнение внутри «еды».
+// Ищутся по тегу cuisine и по названию, и место не той кухни уходит вниз.
+export const CUISINES=new Set(["sushi","japanese","italian","indian","chinese","thai","lebanese","arabic","arab","emirati","turkish","french","mexican","korean","vietnamese","greek","persian","iranian","pakistani","filipino","american","pizza","steak","steakhouse","seafood","fish","vegan","vegetarian","georgian","russian","spanish","mediterranean","asian","ramen","burger","burgers","bbq","barbecue","shawarma","falafel","indonesian","malaysian","african","ethiopian","brazilian","peruvian","argentinian","syrian","egyptian","moroccan","uzbek","afghan","nepalese","srilankan","german","british","healthy","kebab","noodles","noodle","dimsum","tapas","poke","pasta","biryani","mandi","dumplings","cantonese","sichuan","yemeni","levantine","fusion","breakfast","brunch","tea","dosa","dimsum","tacos","taco","thali","southindian"]);
+// Слова, которые описывают желание, а не название: по ним не ищем в названиях.
+const FOCUS_SKIP=new Set(["cheap","expensive","luxury","luxurious","romantic","quiet","cozy","cosy","family","friendly","late","open","now","top","nice","new","popular","local","authentic","traditional","fancy","budget","affordable","upscale","casual","great","cool","fun","hidden","gem","gems","famous","must","see","visit","worth","free","small","big","beautiful","amazing","awesome","perfect","date","kids","children","couple","couples","group","outdoor","indoor","inside","outside","view","views","terrace","live","music","night","day","weekend","dinner","lunch","city","area","street","near","close","walking","distance","here","there","tonight","today","tomorrow","evening","morning","afternoon","good","best","the","and","for","with","what","where","which","some","any","get","go","going","eat","drink","drinks","try","want","need","like","love","place","places","spot","spots","recommend","suggest","show","find","looking","dubai","uae","can","could","would","will","shall","may","might","must","india","pakistan","philippines","nepal","bangladesh","egypt","uk","usa","abroad","home","country","fine","rental","rentals","south","north","east","west","first","time","should","somewhere","someplace","anywhere","local","locals","hidden","gem","watch","whats","thing","work","working","study","studying","sea","ocean","water","seaside","beachfront","take","bring","read","reading","relax","relaxing","sit","talk","meet","meeting","celebrate","spend","enjoy","explore","taste","watch","listen","play","stay","sunset","sunrise","district","neighborhood","neighbourhood","quarter","public","private","idea","plan","plans","holiday","vacation","parents","mom","dad","mother","father","grandparents","colleagues","team","boss","client","clients","guests","visitors","tourist","tourists","anniversary","occasion","speaking","english","hindi","rainy","sunny","hot","cold","weather","buy","purchase","order","rent","hire","get","make","do","see","visit","monday","tuesday","wednesday","thursday","friday","saturday","sunday","mondays","tuesdays","wednesdays","thursdays","fridays","saturdays","sundays","class","classes","lesson","lessons","session","sessions","course","trip","tour","ticket","tickets","booking","book","reservation","table","seat","seats","option","alone","solo","friend","friends","wife","husband","family","parents","people","guys","girls","hours","late","early","midnight","24h","hour","minutes","away","walk","drive","car","taxi","metro","station","under","over","less","more","much","many","very","really","just","only","also","still","again","another","other","else","different","same","similar","like","good","better","quick","fast","slow","easy","hard"]);
+const SPECIFIC_EN=new Set(["bike","bikes","bicycle","bicycles","scooter","scooters","desert","camping","glamping","spice","spices","dates","eye","eyes","ophthalmologist","dermatologist","dermatology","pediatrician","paediatrician","gynecologist","orthopedic","cardiologist","rooftop","outlet","dolphin","jetski","zipline","dimsum","paddleboarding","lasertag","driving","dosa","surf","kitesurf","dance","dancing","cooking","cookery","pottery","painting","guitar","piano","singing","ballet","salsa","zumba","baking","barista","calligraphy","shoe","shoes","cobbler","abra","coworking","cowork","skydiving","skydive","paragliding","zipline","ziplining","bungee","camel","balloon","helicopter","seaplane","hammam","moroccan","padel","squash","badminton","pickleball","pilates","crossfit","boxing","kickboxing","muay","karate","taekwondo","judo","jiujitsu","bjj","gelato","kunafa","knafeh","baklava","abaya","abayas","kandura","oud","bakhoor","iphone","samsung","sim","kayak","kayaking","paddleboard","jetski","parasailing","flyboard","snorkeling","snorkelling","scuba","fishing","dhow","bowling","billiards","snooker","darts","trampoline","paintball","archery","horse","horseback","riding","polo","cricket","football","basketball","volleyball","surfing","kitesurfing","wakeboarding","sandboarding","quad","buggy","dune","stargazing","massage","facial","waxing","threading","eyebrow","eyelash","lashes","botox","filler","braces","whitening","implant","lasik","tattoo","piercing","henna","manicure","pedicure","balayage","keratin","sauna","jacuzzi","steam","cryotherapy","hijama","acupuncture","physiotherapy","chiropractor"]);
+// Как занятие пишут в названиях: «XLine» — это зиплайн, «Surf School» — сёрфинг.
+export const FOCUS_ALIAS={jetski:["jetski","jet ski"],zipline:["zipline","zip line","xline"],dimsum:["dimsum","dim sum"],
+  paddleboarding:["paddle","sup"],lasertag:["laser tag","lasertag","laser quest"],surfing:["surf"],kitesurfing:["kitesurf","kite surf"],
+  skiing:["ski"],kayaking:["kayak"],snorkeling:["snorkel"],snorkelling:["snorkel"],sandboarding:["sandboard"],wakeboarding:["wakeboard"],
+  skydiving:["skydiv"],paragliding:["paraglid"],driving:["driving"],dosa:["dosa","south indian","udupi"],southindian:["south indian","dosa","udupi"]};
+const NAME_STOP=new Set(["by","sea","ocean","water","view","views","the","a","an","of","to","in","at","on","for","is","are","where","what","how","get","go","going","visit","visiting","ticket","tickets","price","prices","cost","open","opening","hours","time","times","near","me","nearby","best","top","please","show","find","tell","about","i","we","can","do","you","my","our","and","with","from","it","there","here","s"]);
+const FOCUS_GENERIC=new Set(["shop","shops","store","stores","salon","salons","studio","studios","center","centre","centers","centres","venue","venues","lounge","lounges","house","room","rooms","point","service","services","branch","shopping","food","foods","drink","restaurant","restaurants","cafe","cafes","options","option","ideas","idea","activity","activities","thing","things","stuff","experience","experiences","attraction","attractions","sightseeing","entertainment","fun","relax","relaxing","chill"]);
+function wordIsCategory(w){
+  for(const r of PLACE_RULES)if(r.re.test(w))return true;
+  for(const r of EVENT_RULES)if(r.re.test(w))return true;
+  return false;
+}
 export function buildSearchPlan(args={}){
+  const plan=buildSearchPlanBase(args);
+  const qn0=norm(args.query||""),an=norm(args.area||"");
+  // Многословные занятия и кухни — одним словом, чтобы «dim sum», «jet ski»
+  // и «zip line» искались как одно понятие, а не как «dim» и «sum».
+  const qn=CITY.lang==="en"?qn0.replace(/\bdim sum\b/g,"dimsum").replace(/\bjet[ -]?skis?\b/g,"jetski").replace(/\bzip ?lin(?:e|ing)\b/g,"zipline")
+    .replace(/\bstand[ -]?up paddle ?(?:board(?:ing)?)?\b|\bpaddle ?board(?:ing)?\b|\bsup\b/g,"paddleboarding").replace(/\blaser ?(?:tag|quest)\b/g,"lasertag").replace(/\bsouth indian\b/g,"southindian"):qn0;
+  // В Дубае афиши нет: русские событийные правила («стендап» на «stand up
+  // paddle») не должны ни попадать в план, ни добавлять рубрики.
+  if(!(CITY.providers.events||[]).length){
+    const placeTags=new Set(PLACE_RULES.filter(r=>r.re.test(qn0)).flatMap(r=>r.tags));
+    const evTags=new Set(EVENT_RULES.filter(r=>r.re.test(qn0)).flatMap(r=>r.tags));
+    plan.eventQueries=[];plan.eventIntent=false;
+    plan.tags=(plan.tags||[]).filter(t=>!evTags.has(t)||placeTags.has(t));
+  }
+  // Рубрики, которые запрос назвал прямо (без сопутствующих ярлыков вроде
+  // «family» или «beauty»): по ним ранкер отличает точное попадание.
+  plan.cats=[...new Set(PLACE_RULES.filter(r=>r.re.test(qn)).map(r=>r.cat))];
+  // Места за пределами карты Дубая: честно «не здесь», а не похожие названия.
+  if(CITY.lang==="en"){
+    // Названия, которые складываются из слов-рубрик («Dubai Parks and Resorts»,
+    // «Dubai Aquarium», «Dubai Opera»): это имя места, а не «парки и отели».
+    const forced=qn.match(/\b(dubai parks(?: and resorts)?|dubai aquarium|dubai opera|dubai mall|the dubai mall|dubai fountain|dubai frame|dubai marina mall|dubai hills mall|dubai festival city mall|mall of the emirates|ibn battuta(?: mall)?|city centre deira|deira city centre|riverland|bollywood parks|real madrid world|the beach jbr|souk madinat(?: jumeirah)?|box ?park|dubai safari park|dubai miracle garden|miracle garden|dubai butterfly garden|dubai garden glow|dubai dolphinarium|dubai ice rink|ski dubai|wild wadi|aquaventure|img worlds(?: of adventure)?|museum of the future|etihad museum|al shindagha museum|coca.?cola arena|dubai world trade centre)\b/);
+    if(forced){
+      plan.forcedName=forced[1];
+      plan.phrase=forced[1].split(" ").filter(w=>w&&!NAME_STOP.has(w));
+      plan.cats=[];
+    }
+    const out=qn.match(/\b(hatta|abu dhabi|abudhabi|ferrari world|yas island|yas waterworld|warner bros|louvre abu dhabi|sheikh zayed grand mosque|ras al khaimah|jebel jais|fujairah|al ain|khor fakkan|musandam|oman)\b/);
+    if(out)plan.outOfArea=out[1];
+    // «Сопутствующие» рубрики: «family restaurant», «kid friendly beach»,
+    // «gym with a pool» — главное ресторан, пляж, спортзал; дети и бассейн —
+    // пожелание, а не другая категория.
+    if(plan.cats.length>1){
+      const QUAL=new Set(["family","work"]);
+      const main=plan.cats.filter(c=>!QUAL.has(c));
+      if(main.length&&main.length<plan.cats.length){plan.qualCats=plan.cats.filter(c=>QUAL.has(c));plan.cats=main}
+      const withM=qn.match(/\b(?:with|that has|which has|having)\s+(?:a|an|the)?\s*(.+)$/);
+      if(withM){
+        const after=new Set(PLACE_RULES.filter(r=>r.re.test(withM[1])).map(r=>r.cat));
+        const before=new Set(PLACE_RULES.filter(r=>r.re.test(qn.slice(0,withM.index))).map(r=>r.cat));
+        const q2=plan.cats.filter(c=>after.has(c)&&!before.has(c));
+        if(q2.length&&q2.length<plan.cats.length){plan.qualCats=[...new Set([...(plan.qualCats||[]),...q2])];plan.cats=plan.cats.filter(c=>!q2.includes(c))}
+      }
+    }
+  }
+  // Рубрики без своих мест на карте («date», «birthday») ищутся через
+  // настоящие: свидание — рестораны и бары, день рождения — развлечения.
+  // Иначе снимку нечего было отдать, и «cheap date ideas» давал пустоту.
+  if(CITY.lang==="en"){
+    const VIRTUAL={date:["food","bar"],birthday:["family","themepark","food"]};
+    const virt=plan.cats.filter(c=>VIRTUAL[c]);
+    if(virt.length){
+      const add=virt.flatMap(c=>VIRTUAL[c]);
+      plan.cats=[...new Set([...plan.cats.filter(c=>!VIRTUAL[c]),...add])];
+      plan.tags=[...new Set([...(plan.tags||[]),...add])];
+    }
+  }
+  // Уточнения, которые не категория: «late night», «by the sea».
+  plan.upscale=/fine dining|upscale|luxur\w*|michelin|fancy|high.?end|gourmet|classy|elegant|sophisticated/.test(qn);
+  plan.cheap=/\bcheap|budget|affordable|inexpensive|low.?cost|value for money|not expensive/.test(qn);
+  plan.lateNight=/late ?night|after midnight|open late|24 ?(?:h|hrs?|hours?)\b|24\/7|all night|midnight/.test(qn);
+  // «sunset views», «best view of the city»: смотровые площадки и виды.
+  plan.viewAsk=/\b(?:views?|sunset|skyline|panoram\w*|observation)\b/.test(qn);
+  plan.kidsAsk=/\b(?:kids?|children|child|toddlers?|family|families)\b/.test(qn);
+  plan.rooftop=/\broof ?top|\bon the roof|sky ?bar|sky ?lounge/.test(qn);
+  plan.seaside=/by the (?:sea|water|beach)|sea ?view|beach ?front|on the beach|seaside|water ?front|ocean view|overlooking the (?:sea|water)|marina view/.test(qn);
+  // «Центр»/«downtown» в поле area — это рамка центра (centerBbox), её
+  // обрабатывает своя логика; район из area берём только конкретный.
+  const d=districtOf(qn)||(wantsCenter(args.area)?null:districtOf(an));
+  let rest=qn;
+  if(d){
+    plan.userLocation={lat:d.lat,lon:d.lon};plan.near=true;plan.area=plan.area||d.name;plan.district=d.name;
+    rest=qn.replace(d.re," ");
+    // Название района не ищется как слово: «hotel marina» поднимало в выдаче
+    // всё, где в названии «Marina», а не отели в Марине.
+    plan.coreQuery=norm(rest).split(" ").filter(w=>plan.coreQuery.split(" ").includes(w)).join(" ");
+  }
+  // Слова-уточнения: кухня или собственное имя («atlantis hotel», «zuma»).
+  // Им снимок ищет места по названию поверх категории, а ранкер поднимает совпавшие.
+  if(CITY.lang==="en"){
+    const words=norm(rest).split(" ").filter(w=>w.length>=3&&!/[0-9]/.test(w)&&!STOP.has(w)&&!FOCUS_SKIP.has(w));
+    // Кухня — только когда спрашивают про еду или рубрику не назвали вовсе:
+    // «thai massage» — тайский массаж, а не тайская кухня.
+    const FOODISH=new Set(["food","coffee","bakery","pastry","bar","hookah"]);
+    const foodAsk=!plan.cats.length||plan.cats.some(c=>FOODISH.has(c));
+    // «Burj Al Arab»: «arab» после «al» — часть имени, а не кухня.
+    const afterAl=(w)=>new RegExp(`\\bal ${w}\\b`).test(rest);
+    plan.cuisine=foodAsk?words.filter(w=>CUISINES.has(w)&&!afterAl(w)).slice(0,2):[];
+    // «where do locals eat», «local food» — местная кухня: эмиратская и арабская.
+    if(foodAsk&&!plan.cuisine.length&&/\blocals?\b|traditional (?:food|cuisine|dish)|authentic (?:food|cuisine)/.test(qn))plan.cuisine=["arabic"];
+    // Кухня без слова «ресторан» («seafood by the sea», «afternoon tea»,
+    // «sushi») — всё равно запрос про еду; чай и завтрак — ещё и кафе.
+    if(plan.cuisine.length&&!plan.cats.length){
+      const add=plan.cuisine.some(c=>/^(tea|breakfast|brunch)$/.test(c))?["food","coffee","pastry"]:["food"];
+      plan.cats=add;plan.tags=[...new Set([...(plan.tags||[]),...add])];
+      plan.placeIntent=true;
+    }
+    // Слово — часть названия категории, если без него категория теряется:
+    // «water» в «water park», «games» в «vr games» не ищутся по названиям.
+    const ALL_RULES=[...PLACE_RULES,...EVENT_RULES];
+    const rulesOf=(txt)=>ALL_RULES.filter(r=>r.re.test(txt));
+    const baseRules=rulesOf(rest);
+    const partOfCategory=(w)=>{const after=new Set(rulesOf(rest.replace(new RegExp(`(^|\\s)${w}(?=\\s|$)`,"g")," ")));return baseRules.some(r=>!after.has(r))};
+    const named=words.filter(w=>!CUISINES.has(w)&&!FOCUS_GENERIC.has(w)&&!wordIsCategory(w)&&!wordIsCategory(w.replace(/e?s$/,""))&&!partOfCategory(w));
+    // «dubai mall», «dubai opera», «dubai aquarium»: слово «dubai» стоп-слово,
+    // но в паре с категорией это имя собственное — ищем фразой.
+    const pair=norm(rest).match(/\bdubai (mall|opera|aquarium|frame|marina mall|fountain|garden glow|miracle garden|parks|safari park|creek|hills mall|festival city mall|outlet mall|ice rink|museum|zoo|dolphinarium)\b/);
+    const nonFoodCuisine=foodAsk?[]:words.filter(w=>CUISINES.has(w));   // «thai» у массажа — слово названия
+    // Конкретное занятие внутри рубрики: «skydiving» — это «туры», но из всех
+    // туров нужен именно скайдайвинг, а не сафари.
+    const specific=words.filter(w=>SPECIFIC_EN.has(w));
+    plan.focus=[...new Set([...(pair?[pair[0]]:[]),...plan.cuisine,...nonFoodCuisine,...specific,...named])].slice(0,3);
+    plan.focusAlias=Object.fromEntries(plan.focus.filter(w=>FOCUS_ALIAS[w]).map(w=>[w,FOCUS_ALIAS[w]]));
+    // Название места без категории («Ain Dubai», «Ski Dubai», «Global Village»):
+    // ищем по всем словам названия сразу, и совпавшее место выигрывает у баров,
+    // которые раньше подставлялись как «вечер по умолчанию».
+    // Название может включать и слово рубрики: «Atlantis Aquaventure»,
+    // «Pizza Hut», «Museum of the Future» — тогда ищем все слова сразу.
+    // «Dubai Marina Mall», «Jumeirah Mosque», «Madinat Jumeirah»: район —
+    // часть названия, если перед ним нет «in/at/near» — тогда ищем всё имя.
+    {
+      const hitD=d?(qn.match(d.re)||[""])[0].trim():"";
+      const esc=hitD.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+      const districtInName=Boolean(d&&hitD&&!new RegExp(`\\b(?:in|at|near|around|by|on|from)\\s+(?:the\\s+)?(?:dubai\\s+)?${esc}`).test(qn));
+      const src=districtInName?qn:rest;
+      const toks=norm(src).split(/[^a-z0-9]+/).filter(Boolean);
+      const content=toks.filter(w=>w.length>=2&&!NAME_STOP.has(w)&&!(STOP.has(w)&&w!=="dubai")&&!FOCUS_SKIP.has(w)&&!FOCUS_GENERIC.has(w));
+      const distWords=new Set(districtInName?norm(hitD).split(" "):[]);
+      const proper=content.filter(w=>w!=="dubai"&&!CUISINES.has(w)&&!SPECIFIC_EN.has(w)&&!wordIsCategory(w)&&!wordIsCategory(w.replace(/e?s$/,""))&&(distWords.has(w)||!partOfCategory(w)));
+      // «marina hotels», «jbr bars»: район + рубрика — это не имя, а запрос
+      // «отели в Марине». Имя — когда есть своё слово («Madinat») или рубрики нет.
+      const ownWord=proper.some(w=>!distWords.has(w)&&w.length>=3);
+      // Запрос — только название района («Dubai Creek Harbour», «City Walk»):
+      // это «что там есть», а не поиск точки с таким именем.
+      const onlyDistrict=districtInName&&!plan.cats.length&&(norm(d.name).includes(hitD)||hitD.includes(norm(d.name)))&&!norm(rest).split(" ").some(w=>w&&!NAME_STOP.has(w)&&!FOCUS_SKIP.has(w));
+      if(onlyDistrict&&!plan.forcedName){
+        plan.cats=["sights","mall","park","beach","themepark"];
+        plan.tags=[...plan.cats,"food"];plan.placeIntent=true;plan.onlyDistrict=true;
+      }
+      const enough=onlyDistrict?false:districtInName?content.length>=2&&(ownWord||!plan.cats.length):proper.some(w=>w.length>=3);
+      if(!plan.forcedName&&enough&&proper.length&&content.length<=4){
+        plan.phrase=[...new Set(content)];
+        // Район остаётся местом поиска («italian restaurant downtown»), а если
+        // в данных есть место с таким именем целиком («Dubai Marina Mall»),
+        // ранкер покажет именно его.
+        if(districtInName)plan.phraseWithDistrict=true;
+      }
+    }
+    // Ни рубрики, ни уточнения («where to take my parents», «what to do»):
+    // раньше шёл поиск по словам названий и находил «Take Home Restaurant».
+    // Теперь — то, что в Дубае показывают гостям: виды, музеи, парки, еда.
+    if(!plan.cats.length&&!plan.focus.length&&!plan.phrase&&!(plan.tags||[]).length){
+      plan.tags=["sights","museum","park","themepark","beach","food"];plan.cats=["sights","museum","park","themepark","beach"];
+      plan.placeIntent=true;plan.generic=true;plan.coreQuery="";
+    }
+  }else{plan.cuisine=[];plan.focus=[]}
+  return plan;
+}
+function buildSearchPlanBase(args={}){
   const q=norm(args.query||"");const placeQueries=[],eventQueries=[],tags=[];
   for(const r of PLACE_RULES)if(r.re.test(q)){placeQueries.push(...r.queries);tags.push(...r.tags)}
   for(const r of EVENT_RULES)if(r.re.test(q)){eventQueries.push(...r.queries);tags.push(...r.tags)}
@@ -154,7 +336,7 @@ export function buildSearchPlan(args={}){
     // а кеш не подсовывает выдачу другого района.
     userLocation:args.user_location&&Number.isFinite(+args.user_location.lat)&&Number.isFinite(+args.user_location.lon)
       ?{lat:+args.user_location.lat,lon:+args.user_location.lon}:null,
-    near:args.near===true||/ближайш|поблизости|рядом|недалеко|неподалёку|неподалеку|от меня|пешком|близко|в шаговой/.test(q),
+    near:args.near===true||/ближайш|поблизости|рядом|недалеко|неподалёку|неподалеку|от меня|пешком|близко|в шаговой|near me|nearby|nearest|closest|walking distance|around here/.test(q),
     heavyDrinkingPhrase:/выпить.*(много|сильно)|напиться|в хлам/.test(q)
   };
 }
@@ -648,13 +830,43 @@ export async function overpassQuery(query,{timeoutMs,signal=null,fetchJsonImpl=f
 // Фильтры OpenStreetMap — из того же справочника.
 const OSM_RULES = CATEGORIES.filter(c=>c.osm&&c.osm.length).map(c=>({re:c.re,filters:c.osm,tag:c.tag}));
 
+const NON_LATIN_ADDR=/[\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF\u0400-\u04FF]/;
 function osmAddress(t={}){
+  // В англоязычном городе берём английские варианты полей, а части только
+  // по-арабски пропускаем: «شارع الدوحة» в карточке человеку не прочесть.
+  const en=CITY.lang==="en";
+  const pick=(k)=>{const v=(en&&t[k+":en"])||t[k];return en&&v&&NON_LATIN_ADDR.test(v)?null:v};
+  const street=pick("addr:street");
   const parts=[
-    t["addr:street"] && [t["addr:street"],t["addr:housenumber"]].filter(Boolean).join(", "),
-    t["addr:place"], t["addr:suburb"]
+    street && [street,t["addr:housenumber"]].filter(Boolean).join(", "),
+    pick("addr:place"), pick("addr:suburb")
   ].filter(Boolean);
+  // Полный адрес одной строкой (так его отдаёт Overture: «Marina Byblos Hotel,
+  // Al Hubob St, Dubai Marina»), если разобранного по полям нет.
+  const full=pick("addr:full");
+  if(!parts.length&&full)parts.push(full);
   return parts.join(" · ") || CITY.name;
 }
+// Точная рубрика каталога вместо общей: «Sushi restaurant», «Horse riding»,
+// «Water park» вместо «Restaurant», «Gym», «Zoo». Общие и составные рубрики
+// («sport_or_fitness_facility», «professional_service») не берём.
+const OVERTURE_VAGUE=/(_or_|_and_|service$|services$|^shopping$|^food_and_drink$|organization|facility$|company|business|agency$|^restaurant$|^eat_and_drink$|^arts_and_entertainment$|^active_life$|^beauty_and_spa$|^health_and_medical$|^retail$|^professional|^public_service|^community|^structure|^landmark_and_historical_building$|^historic_site$|^attractions_and_activities$|^topic_concert_venue$|^event_planning$|^b2b|^home_|^real_estate|^financial|^education$)/;
+function overtureTitle(t){
+  if(CITY.lang!=="en")return null;
+  const c=String(t["overture:category"]||"");
+  if(!c||OVERTURE_VAGUE.test(c))return null;
+  const words=c.replace(/_/g," ").trim();
+  if(!words||words.length>32)return null;
+  return words.charAt(0).toUpperCase()+words.slice(1);
+}
+// «japanese;sushi» → «Japanese, sushi».
+function cuisineLabel(v){
+  const parts=String(v||"").split(/[;,]/).map(x=>x.trim().replace(/_/g," ")).filter(Boolean);
+  if(!parts.length)return "";
+  const out=parts.slice(0,3).join(", ");
+  return out.charAt(0).toUpperCase()+out.slice(1);
+}
+function capTitle(v){return v?String(v)[0].toUpperCase()+String(v).slice(1):""}
 function osmSource(x){return `https://www.openstreetmap.org/${x.type}/${x.id}`}
 function messagingUrl(v,type){
   if(!v)return null;v=text(v).trim();
@@ -686,7 +898,9 @@ function normalizeOsmItem(x,plan){
   // нередко по-арабски.
   const name=(CITY.lang==="en"?t["name:en"]||t.name||t.brand:t.name||t["name:ru"]||t.brand)||OSM_NONAME;
   const amenity=t.amenity||t.leisure||t.sport||"place";
-  const hay=[name,t.brand,t.cuisine,amenity,t.description,t["description:ru"],t["smoking"],t["opening_hours"]].filter(Boolean).join(" ");
+  // overture:category («sushi_restaurant», «fast_food_restaurant») — точная
+  // рубрика из каталога: по ней ранкер узнаёт фастфуд и кухню.
+  const hay=[name,t.brand,t.cuisine,amenity,t["overture:category"],t.description,t["description:ru"],t["smoking"],t["opening_hours"]].filter(Boolean).join(" ");
   const site=safeLink(t.website)||safeLink(t["contact:website"])||osmSource(x);
   const cats=CITY.lang==="en"?{
     hookah_lounge:"Hookah lounge",bar:"Bar",pub:"Pub",biergarten:"Bar",nightclub:"Nightclub",
@@ -699,8 +913,14 @@ function normalizeOsmItem(x,plan){
     id:`osm:${x.type}:${x.id}`,provider:"OpenStreetMap",live:true,kind:"venue",name,organizer:t.brand||name,
     // Раньше всё, кроме десятка знакомых значений, называлось «Заведение».
     // Теперь название берётся из справочника по структурному тегу места.
-    cat:cats[amenity]||(/караоке|karaoke/i.test(hay)?L("Караоке","Karaoke"):placeTitle(t))||OSM_NONAME,
-    tags:inferTags(hay),cat_tags:structuralTags(t),area:osmAddress(t),metro:"",
+    // free:category — точная категория места из сборки карты (Overture): без неё
+    // йога-студия подписывалась «Gym», а спа — «Massage» по соседнему тегу.
+    cat:overtureTitle(t)||(t["free:category"]&&capTitle(tagTitle(t["free:category"])))||cats[amenity]||(/караоке|karaoke/i.test(hay)?L("Караоке","Karaoke"):placeTitle(t))||OSM_NONAME,
+    tags:inferTags(hay),cat_tags:t["free:category"]?[...new Set([t["free:category"],...structuralTags(t)])]:structuralTags(t),area:osmAddress(t),metro:"",
+    // Основная рубрика известна только у мест из сборки карты (Overture).
+    // В англоязычном городе и рубрики OSM считаются основными: ресторан
+    // «Golf Club» — ресторан, а не гольф-клуб, и на «golf» идёт ниже настоящих.
+    primary_tags:t["free:category"]?[t["free:category"]]:(CITY.lang==="en"&&structuralTags(t).length?structuralTags(t):undefined),
     // Эти теги приходят в том же ответе и раньше терялись: из них берётся
     // фотография места без обращения к агрегатору.
     wikidata:t.wikidata||null,brand_wikidata:t["brand:wikidata"]||null,
@@ -724,7 +944,7 @@ function normalizeOsmItem(x,plan){
     image_url:null,
     booking_url:directBook||((site!==osmSource(x))?site:null),booking_kind:telegram?"telegram":whatsapp?"whatsapp":reservation?"site":phone?"phone":(site!==osmSource(x)?"site":null),
     booking_provider:telegram?"Telegram":whatsapp?"WhatsApp":phone?L("телефон","phone"):(site!==osmSource(x)?L("официальный сайт","official website"):null),phone,
-    desc:clampText(t.description||t[CITY.lang==="en"?"description:en":"description:ru"]||[t.cuisine,t["opening_hours"]].filter(Boolean).join(" · ")),
+    desc:clampText(t.description||t[CITY.lang==="en"?"description:en":"description:ru"]||[cuisineLabel(t.cuisine),t["opening_hours"]].filter(Boolean).join(" · ")),
     keywords:norm(hay),coords:{lat:x.lat||x.center?.lat||null,lon:x.lon||x.center?.lon||null}
   };
 }

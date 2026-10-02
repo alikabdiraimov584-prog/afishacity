@@ -39,7 +39,7 @@ const GROUP={
   print:"service",bank:"service",post:"service",laundry:"service",tailor:"service",keys:"service",
   phonerepair:"service",photo:"service",legal:"service",carwash:"service",carrepair:"service",
   fuel:"service",parking:"service",petshop:"service",
-  flowers:"shop",gifts:"shop",books:"shop",hotel:"hotel",
+  flowers:"shop",gifts:"shop",books:"shop",hardware:"shop",hotel:"hotel",
   family:"walk",courses:"culture"
 };
 const GLYPH={

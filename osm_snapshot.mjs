@@ -195,7 +195,10 @@ export function createSnapshot(file,{resume=false}={}){
           // ещё одну строку в индексе. Поиск join'ит place_fts с place, поэтому
           // место показывалось в выдаче столько раз, сколько его записали.
           delFts.run(pid);
-          insFts.run(nn,pid);
+          // В индекс поиска — и английское имя (в Дубае name часто по-арабски),
+          // и кухня: «sushi» находит суши-бар, даже если суши нет в названии.
+          const extra=[t["name:en"],t["name:ru"]!==name?t["name:ru"]:"",t.cuisine&&String(t.cuisine).replace(/[;_,]/g," ")].filter(Boolean).join(" ");
+          insFts.run(extra?`${nn} ${norm(extra)}`:nn,pid);
           for(const tg of new Set([...(tag?[tag]:[]),...structuralTags(t)]))insTag.run(tg,pid,lat,lon);
           stored++;
         }
@@ -288,6 +291,41 @@ export function openSnapshot(file,{now=Date.now}={}){
         :center?CENTER_BBOX:CITY_BBOX;
       const at=p||ok(order)||{lat:(CENTER_BBOX.south+CENTER_BBOX.north)/2,lon:(CENTER_BBOX.west+CENTER_BBOX.east)/2};
       const seen=new Map();
+      // Уточнение («sushi», «atlantis», «burj khalifa») ищется по названию и
+      // кухне ПОВЕРХ категории: иначе в 120 ближайших отелей Atlantis не попадал
+      // вовсе, а суши-бары тонули среди всех ресторанов.
+      // Основа слова: «skydiving» ищет и «Skydive Dubai», «tours» — и «tour».
+      // Короткое слово — только целиком: «read»* находил «Readymade Garments»,
+      // «take»* — «Take Home», «thread»* — ателье «Thread Up».
+      const ALIAS_PREFIX=false;
+      const stem=(w)=>{if(w.includes(" ")||w.length<6)return w;const st=w.replace(/(ing|ers|er|es|s)$/,"");return st.length>=5?st:w};
+      const one=(w)=>{const st=stem(w);const q=`"${st.replace(/"/g,'""')}"`;return st!==w||(!w.includes(" ")&&w.length>=5&&ALIAS_PREFIX)?q+"*":q};
+      // Синонимы из плана: «zipline» ищет и «XLine», «surfing» — «Surf School».
+      const aliases=plan.focusAlias&&typeof plan.focusAlias==="object"?plan.focusAlias:{};
+      const term=(w)=>aliases[w]?`(${aliases[w].map(a=>{const n=norm(a);return n.includes(" ")?`"${n.replace(/"/g,'""')}"`:`"${n.replace(/"/g,'""')}"*`}).join(" OR ")})`:one(w);
+      const fq=(ws,op)=>ws.map(term).join(` ${op} `);
+      // Название целиком («ain dubai», «global village»): все слова, точные, по
+      // всему городу — место может быть далеко от района человека.
+      const phrase=(Array.isArray(plan.phrase)?plan.phrase:[]).map(w=>norm(w)).filter(Boolean).slice(0,4);
+      if(phrase.length){
+        try{
+          const q=phrase.map(w=>`"${w.replace(/"/g,'""')}"`).join(" AND ");
+          for(const r of byName.all(q,CITY_BBOX.south,CITY_BBOX.north,CITY_BBOX.west,CITY_BBOX.east,at.lat,at.lat,at.lon,at.lon,40))
+            if(!seen.has(r.pid))seen.set(r.pid,row(r));
+        }catch{/* синтаксис FTS — не повод падать */}
+      }
+      const focus=(Array.isArray(plan.focus)?plan.focus:[]).map(w=>norm(w)).filter(w=>w.length>=3).slice(0,3);
+      if(focus.length){
+        const qAnd=fq(focus,"AND");
+        const qOr=fq(focus,"OR");
+        for(const q of focus.length>1?[qAnd,qOr]:[qAnd]){
+          try{
+            for(const r of byName.all(q,box.south,box.north,box.west,box.east,at.lat,at.lat,at.lon,at.lon,40))
+              if(!seen.has(r.pid))seen.set(r.pid,row(r));
+          }catch{/* синтаксис FTS — не повод падать */}
+          if(seen.size)break;
+        }
+      }
       const tags=(plan.tags||[]).filter(t=>CATEGORY_KEYS.has(t));
       // Лимит делится между тегами: раньше первый тег забирал его целиком, и
       // «куда сходить вечером» (бары, еда, кальян) давало одни бары.

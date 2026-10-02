@@ -18,7 +18,7 @@ import {overpassQuery} from "../providers.mjs";
 import {createSnapshot,collectCategory,snapshotAcceptable,CITY_BBOX} from "../osm_snapshot.mjs";
 import {SNAPSHOT_STATUS_FILE} from "../providers.mjs";
 import {CITY} from "../city.mjs";
-import {writeFileSync,mkdirSync} from "node:fs";
+import {writeFileSync,mkdirSync,existsSync} from "node:fs";
 import {dirname} from "node:path";
 
 // Отчёт о сборке рядом со снимком. Без него /api/health показывает голое
@@ -54,6 +54,25 @@ const CAT_BUDGET_MS=Number(args.get("cat-budget")||12)*60000;
 const PARTIAL_OK=Number(args.get("partial-ok")||300);
 const RESUME=args.get("no-resume")!=="1";
 
+// Готовый снимок, собранный офлайн из выгрузки OSM и каталога Overture
+// (source = «osm+overture»), полнее того, что успевает отдать Overpass:
+// в нём контакты и адреса десятков тысяч мест. Ночная сборка не должна его
+// затирать — только по явной просьбе (--force или FORCE_OVERPASS=1).
+{
+  const force=args.get("force")==="1"||process.env.FORCE_OVERPASS==="1";
+  if(!force&&existsSync(OUT)){
+    try{
+      const {DatabaseSync}=await import("node:sqlite");
+      const db=new DatabaseSync(OUT,{readOnly:true});
+      const src=db.prepare("select v from meta where k='source'").get();
+      db.close();
+      if(src&&String(src.v).includes("overture")){
+        console.log(`снимок ${OUT} собран офлайн (${src.v}) — Overpass его не перезаписывает; --force, чтобы пересобрать`);
+        process.exit(0);
+      }
+    }catch{/* не читается — значит, собираем заново */}
+  }
+}
 const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
 const bboxStr=(b)=>`${b.south},${b.west},${b.north},${b.east}`;
 

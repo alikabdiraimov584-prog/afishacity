@@ -152,6 +152,36 @@ cp "$DIR/deploy/free-snapshot.timer" /etc/systemd/system/free-snapshot.timer
 systemctl daemon-reload
 systemctl enable -q free-snapshot.timer
 systemctl start free-snapshot.timer
+# Готовая проверенная карта города (OSM + каталог Overture, собрана офлайн).
+# Если она опубликована и новее нашей — ставим её вместо сборки через Overpass:
+# в ней в разы больше мест, контакты и адреса. Контрольная сумма сверяется.
+PREBUILT="https://raw.githubusercontent.com/alikabdiraimov584-prog/afishacity/${FREE_DATA_BRANCH:-data-snapshots}"
+SNAP_SHA_FILE="$DIR/data/osm_${CITY_ID}.sha256"
+META_TMP="$(mktemp)"
+if curl -fsSL --max-time 30 "$PREBUILT/osm_${CITY_ID}.meta.json" -o "$META_TMP" 2>/dev/null; then
+  NEW_SHA="$(sed -n 's/.*"sha256": *"\([0-9a-f]\{64\}\)".*/\1/p' "$META_TMP" | head -1)"
+  OLD_SHA="$(cat "$SNAP_SHA_FILE" 2>/dev/null || true)"
+  if [ -n "$NEW_SHA" ] && { [ "$NEW_SHA" != "$OLD_SHA" ] || [ ! -s "$SNAP" ]; }; then
+    echo "   загружаю готовую карту: $(sed -n 's/.*"places": *\([0-9]*\).*/\1/p' "$META_TMP" | head -1) мест"
+    # Идущая сборка через Overpass закончила бы позже и затёрла бы карту.
+    systemctl stop free-snapshot.service 2>/dev/null || true
+    mkdir -p "$DIR/data"
+    if curl -fsSL --max-time 600 "$PREBUILT/osm_${CITY_ID}.db.gz" -o "$SNAP.gz.part" \
+       && echo "$NEW_SHA  $SNAP.gz.part" | sha256sum -c --quiet - \
+       && gunzip -c "$SNAP.gz.part" > "$SNAP.new"; then
+      rm -f "$SNAP.gz.part" "$SNAP.building" "$SNAP.building-wal" "$SNAP.building-shm" "$SNAP-wal" "$SNAP-shm" "$SNAP_STATUS"
+      mv -f "$SNAP.new" "$SNAP"
+      echo "$NEW_SHA" > "$SNAP_SHA_FILE"
+      chown free:free "$SNAP" "$SNAP_SHA_FILE" 2>/dev/null || true
+      systemctl restart free
+      echo "   карта установлена: $(du -h "$SNAP" | cut -f1)"
+    else
+      rm -f "$SNAP.gz.part" "$SNAP.new"
+      echo "   готовую карту скачать не удалось — остаётся прежняя"
+    fi
+  fi
+fi
+rm -f "$META_TMP"
 if [ -s "$SNAP" ]; then
   echo "   снимок на месте: $(du -h "$SNAP" | cut -f1)"
 elif systemctl is-active --quiet free-snapshot.service; then
