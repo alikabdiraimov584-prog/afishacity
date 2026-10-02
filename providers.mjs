@@ -925,6 +925,10 @@ function normalizeOsmItem(x,plan){
     // фотография места без обращения к агрегатору.
     wikidata:t.wikidata||null,brand_wikidata:t["brand:wikidata"]||null,
     wikimedia_commons:t.wikimedia_commons||null,image_raw:t.image||null,
+    // Фото с сайта самого места, собранное заранее при сборке карты (og:image,
+    // проверено: настоящая картинка, не логотип, ширина от 500 px).
+    site_photo:t["free:photo"]?{url:t["free:photo"],w:Number(t["free:photo_w"])||null,h:Number(t["free:photo_h"])||null,site:t["free:photo_site"]||null}:null,
+    ov_cat:t["overture:category"]||null,
     // Раньше здесь стояли заглушки: «часы работы не указаны в OSM», «цены у
     // заведения», «часы лучше перепроверить». Они уходили и на карточку, и
     // модели — та честно зачитывала их вслух, и человек слышал «у сервиса нет

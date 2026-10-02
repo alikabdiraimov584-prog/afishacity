@@ -81,6 +81,11 @@ export function looksLikePhoto(url,{width=null,height=null}={}){
   if(!/^https?:$/.test(u.protocol))return false;
   if(BAD_NAME.test(u.pathname))return false;
   if(/\.svg($|\?)/i.test(u.pathname))return false;          // логотипы почти всегда svg
+  // og:image = "null" у сайта на конструкторе превращается в «…/null».
+  if(/\/(null|undefined|none|false)$/i.test(u.pathname))return false;
+  // Соцсети и визитки-ссылки отдают аватар профиля (почти всегда логотип) или
+  // страницу вместо картинки.
+  if(/(^|\.)(linkedin\.com|linktr\.ee|facebook\.com|fbcdn\.net|instagram\.com|cdninstagram\.com|twitter\.com|x\.com|twimg\.com|tiktok\.com|wa\.me|whatsapp\.com)$/i.test(u.hostname))return false;
   if(width!==null&&Number(width)>0&&Number(width)<600)return false;
   if(width&&height){
     const r=Math.max(width/height,height/width);
@@ -113,6 +118,14 @@ export async function resolvePhoto(place,deps={}){
   const fromTags=commonsFileUrl(place.wikimedia_commons)||commonsFileUrl(place.image_raw);
   if(fromTags){
     const r=out({url:fromTags,origin:"commons",confidence:"high",credit:CREDIT.commons,license:CREDIT.commons.license});
+    if(r)return r;
+  }
+  // T1b — фото с сайта места, собранное заранее при сборке карты: в сеть за
+  // страницей ходить не нужно, карточка получает кадр сразу.
+  if(place.site_photo&&place.site_photo.url&&looksLikePhoto(place.site_photo.url,{width:place.site_photo.w,height:place.site_photo.h})){
+    const src=ownSiteUrl(place)||place.site_photo.site||place.site_photo.url;
+    const r=out({url:place.site_photo.url,origin:"venue_site",confidence:"high",
+      credit:{text:hostOf(src)||L("сайт заведения","venue website"),url:src},license:{code:L("сайт заведения","venue website"),url:src}});
     if(r)return r;
   }
   // Сырой image= с произвольного хоста берём, только если это хост сайта заведения:
@@ -170,6 +183,18 @@ export async function resolvePhoto(place,deps={}){
     if(hit&&hit.url&&looksLikePhoto(hit.url,{width:hit.width,height:hit.height})){
       const r=out({url:hit.url,origin:hit.origin||"commons",confidence:hit.confidence||"medium",
         credit:hit.credit||CREDIT.commons,license:hit.license||CREDIT.commons.license});
+      if(r)return r;
+    }
+  }
+
+  // T4.5 — фото для примера: настоящий снимок того же рода мест (суши для
+  // суши-бара, пляж для пляжа) со свободной лицензией. Подписан как пример,
+  // чтобы никто не принял его за снимок именно этого заведения.
+  if(typeof deps.illustrative==="function"){
+    let il=null;
+    try{il=deps.illustrative(place)}catch{il=null}
+    if(il&&il.url){
+      const r=out({url:il.url,origin:"illustrative",confidence:"none",credit:il.credit,license:il.license});
       if(r)return r;
     }
   }

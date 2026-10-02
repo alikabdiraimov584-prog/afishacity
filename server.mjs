@@ -12,6 +12,7 @@ import {searchLiveInventory,providerHealth,snapshotStatus} from "./providers.mjs
 import {renderCover} from "./cover.mjs";
 import {safeRemoteUrl,guardedFetch,USER_AGENT} from "./net_guard.mjs";
 import {resolvePhoto,ownSiteUrl,commonsFileUrl} from "./photos.mjs";
+import {illustrativeFor,illustrativePool} from "./illustrative.mjs";
 import {yandexConfig,yandexStatus,yandexStt,yandexTts,YandexError,STT_MAX_BYTES,ttsEngineState} from "./yandex.mjs";
 import {runYandexDialogue} from "./dialogue_yandex.mjs";
 import {CONCIERGE,toolResultForAgent} from "./agent.mjs";
@@ -223,6 +224,19 @@ const IMG_TIMEOUT_MS=12000;
    одинаковых запросов и начинали отвечать заглушками. Теперь один раз в
    неделю на картинку; объём ограничен, старое вытесняется по времени. */
 const RASTER_IMAGE=/^image\/(jpeg|png|webp|gif|avif)\b/;
+// Что принимаем от сайта: кроме правильных типов — «image/jpg» (так отдают
+// многие CDN) и безликий octet-stream хранилищ (S3, DigitalOcean). Настоящий
+// тип берём из первых байтов файла: им и только им отдаём картинку дальше.
+const IMG_FETCH_TYPE=/^(image\/(jpeg|jpg|pjpeg|png|webp|gif|avif)|application\/octet-stream|binary\/octet-stream)\b/i;
+export function sniffImage(buf){
+  if(!buf||buf.length<12)return null;
+  if(buf[0]===0xFF&&buf[1]===0xD8&&buf[2]===0xFF)return "image/jpeg";
+  if(buf[0]===0x89&&buf[1]===0x50&&buf[2]===0x4E&&buf[3]===0x47)return "image/png";
+  if(buf.slice(0,4).toString("latin1")==="GIF8")return "image/gif";
+  if(buf.slice(0,4).toString("latin1")==="RIFF"&&buf.slice(8,12).toString("latin1")==="WEBP")return "image/webp";
+  if(buf.slice(4,8).toString("latin1")==="ftyp"&&/^avi[fs]/.test(buf.slice(8,12).toString("latin1")))return "image/avif";
+  return null;
+}
 // Даже у растровой картинки браузер не должен исполнять ничего: заголовки
 // ниже запрещают это на случай, если тип окажется подделан.
 const IMG_SAFE_HEADERS={"X-Content-Type-Options":"nosniff",
@@ -317,7 +331,7 @@ async function proxyImage(res,raw,{fetchUrl=raw}={}){
   // Только растровые форматы: SVG — это документ со скриптами, и отданный с
   // нашего адреса он выполнялся бы в нашем origin.
   const r=await guardedFetch(fetchUrl,{maxBytes:IMG_MAX,timeoutMs:IMG_TIMEOUT_MS,
-    accept:t=>RASTER_IMAGE.test(t),headers:{"Accept":"image/avif,image/webp,image/*;q=0.8"}});
+    accept:t=>IMG_FETCH_TYPE.test(t),headers:{"Accept":"image/avif,image/webp,image/*;q=0.8"}});
   if(!r.ok){
     if(r.reason==="too_large")return send(res,413,"too large");
     if(r.reason==="bad_type")return send(res,415,"not an image");
@@ -325,8 +339,10 @@ async function proxyImage(res,raw,{fetchUrl=raw}={}){
     return send(res,502,"image unavailable");
   }
   if(r.truncated)return send(res,413,"too large");
-  if(process.env.NODE_ENV!=="test")writeImgCache(raw,r.type,r.body);
-  res.writeHead(200,{"Content-Type":r.type,"Cache-Control":"public, max-age=86400","X-Img-Cache":"miss",
+  const type=sniffImage(r.body);
+  if(!type)return send(res,415,"not an image");
+  if(process.env.NODE_ENV!=="test")writeImgCache(raw,type,r.body);
+  res.writeHead(200,{"Content-Type":type,"Cache-Control":"public, max-age=86400","X-Img-Cache":"miss",
     "Content-Length":String(r.body.length),...IMG_SAFE_HEADERS,...corsHeaders(res.req)});
   return res.end(r.body);
 }
@@ -365,8 +381,11 @@ async function photoByWikidata(qid,{brand=false}={}){
   const url=commonsFileUrl(`File:${file}`);
   if(!url)return null;
   const page=`https://commons.wikimedia.org/wiki/File:${encodeURIComponent(String(file).replace(/ /g,"_"))}`;
-  // Картинка бренда — это логотип сети, а не снимок конкретного места.
-  return {url,origin:brand?"brand_logo":"commons",confidence:brand?"low":"medium",...commonsCredit(page)};
+  // Картинка бренда — снимок другого заведения сети (лондонская Costa, H&M в
+  // Гарлеме), а не этого места: подписываем как фото сети, чтобы не путать.
+  const cr=commonsCredit(page);
+  if(brand)cr.credit.text=L("Фото сети · Wikimedia Commons","Brand photo · Wikimedia Commons");
+  return {url,origin:brand?"brand_logo":"commons",confidence:brand?"low":"medium",...cr};
 }
 // Слова, по которым фото не опознать: «bar», «cafe», «Dubai» есть в названиях
 // тысяч чужих снимков. Совпадение засчитывается только по особенному слову.
@@ -405,8 +424,8 @@ export async function photoByGeo(lat,lon,name){
   return null;
 }
 async function photoLookup(place){
-  // v2: прежний кеш хранил кадры «по соседству» — сбрасываем его версией ключа.
-  const key=place.id?`v3:${place.id}`:"";if(!key)return null;
+  // Версия ключа сбрасывает кеш: v2 — кадры «по соседству», v4 — подпись фото сети.
+  const key=place.id?`v4:${place.id}`:"";if(!key)return null;
   const hit=PHOTO_CACHE.get(key);
   if(hit){
     const v=hit.value;
@@ -439,24 +458,40 @@ const ENRICH_DEADLINE_MS=Number(process.env.ENRICH_DEADLINE_MS||1600);
 
 async function enrichResults(payload){
   const results=payload.results||[];
+  // Фото для примера раздаём на всю выдачу сразу, чтобы соседние карточки не
+  // повторяли один кадр. Сперва — местам без своего снимка: им пример покажут
+  // наверняка; местам со снимком он нужен лишь как запасной.
+  const used=new Set(),ils=results.map(()=>null);
+  const ownShot=(x)=>Boolean(x&&x.site_photo&&x.site_photo.url);
+  results.forEach((x,i)=>{if(!ownShot(x))ils[i]=illustrativeFor(x,{used})});
+  results.forEach((x,i)=>{if(ownShot(x))ils[i]=illustrativeFor(x,{used})});
   const enriched=await Promise.all(results.map(async (x,i)=>{
     // Сайт заведения опрашиваем только для первых карточек: это сетевой запрос.
     // Раньше обогащение шло по x.source, а у карточек агрегатора это его же
     // домен — код сам углублял зависимость, вытягивая превью с агрегатора.
     const site=i<=4?ownSiteUrl(x):null;
     // Один медленный сайт задерживал весь ответ на секунды: каждая карточка
-    // получает свой бюджет, а не успевшее доделывается в фоне.
-    const meta=site?await withDeadline(pageMeta(site),ENRICH_DEADLINE_MS,{}):{};
+    // получает свой бюджет, а не успевшее доделывается в фоне. Страница сайта
+    // и выбор фото идут параллельно: у места с заранее собранным фото кадр
+    // готов сразу, сайт нужен только ради ссылки на бронирование.
+    const metaP=site?withDeadline(pageMeta(site),ENRICH_DEADLINE_MS,{}):Promise.resolve({});
+    // Если ни один источник не успел — фото для примера, а не пустая обложка.
+    const il=ils[i];
+    const fallbackPhoto=il?{url:il.url,origin:"illustrative",confidence:"none",credit:il.credit,license:il.license}
+      :{url:coverUrl(x),origin:"generated",confidence:"none",credit:null,license:null};
     const photo=await withDeadline(
-      resolvePhoto(x,{siteMeta:async()=>meta,coverUrl,lookup:photoLookup}),
-      ENRICH_DEADLINE_MS,
-      {url:coverUrl(x),origin:"generated",confidence:"none",credit:null,license:null});
+      resolvePhoto(x,{siteMeta:()=>metaP,coverUrl,lookup:photoLookup,illustrative:()=>il}),
+      ENRICH_DEADLINE_MS,fallbackPhoto);
+    const meta=await metaP;
     const booking=safeHref(x.booking_url)||safeHref(meta.booking_url)||null;
     return {...x,
       photo,
       image_url:photo.url,                                   // совместимость со старым полем
-      // Запасной кадр на случай, если внешняя картинка не загрузится в браузере.
-      cover_url:coverUrl(x),
+      // Запасной кадр на случай, если внешняя картинка не загрузится в браузере:
+      // сперва фото для примера (через наш прокси), а если и его нет — обложка.
+      cover_url:il&&photo.origin!=="illustrative"?`/api/img?u=${encodeURIComponent(il.url)}`:coverUrl(x),
+      // Подпись запасного кадра: подменив фото, клиент пишет «фото для примера».
+      cover_credit:il&&photo.origin!=="illustrative"?il.credit:null,
       booking_url:booking,
       booking_kind:booking?(x.booking_url?x.booking_kind:meta.booking_kind)||null:null,
       booking_provider:booking?(x.booking_url?x.booking_provider:meta.booking_provider)||null:null,
@@ -470,15 +505,33 @@ async function enrichResults(payload){
   prewarmImages(enriched.map(x=>x&&x.photo&&x.photo.origin!=="generated"?x.photo.url:null));
   return {...payload,results:enriched};
 }
+/* Фото для примера — несколько сотен снимков на весь город, и каждый показ
+   первой карточки ждал бы 2–4 секунды, пока прокси скачает кадр с Flickr.
+   После старта тихо, по три за раз, складываем их в кеш прокси. */
+function warmIllustrative(){
+  if(process.env.NODE_ENV==="test"||process.env.WARM_ILLUSTRATIVE==="0")return;
+  const urls=[...new Set(Object.values(illustrativePool()).flat().map(p=>p&&p.url).filter(Boolean))];
+  let i=0;
+  const next=()=>{
+    while(i<urls.length&&readImgCache(urls[i]))i++;
+    if(i>=urls.length)return;
+    const raw=urls[i++];
+    guardedFetch(raw,{maxBytes:IMG_MAX,timeoutMs:15000,accept:t=>IMG_FETCH_TYPE.test(t),
+      headers:{"Accept":"image/avif,image/webp,image/*;q=0.8"}})
+      .then(r=>{const type=r.ok&&!r.truncated&&sniffImage(r.body);if(type)writeImgCache(raw,type,r.body)})
+      .catch(()=>{}).finally(()=>setTimeout(next,250));
+  };
+  setTimeout(()=>{for(let k=0;k<3;k++)next()},15000).unref?.();
+}
 const PREWARM_INFLIGHT=new Set();
 function prewarmImages(urls){
   if(process.env.NODE_ENV==="test")return;
   for(const raw of urls.filter(Boolean).slice(0,8)){
     if(PREWARM_INFLIGHT.has(raw)||readImgCache(raw))continue;
     PREWARM_INFLIGHT.add(raw);
-    guardedFetch(raw,{maxBytes:IMG_MAX,timeoutMs:IMG_TIMEOUT_MS,accept:t=>RASTER_IMAGE.test(t),
+    guardedFetch(raw,{maxBytes:IMG_MAX,timeoutMs:IMG_TIMEOUT_MS,accept:t=>IMG_FETCH_TYPE.test(t),
       headers:{"Accept":"image/avif,image/webp,image/*;q=0.8"}})
-      .then(r=>{if(r.ok&&!r.truncated)writeImgCache(raw,r.type,r.body)})
+      .then(r=>{const type=r.ok&&!r.truncated&&sniffImage(r.body);if(type)writeImgCache(raw,type,r.body)})
       .catch(()=>{})
       .finally(()=>PREWARM_INFLIGHT.delete(raw));
   }
@@ -1399,4 +1452,5 @@ if(process.env.NODE_ENV!=="test"){
     console.log("Voice: browser speech recognition → text dialogue");
   });
   startWarmup();
+  warmIllustrative();
 }

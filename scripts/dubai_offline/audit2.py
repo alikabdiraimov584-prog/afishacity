@@ -26,11 +26,13 @@ def run(x):
   except Exception as e:return (x,None,str(e)[:80],0)
   return (x,d,None,round(time.time()-t,1))
 with cf.ThreadPoolExecutor(4) as ex:res=list(ex.map(run,qs))
-tot={"cards":0,"addr":0,"contact":0,"hours":0,"latin":0,"coords":0,"cat":0,"photo":0};problems=[];empty=[];errors=[]
+tot={"cards":0,"addr":0,"contact":0,"hours":0,"latin":0,"coords":0,"cat":0,"photo":0,"real":0,"illus":0,"dup":0};problems=[];empty=[];errors=[];shots=[]
 for x,d,err,sec in res:
   if err:errors.append((x["q"],err));continue
   rs=d.get("results") or []
   if not rs:empty.append(x["q"]);continue
+  ill=[(r.get("photo") or {}).get("url") for r in rs if (r.get("photo") or {}).get("origin")=="illustrative"]
+  tot["dup"]+=len(ill)-len(set(ill))
   exp=set(x.get("tags") or ([x["tag"]] if x.get("tag") else []));ok=set(exp)
   for t in exp:ok|=ALIAS.get(t,set())
   for i,r in enumerate(rs):
@@ -40,7 +42,12 @@ for x,d,err,sec in res:
     if re.search("[а-яё\u0600-\u06FF]",str(r.get("area") or "")+str(r.get("category") or ""),re.I):problems.append((x["q"],"НЕЛАТИНСКИЙ АДРЕС/КАТЕГОРИЯ",f"{r.get('name')} | {r.get('area')}"))
     if r.get("phone") or (r.get("booking_url") or "").startswith(("tel:","http")) or r.get("official_source"):tot["contact"]+=1
     if r.get("hours_label"):tot["hours"]+=1
-    if (r.get("photo") or {}).get("origin") not in (None,"generated"):tot["photo"]+=1
+    og=(r.get("photo") or {}).get("origin")
+    if og not in (None,"generated"):tot["photo"]+=1
+    if og in("venue_site","commons","aggregator","brand_logo"):tot["real"]+=1
+    if og=="illustrative":tot["illus"]+=1
+    shots.append({"q":x["q"],"name":r.get("name"),"origin":og,"url":(r.get("photo") or {}).get("url")})
+    if og in(None,"generated"):problems.append((x["q"],"БЕЗ ФОТО",r.get("name")))
     if r.get("coords") and r["coords"].get("lat"):tot["coords"]+=1
     if r.get("category"):tot["cat"]+=1
     name=r.get("name") or ""
@@ -57,6 +64,7 @@ for x,d,err,sec in res:
     if x.get("expect") and i==0 and not re.search(x["expect"],name,re.I):problems.append((x["q"],"ПЕРВЫМ ОЖИДАЛОСЬ "+x["expect"],name))
   if mode!="cats" or "-v" in sys.argv:print(f"{x['q'][:34]:35}{len(rs):>2} {sec:>5}s  "+" | ".join(f"{r.get('name','')[:26]} ({r.get('category')})" for r in rs[:5]))
 N=tot["cards"] or 1
-print(f"\nИТОГО запросов {len(qs)}, карточек {tot['cards']}: адрес {round(100*tot['addr']/N)}%, контакт {round(100*tot['contact']/N)}%, часы {round(100*tot['hours']/N)}%, фото {round(100*tot['photo']/N)}%, координаты {round(100*tot['coords']/N)}%, подпись категории {round(100*tot['cat']/N)}%, латиница {round(100*tot['latin']/N)}%")
+print(f"\nИТОГО запросов {len(qs)}, карточек {tot['cards']}: адрес {round(100*tot['addr']/N)}%, контакт {round(100*tot['contact']/N)}%, часы {round(100*tot['hours']/N)}%, фото {round(100*tot['photo']/N)}% (своё {round(100*tot['real']/N)}%, пример {round(100*tot['illus']/N)}%, повторов примера в выдаче {tot['dup']}), координаты {round(100*tot['coords']/N)}%, подпись категории {round(100*tot['cat']/N)}%, латиница {round(100*tot['latin']/N)}%")
+json.dump(shots,open(f"{S}/shots_{mode}.json","w"))
 print("ПУСТЫХ:",len(empty),empty);print("ОШИБОК:",len(errors),errors);print("ПРОБЛЕМ:",len(problems))
 for p in problems:print("  ",p)

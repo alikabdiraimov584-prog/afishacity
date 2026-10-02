@@ -982,7 +982,13 @@ function noImg(el){
   const fb=el.getAttribute("data-cover")||box.getAttribute("data-cover");
   // Обработчик НЕ снимаем: если и обложка не загрузится, второй вызов уберёт
   // картинку совсем. Повтора не будет — адрес уже равен запасному.
-  if(fb&&el.getAttribute("src")!==fb){el.setAttribute("src",fb);return}
+  if(fb&&el.getAttribute("src")!==fb){
+    el.setAttribute("src",fb);
+    // Запасной кадр — фото для примера: подписываем его как пример.
+    const ct=el.getAttribute("data-cover-credit")||box.getAttribute("data-cover-credit");
+    if(ct&&!box.classList.contains("dHero")){const s=document.createElement("span");s.className="photoSource";s.textContent=ct;box.appendChild(s)}
+    if(ct&&box.classList.contains("dHero")){const d=document.querySelector("#detail .dCredit");if(d)d.textContent=t("detail.photo")+ct}
+    return}
   box.classList.add("noimg");el.remove();
   // В шапке страницы заведения рядом с картинкой — кнопка закрытия и плашка
   // «Открыто»: стирать их вместе с картинкой нельзя, иначе страницу не закрыть.
@@ -1000,7 +1006,8 @@ function imageBlock(r){
     :"";
   const cover=r.cover_url||(photo.origin==="generated"?photo.url:"");
   const url=r.image_url||photo.url;
-  if(url)return `<div class="placeMedia ${cls}" data-emoji="${emoji}"${cover?` data-cover="${esc(ownUrl(cover))}"`:""}><img src="${esc(mediaSrc(r))}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="noImg(this)">${credit}</div>`;
+  const cc=r.cover_credit&&r.cover_credit.text?` data-cover-credit="${esc(r.cover_credit.text)}"`:"";
+  if(url)return `<div class="placeMedia ${cls}" data-emoji="${emoji}"${cover?` data-cover="${esc(ownUrl(cover))}"`:""}${cc}><img src="${esc(mediaSrc(r))}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="noImg(this)">${credit}</div>`;
   return `<div class="placeMedia noimg ${cls}" data-emoji="${emoji}"></div>`;
 }
 function bookingLabel(r){
@@ -1666,7 +1673,7 @@ function openDetailInner(id){
   ].join("");
   const credit=r.photo&&r.photo.credit&&r.photo.credit.text?t("detail.photo")+esc(r.photo.credit.text):r.photo&&r.photo.origin==="generated"?t("detail.cover"):"";
   $("#detail").innerHTML=`<div class="sheet v2">
-    <div class="dHero"><img src="${esc(img)}" alt="" referrerpolicy="no-referrer" data-cover="${esc(cover)}" onerror="noImg(this)"><button class="close" aria-label="${t("close")}">×</button>
+    <div class="dHero"><img src="${esc(img)}" alt="" referrerpolicy="no-referrer" data-cover="${esc(cover)}"${r.cover_credit&&r.cover_credit.text?` data-cover-credit="${esc(r.cover_credit.text)}"`:""} onerror="noImg(this)"><button class="close" aria-label="${t("close")}">×</button>
       ${status?`<div class="dStatus ${status.cls}">${status.text}</div>`:""}</div>
     <div class="dBody">
       <div class="dChips">${r.category?`<span class="dChip">${esc(r.category)}</span>`:""}${isEvent?`<span class="dChip">${t("detail.event")}</span>`:""}${dist?`<span class="dChip">${t("detail.away",{d:esc(dist)})}</span>`:""}</div>
@@ -1675,7 +1682,7 @@ function openDetailInner(id){
       ${why.length?`<div class="dWhy">${why.map(w=>`<span>${esc(w)}</span>`).join("")}</div>`:""}
       <div class="dRows">${rows}</div>
       ${r.desc||r.description?`<p class="dDesc">${esc(r.desc||r.description)}</p>`:""}
-      <p class="dMeta">${t("detail.data")}${esc(r.provider||t("detail.open"))}${credit?` · ${credit}`:""}</p>
+      <p class="dMeta">${t("detail.data")}${esc(r.provider||t("detail.open"))}${credit?` · <span class="dCredit">${credit}</span>`:""}</p>
     </div>
     <div class="dActions"><button class="primary" data-book-detail>${bookingLabel(r)}</button><button data-select>${t("card.plan")}</button><button data-r>${t("card.taxi")}</button><button data-save-detail>${saved.some(x=>x.id===r.id)?t("card.remove"):t("card.save")}</button></div>
   </div>`;

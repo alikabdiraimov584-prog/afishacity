@@ -113,6 +113,8 @@ const CENTER=CITY.id==="moscow"?{lat:55.7539,lon:37.6208}:CITY.center;
 function requestedTags(query,plan){const n=norm(query),out=[...(plan.tags||[])];for(const [tag,terms] of Object.entries(SYN))if(terms.some(t=>hasTerm(n,t)))out.push(tag);return [...new Set(out)]}
 const moscowDate=()=>cityDate();
 function itemText(x){return norm([x.name,x.organizer,x.cat,x.area,x.metro,x.desc,x.keywords,(x.tags||[]).join(" ")].filter(Boolean).join(" "))}
+// Кухню ищем без адреса: «Jumeirah Fishing Harbour» в адресе кафе — не рыбная кухня.
+function cuisineText(x){return norm([x.name,x.organizer,x.cat,x.desc,x.keywords,(x.tags||[]).join(" ")].filter(Boolean).join(" "))}
 function toMin(t){const m=text(t).match(/^(\d{1,2}):(\d{2})/);return m?+m[1]*60 + +m[2]:null}
 function dateOkay(x,args){
   if(x.kind==="venue")return true;
@@ -320,7 +322,7 @@ export function rankLive(items,args={},plan={}){
     const hours=venueHours(x,moment);
     // Известно, что к нужному времени заведение закрыто — не показываем.
     if(hours&&hours.open_now===false&&args.after_time)continue;
-    const text=itemText(x),xtags=new Set(x.tags||[]),ctags=new Set(x.cat_tags||[]),dna=placeDna(x);let s=0,reasons=[],strongHit=0;
+    const text=itemText(x),ctext=cuisineText(x),xtags=new Set(x.tags||[]),ctags=new Set(x.cat_tags||[]),dna=placeDna(x);let s=0,reasons=[],strongHit=0;
     const nameT=new Set(toks(x.name));
     const named=phrase.length>0&&phrase.every(w=>nameT.has(w));
     // «Ядро»: в названии нет ничего сверх слов запроса — «Ski Dubai», а не
@@ -383,7 +385,7 @@ export function rankLive(items,args={},plan={}){
     // место наверх; не та кухня — вниз, но не прочь: лучше итальянец рядом,
     // чем пустая выдача.
     if(focus.length){
-      const fh=focus.filter(w=>cuisine.has(w)?cuisineHit(text,w):(alias[w]||[w]).some(a=>hasWord(text,stemW(norm(a)))));
+      const fh=focus.filter(w=>cuisine.has(w)?cuisineHit(ctext,w):(alias[w]||[w]).some(a=>hasWord(text,stemW(norm(a)))));
       if(fh.length){
         s+=30+12*(fh.length-1);if(fh.some(w=>cuisine.has(w)))reasons.push(L("нужная кухня","cuisine match"));
         // Совпало по имени — из одноимённых надёжнее известное и точка OSM.
@@ -472,7 +474,7 @@ export function rankLive(items,args={},plan={}){
     const fit=tot?got/tot:0.6,align=clamp((ts+30)/60,0,1);
     const match=Math.round(clamp(52+36*fit+24*(align-.5),50,99));
     const catHit=mainTags.some(t=>ctags.size?ctags.has(t):xtags.has(t));
-    const cuisineOk=cuisine.size>0&&[...cuisine].some(w=>cuisineHit(text,w));
+    const cuisineOk=cuisine.size>0&&[...cuisine].some(w=>cuisineHit(ctext,w));
     scored.push({...x,_cuisine:cuisineOk,_named:named,_core:core,_cat:catHit||bypass||specificInName,_score:s,_match:match,_quality:quality,_reasons:[...new Set(reasons)].slice(0,5),_dna:dna,_distance_km:shownKm,_rank_km:distance_km,_center_km:center_km,_hours:hours});
   }
   // При равных баллах порядок раньше задавала база (2GIS → OSM → KudaGo):
@@ -494,6 +496,13 @@ export function rankLive(items,args={},plan={}){
   if(cuisine.size&&CITY.lang==="en"){
     const ok=scored.filter(x=>x._cuisine);
     if(ok.length>=3)scored.splice(0,scored.length,...ok);
+  }
+  // Спросили район и мест в нём хватает — дальние не показываем, даже если
+  // они сейчас открыты: «art gallery in alserkal» — галереи Аль-Куоза, а не
+  // Даунтауна в семи километрах.
+  if(districtPt&&!plan.phraseWithDistrict){
+    const inArea=scored.filter(x=>x._rank_km!=null&&x._rank_km<=4);
+    if(inArea.length>=3)scored.splice(0,scored.length,...inArea);
   }
   // Спросили место по названию и оно нашлось — показываем его, а не соседей
   // по рубрике: на «Global Village» — сам Global Village, а не парковку при нём.
@@ -561,6 +570,7 @@ export function resultPayload(results,meta={}){
     // модели: человек не понимал, почему место первое.
     rating:Number.isFinite(x.rating)?x.rating:null,rating_count:x.rating_count||0,
     wikimedia_commons:x.wikimedia_commons||null,image_raw:x.image_raw||null,
+    site_photo:x.site_photo||null,cuisine:x.cuisine||null,ov_cat:x.ov_cat||null,
     aggregator_image:x.aggregator_image||null,aggregator_name:x.aggregator_name||null
   }))}
 }

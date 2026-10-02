@@ -28,7 +28,66 @@ function cleanNames(e){
   }
   ARABIC.lastIndex=0;
 }
-let labelled=0,translated=0;
+let labelled=0,translated=0,photos=0;
+// Фото с сайтов мест, собранные заранее (photos/harvest.py): сайт → кадр.
+const PHOTO_FILE=process.env.SITE_PHOTOS||IN.replace(/[^/]+$/,"photos/site_photos.jsonl");
+const SITE_PHOTO=new Map();
+if(fs.existsSync(PHOTO_FILE)){
+  for(const line of fs.readFileSync(PHOTO_FILE,"utf8").split("\n")){
+    if(!line.trim())continue;
+    try{const r=JSON.parse(line);if(r.img&&r.site)SITE_PHOTO.set(r.site,r)}catch{}
+  }
+}
+// Проверка кадров (photos/vqa2.py): логотипы, плакаты и заглушки отсеяны.
+const QA_FILE=PHOTO_FILE.replace(/site_photos\.jsonl$/,"site_photos_qa2.json");
+const PHOTO_OK=fs.existsSync(QA_FILE)?new Set(Object.entries(JSON.parse(fs.readFileSync(QA_FILE,"utf8"))).filter(([,v])=>v&&v.ok).map(([u])=>u)):null;
+// Текст на кадре (photos/ocr.py): плакат с акцией или реклама казино — не фото места.
+const OCR_FILE=PHOTO_FILE.replace(/site_photos\.jsonl$/,"site_photos_ocr.json");
+const OCR=fs.existsSync(OCR_FILE)?JSON.parse(fs.readFileSync(OCR_FILE,"utf8")):{};
+const textHeavy=(img)=>{const o=OCR[img];return !!(o&&(o.gamble||o.n>=3))};
+// Сайт заведения захвачен (казино, «слоты») или припаркован (домен продаётся,
+// photos/spam.py): ни ссылку, ни картинку оттуда человеку не даём.
+const CHECK_FILE=PHOTO_FILE.replace(/site_photos\.jsonl$/,"site_check.json");
+const SITE_CHECK=fs.existsSync(CHECK_FILE)?JSON.parse(fs.readFileSync(CHECK_FILE,"utf8")):{};
+let deadSites=0,textDropped=0;
+const siteOf=(t)=>{let s=String(t.website||t["contact:website"]||t.url||"").trim();if(s&&!s.includes("://"))s="http://"+s;return s};
+function dropBadSite(t){
+  const s=siteOf(t);if(!s)return;
+  const c=SITE_CHECK[s];
+  if(c&&(c.v==="spam"||c.v==="parked")){delete t.website;delete t["contact:website"];delete t.url;deadSites++}
+}
+// Один сайт на многих мест: у сети это свой сайт («Tim Hortons» —
+// timhortonsgcc.com), а у портала или оператора — чужой (dubai-marina.com у
+// ресторана, cravia.com у «Cinnabon»). Кадр с чужого сайта — не фото места.
+const SITE_USERS=new Map();
+for(const c of targets)for(const e of data[c.tag]||[]){
+  const s=siteOf(e.tags||{});if(!s)continue;
+  const id=`${e.type}/${e.id}`;let m=SITE_USERS.get(s);if(!m)SITE_USERS.set(s,m=new Set());m.add(id);
+}
+const STOP=new Set("dubai uae emirates emirate arabia arab middle east group the and restaurant restaurants cafe hotel hotels resort llc fze trading center centre shop store mall marina jumeirah deira karama barsha palm downtown business bay creek city tower towers plaza branch international world global services company".split(" "));
+const fold=(v)=>String(v||"").normalize("NFKD").replace(/[̀-ͯ]/g,"").toLowerCase();
+function nameMatchesSite(t,s){
+  let host="";try{host=new URL(s).hostname.replace(/^www\d?\./,"")}catch{return true}
+  const hostC=fold(host).replace(/[^a-z0-9]/g,""),core=fold(host.split(".")[0]).replace(/[^a-z0-9]/g,"");
+  const names=[t["name:en"],t.name,t.brand,t.operator].filter(Boolean).map(fold);
+  for(const n of names){
+    const compact=n.replace(/[^a-z0-9]/g,"");
+    if(core.length>=4&&compact.includes(core))return true;
+    for(const w of n.split(/[^a-z0-9']+/).map(x=>x.replace(/'/g,"")))if(w.length>=4&&!STOP.has(w)&&hostC.includes(w))return true;
+  }
+  return false;
+}
+let foreignDropped=0;
+function attachPhoto(t){
+  if(t["free:photo"])return;
+  const s=siteOf(t);
+  if(!s)return;
+  const r=SITE_PHOTO.get(s);if(!r)return;
+  if(PHOTO_OK&&!PHOTO_OK.has(r.img))return;
+  if(textHeavy(r.img)){textDropped++;return}
+  if((SITE_USERS.get(s)?.size||0)>=3&&!nameMatchesSite(t,s)){foreignDropped++;return}
+  t["free:photo"]=r.img;if(r.w)t["free:photo_w"]=String(r.w);if(r.h)t["free:photo_h"]=String(r.h);t["free:photo_site"]=s;photos++;
+}
 // Улица в адресе по-арабски → английское имя той же улицы из OSM.
 const STREETS=fs.existsSync(IN.replace(/[^/]+$/,"streets.json"))?JSON.parse(fs.readFileSync(IN.replace(/[^/]+$/,"streets.json"),"utf8")):{};
 function enStreet(t){
@@ -39,7 +98,7 @@ function enStreet(t){
 for(const c of targets){
   const els=(data[c.tag]||[]).filter(readable);
   for(const e of els){
-    cleanNames(e);enStreet(e.tags);
+    cleanNames(e);enStreet(e.tags);dropBadSite(e.tags);attachPhoto(e.tags);
     // Контора с пометкой «достопримечательность» (муниципалитет, офис) — не
     // то, куда зовут гулять: пометку снимаем, рубрика остаётся.
     if(e.tags.tourism==="attraction"&&e.tags.office){delete e.tags.tourism;e._notSight=true}
@@ -54,4 +113,4 @@ for(const c of targets){
 }
 const v=snapshotAcceptable({total,failed:0,targets:targets.length});
 const res=snap.finish({source:"osm+overture"});
-console.log(JSON.stringify({dropped_nonlatin:dropped,labelled,translated,streets:Object.keys(STREETS).length,categories:targets.length,places:res.places,verdict:v,empty,size_mb:+(fs.statSync(OUT).size/1048576).toFixed(1)}));
+console.log(JSON.stringify({site_photos:SITE_PHOTO.size,with_photo:photos,text_dropped:textDropped,dead_sites:deadSites,foreign_site:foreignDropped,dropped_nonlatin:dropped,labelled,translated,streets:Object.keys(STREETS).length,categories:targets.length,places:res.places,verdict:v,empty,size_mb:+(fs.statSync(OUT).size/1048576).toFixed(1)}));
