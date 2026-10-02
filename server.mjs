@@ -1422,6 +1422,11 @@ const server=http.createServer(async(req,res)=>{
     if(!file.startsWith(PUBLIC))return send(res,403,"Forbidden");
     try{
       const data=await readFile(file);
+      // Главная страница: город и язык подставляем прямо в разметку. Раньше
+      // первый кадр в Дубае был русским («Чего хочется?», «Отправить», lang="ru»)
+      // и переключался на английский только после ответа /api/health, а если
+      // health не отвечал — так и оставался русским.
+      if(file===join(PUBLIC,"index.html"))return send(res,200,cityIndexHtml(data.toString("utf8")),mime[".html"]);
       return send(res,200,data,mime[extname(file)]||"application/octet-stream");
     }catch{
       return send(res,404,"Not found");
@@ -1431,6 +1436,65 @@ const server=http.createServer(async(req,res)=>{
     return json(res,500,{error:"server_error",message:e.message});
   }
 });
+
+/* Главная страница под город.
+ *
+ * Разметка index.html написана по-русски, а язык клиент узнавал только из
+ * /api/health. Поэтому сервер при отдаче страницы:
+ *   • ставит <html lang> города;
+ *   • кладёт window.FREE_CITY до всех скриптов — клиент сразу знает язык,
+ *     валюту, часовой пояс и такси и не ждёт health;
+ *   • для не-русского города заменяет стартовые строки (data-i18n) текстами
+ *     из того же словаря I18N, что лежит в странице: второго словаря на
+ *     сервере нет, и строки не разъедутся.
+ * Ошибка разбора не должна ронять главную: тогда отдаём страницу как есть. */
+let cityIndexCache={src:null,out:null};
+function cityIndexHtml(src){
+  if(cityIndexCache.src===src)return cityIndexCache.out;
+  let out=src;
+  try{
+    const en=CITY.lang!=="ru";
+    const name=en?(CITY.nameEn||CITY.name):CITY.name;
+    const boot={id:CITY.id,name,lang:CITY.lang,locale:CITY.locale,tz:CITY.tz,currency:CITY.currency,
+      currencySymbol:CITY.currencySymbol,country:CITY.country,taxi:CITY.taxi,center:CITY.center,
+      agent:CITY.agent?{name:CITY.agent.name,lang:CITY.agent.lang}:null};
+    const attr=(s)=>String(s).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;");
+    const text=(s)=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    out=out.replace(/<html lang="[^"]*"/,`<html lang="${attr(CITY.lang)}"`);
+    const script=`<script>window.FREE_CITY=${JSON.stringify(boot).replace(/</g,"\\u003c")};</script>`;
+    out=out.replace(/(<meta charset="utf-8">)/i,`$1\n${script}`);
+    // Строки словаря нужного языка: блок «<lang>:{ … }» внутри const I18N.
+    const at=src.indexOf("const I18N={");
+    const start=at<0?-1:src.indexOf(`\n${CITY.lang}:{`,at);
+    if(en&&start>0){
+      const end=src.indexOf("\n}",start+2);
+      const block=src.slice(start,end>start?end:undefined);
+      const dict={};
+      for(const m of block.matchAll(/"([\w.-]+)":"((?:[^"\\]|\\.)*)"/g)){
+        try{dict[m[1]]=JSON.parse(`"${m[2]}"`).replace(/\{city\}/g,name).replace(/\{agent\}/g,CITY.agent?.name||"")}catch{}
+      }
+      // Только разметка до первого <script> в теле: в самих скриптах ничего не трогаем.
+      const bodyAt=out.indexOf("<body");
+      const scriptAt=out.indexOf("<script",bodyAt);
+      if(bodyAt>0&&scriptAt>bodyAt){
+        let markup=out.slice(bodyAt,scriptAt);
+        markup=markup.replace(/(<(\w+)\b[^>]*\sdata-i18n="([\w.-]+)"[^>]*>)([^<]*)(<\/\2>)/g,
+          (all,open,tag,key,inner,close)=>dict[key]!==undefined?open+text(dict[key])+close:all);
+        markup=markup.replace(/<\w+\b[^>]*\sdata-i18n-(?:placeholder|title|aria)="[^"]+"[^>]*>/g,(tag)=>{
+          for(const [kind,a] of [["placeholder","placeholder"],["title","title"],["aria","aria-label"]]){
+            const k=(tag.match(new RegExp(`data-i18n-${kind}="([\\w.-]+)"`))||[])[1];
+            if(k&&dict[k]!==undefined)tag=tag.replace(new RegExp(`\\s${a}="[^"]*"`),` ${a}="${attr(dict[k])}"`);
+          }
+          return tag;
+        });
+        out=out.slice(0,bodyAt)+markup+out.slice(scriptAt);
+      }
+      if(dict.title)out=out.replace(/<title>[^<]*<\/title>/,`<title>${text(dict.title)}</title>`);
+    }
+  }catch(e){console.error("index:",e.message);out=src}
+  cityIndexCache={src,out};
+  return out;
+}
 
 export {runDialogue,conversationTrim,recommendTool,planTool,dialogueSystem,sharePlan,sharedPlanPage,planEvening,server,store,identify,clientKey};
 

@@ -86,11 +86,27 @@ test("Uber: универсальная ссылка с точкой назнач
   assert.equal(withStart.searchParams.get("pickup"),null);
 });
 
-test("Careem: открывается приложение; неизвестный провайдер отбрасывается", () => {
+test("Careem: универсальная https-ссылка на заказ поездки, адрес — в буфер; неизвестный провайдер отбрасывается", () => {
   const t=load();
   t.configure({providers:["careem","gett","yandexgo"]});
   assert.deepEqual([...t.config.providers],["careem","yandexgo"]);
-  const ls=t.links(BURJ,null);
-  assert.equal(ls[0].url,"careem://ride");
+  const ls=t.links(BURJ,null,{name:"Burj Khalifa",address:"Downtown, Dubai"});
+  // careem:// из Telegram не открывается; путь «/??-??/ride» — из apple-app-site-association careem.com.
+  const u=new URL(ls[0].url);
+  assert.equal(u.protocol,"https:");
+  assert.equal(u.host,"www.careem.com");
+  assert.match(u.pathname,/^\/[a-z]{2}-[A-Z]{2}\/ride$/);
+  assert.equal(ls[0].copy,"Burj Khalifa, Downtown, Dubai","точку назначения Careem не принимает — её кладут в буфер");
   assert.match(ls[1].url,/^https:\/\/3\.redirect\.appmetrica\.yandex\.com\/route\?/);
+  assert.equal(ls[1].copy,undefined);
+});
+
+test("Uber: адрес места уходит в dropoff[formatted_address]", () => {
+  const t=load();
+  t.configure({providers:["uber","careem"]});
+  const [uber,careem]=t.links(BURJ,null,{name:"Burj Khalifa",address:"1 Sheikh Mohammed bin Rashid Blvd, Dubai"});
+  const u=new URL(uber.url);
+  assert.equal(u.searchParams.get("dropoff[nickname]"),"Burj Khalifa");
+  assert.equal(u.searchParams.get("dropoff[formatted_address]"),"1 Sheikh Mohammed bin Rashid Blvd, Dubai");
+  assert.equal(careem.provider,"careem","в Дубае обе кнопки, а не только первая");
 });

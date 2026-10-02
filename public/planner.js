@@ -45,20 +45,36 @@ function guessCategory(text){for(const [c,re] of CAT_RULES)if(re.test(String(tex
 function toMin(t){const m=String(t||"").match(/^(\d{1,2}):(\d{2})/);return m?+m[1]*60 + +m[2]:null}
 function hhmm(min){min=((Math.round(min)%1440)+1440)%1440;return String(Math.floor(min/60)).padStart(2,"0")+":"+String(min%60).padStart(2,"0")}
 function roundUp(min,step){return Math.ceil(min/step)*step}
+// Пара координат в массиве бывает и [lat,lon], и [lon,lat]. Раньше порядок
+// угадывался по московским широтам, и в Дубае ([25.2,55.3]) координаты
+// терялись. Теперь: значение больше 90 — точно долгота, иначе выбираем
+// порядок, который ближе к центру города (FREE_CITY_CENTER), а без центра —
+// прежнее московское правило.
 function coordsPair(c){
   if(!c)return null;
-  if(Array.isArray(c)&&c.length>=2){const a=+c[0],b=+c[1];if(Number.isFinite(a)&&Number.isFinite(b)){if(a>50&&a<60&&b>30&&b<45)return {lat:a,lon:b};if(b>50&&b<60&&a>30&&a<45)return {lat:b,lon:a}}}
+  if(Array.isArray(c)&&c.length>=2){const a=+c[0],b=+c[1];if(Number.isFinite(a)&&Number.isFinite(b)){
+    if(Math.abs(a)>90&&Math.abs(b)<=90)return {lat:b,lon:a};
+    if(Math.abs(b)>90&&Math.abs(a)<=90)return {lat:a,lon:b};
+    const ctr=root.FREE_CITY_CENTER;
+    if(ctr&&Number.isFinite(+ctr.lat)&&Number.isFinite(+ctr.lon)){
+      const d1=Math.abs(a-ctr.lat)+Math.abs(b-ctr.lon),d2=Math.abs(b-ctr.lat)+Math.abs(a-ctr.lon);
+      return d1<=d2?{lat:a,lon:b}:{lat:b,lon:a};
+    }
+    if(a>50&&a<60&&b>30&&b<45)return {lat:a,lon:b};if(b>50&&b<60&&a>30&&a<45)return {lat:b,lon:a}}}
   const lat=+(c.lat??c.latitude),lon=+(c.lon??c.lng??c.longitude);
   return Number.isFinite(lat)&&Number.isFinite(lon)?{lat,lon}:null;
 }
 function haversineKm(a,b){const R=6371,rad=v=>v*Math.PI/180,dlat=rad(b.lat-a.lat),dlon=rad(b.lon-a.lon);const z=Math.sin(dlat/2)**2+Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(dlon/2)**2;return 2*R*Math.asin(Math.sqrt(z))}
-// Переход между точками: пешком до ~2 км, дальше такси; без координат — оценка по умолчанию.
+// Переход между точками: пешком до 1,2 км, дальше такси; без координат — оценка по умолчанию.
+// Раньше пешком считалось всё до 25 минут ходьбы (~1,9 км): в Дубае это полчаса
+// по жаре вдоль шоссе без тротуаров, а в Москве зимой — тоже не прогулка.
+const WALK_KM=1.2;
 function travel(from,to){
   const a=coordsPair(from),b=coordsPair(to);
   if(!a||!b)return {mode:"unknown",minutes:20,km:null};
   const km=haversineKm(a,b);
   const walk=Math.round(km/4.5*60);
-  if(walk<=25)return {mode:"walk",minutes:Math.max(3,walk),km:+km.toFixed(1)};
+  if(km<=WALK_KM)return {mode:"walk",minutes:Math.max(3,walk),km:+km.toFixed(1)};
   return {mode:"taxi",minutes:Math.max(8,Math.round(km/22*60)+5),km:+km.toFixed(1)};
 }
 function yandexRouteUrl(points,origin){
@@ -67,15 +83,21 @@ function yandexRouteUrl(points,origin){
 }
 // Вне Москвы Яндекс Карты маршрут не строят — там Google Maps:
 // origin — первая точка, destination — последняя, остальные — waypoints через «|».
+// Способ — по самому длинному переходу: все не длиннее 1,2 км — пешком, иначе
+// на машине. Раньше всегда стояло walking, и Google вёл пешком через весь город.
 function googleRouteUrl(points,origin){
-  const pts=[origin,...points].filter(Boolean).map(p=>{const c=coordsPair(p.coords||p);return c?`${c.lat},${c.lon}`:`${CITY_NAME()}, ${p.area||p.name||""}`});
+  const list=[origin,...points].filter(Boolean);
+  const cs=list.map(p=>coordsPair(p.coords||p));
+  const pts=list.map((p,i)=>cs[i]?`${cs[i].lat},${cs[i].lon}`:`${CITY_NAME()}, ${p.area||p.name||""}`);
   if(!pts.length)return null;
   const u=new URL("https://www.google.com/maps/dir/");
   u.searchParams.set("api","1");
   if(pts.length>1)u.searchParams.set("origin",pts[0]);
   u.searchParams.set("destination",pts[pts.length-1]);
   if(pts.length>2)u.searchParams.set("waypoints",pts.slice(1,-1).join("|"));
-  u.searchParams.set("travelmode","walking");
+  let longest=0,known=true;
+  for(let i=1;i<cs.length;i++){if(cs[i]&&cs[i-1])longest=Math.max(longest,haversineKm(cs[i-1],cs[i]));else known=false}
+  u.searchParams.set("travelmode",known&&longest<=WALK_KM?"walking":"driving");
   return u.href;
 }
 // Город — из глобали FREE_CITY_ID (страница/сервер); без неё — Москва, как было.
@@ -163,9 +185,19 @@ function parseStops(text){
   const stops=[];
   for(const p of useful){
     const cat=guessCategory(p);
-    const Q=LANG()==="en"
-      ?{food:"dinner restaurant",bar:"bar",hookah:"shisha lounge",coffee:"coffee shop",club:"nightclub",karaoke:"karaoke",spa:"spa",cinema:"cinema",culture:"exhibition",active:"activities",walk:"park walk"}
-      :{food:"ужин ресторан",bar:"бар",hookah:"кальянная",coffee:"кофейня",club:"ночной клуб",karaoke:"караоке",spa:"спа",cinema:"кинотеатр",culture:"выставка",active:"активный отдых",walk:"прогулка парк"};
+    // По-английски берём слова человека, а не категорию: «brunch then beach»
+    // раньше превращалось в «dinner restaurant → park walk», и бранч искался
+    // как ужин, а пляж — как парк. Общие слова («eat», «a drink», «a walk»)
+    // по-прежнему заменяются поисковой фразой категории.
+    if(LANG()==="en"){
+      let own=p.replace(/[.!?]+$/,"").trim(),prev="";
+      while(own!==prev){prev=own;own=own.replace(/^(?:i want to|i want|we want|i'd like to|i'd like|let's|lets|first|then|maybe|we could|go for|go to|grab|have|get|some|a|an|the)\s+/,"").trim()}
+      const generic=/^(?:eat|eating|food|something to eat|drink|drinks|walk|stroll|go out|party|dance|dancing|sing|show)$/.test(own);
+      const QE={food:"restaurant",bar:"bar",hookah:"shisha lounge",coffee:"coffee shop",club:"nightclub",karaoke:"karaoke",spa:"spa",cinema:"cinema",culture:"exhibition",active:"activities",walk:"park walk"};
+      stops.push({query:cat==="show"&&generic?showQuery(p):(own&&!generic?own:(QE[cat]||own||p))});
+      continue;
+    }
+    const Q={food:"ужин ресторан",bar:"бар",hookah:"кальянная",coffee:"кофейня",club:"ночной клуб",karaoke:"караоке",spa:"спа",cinema:"кинотеатр",culture:"выставка",active:"активный отдых",walk:"прогулка парк"};
     const q=cat==="show"?showQuery(p):Q[cat]||p.replace(/^(хочу|давай|сначала|потом|можно|нужно|надо|i want|let's|first|then|maybe|we could)\s+/,"");
     stops.push({query:q});
   }
