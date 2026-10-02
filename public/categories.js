@@ -35,7 +35,9 @@ const CATEGORIES=[
   {tag:"karting",re:/картинг|покататься на карт/,queries:["картинг"],en:["karting","go.?karts?","go.?karting"],queriesEn:["go karting"],extraTags:["active"],osm:['nwr["sport"="karting"]({{bbox}});']},
   // ---- Дубай: чего не было в московском справочнике ----
   {tag:"theatre",re:/театр|спектакл|мюзикл|опер[аыу](?![а-я])|балет/,queries:["театр"],en:["theat(?:er|re)s?","plays?(?! ?areas?| ?grounds?| ?zones?| ?dates?| ?rooms?)","musicals?","opera","ballet","show tonight","comedy (?:club|show|night)s?","stand.?up(?: comedy)?(?! paddle)","comedians?"],queriesEn:["theatre","opera house"],extraTags:["culture"],osm:['nwr["amenity"="theatre"]({{bbox}});']},
-  {tag:"concert",re:/концерт|живая музык|концертн/,queries:["концертный зал","клуб с живой музыкой"],en:["concerts?","live music","gigs?","concert hall","arena","music venue"],queriesEn:["concert hall","live music venue"],extraTags:["music","nightlife"],osm:['nwr["amenity"~"^(music_venue|concert_hall)$"]({{bbox}});']},
+  // «Arena» без уточнения — чаще стадион, падел или лазертаг («Padel Arena»,
+  // «Laser Arena»), а не концертная площадка: по имени места концерт не ставим.
+  {tag:"concert",re:/концерт|живая музык|концертн/,queries:["концертный зал","клуб с живой музыкой"],en:["concerts?","live music","gigs?","concert hall","concert arena","music venue"],queriesEn:["concert hall","live music venue"],extraTags:["music","nightlife"],osm:['nwr["amenity"~"^(music_venue|concert_hall)$"]({{bbox}});']},
   {tag:"themepark",re:/парк развлечен|парк аттракцион|аттракцион|диснейленд/,queries:["парк развлечений"],en:["theme parks?","amusement parks?","rides","rollercoaster","fun park","trampoline(?: parks?)?","indoor play","(?<!vr |virtual reality )arcades?","game zone","gaming zone","rainy day","indoor activit(?:y|ies)","things to do indoors","something fun","fun things?","laser ?tag","laser quest","laser games?"],queriesEn:["theme park","amusement park"],extraTags:["family","active"],osm:['nwr["tourism"="theme_park"]({{bbox}});','nwr["leisure"="amusement_arcade"]({{bbox}});']},
   {tag:"golf",re:/гольф/,queries:["гольф-клуб"],en:["golf","golf course","mini golf","driving range"],queriesEn:["golf club"],extraTags:["active"],osm:['nwr["leisure"~"^(golf_course|miniature_golf)$"]({{bbox}});']},
   {tag:"mosque",service:true,re:/мечет|намаз|помолиться/,queries:["мечеть"],en:["mosques?","masjid","pray(?:er)?","jummah"],queriesEn:["mosque"],osm:['nwr["amenity"="place_of_worship"]["religion"="muslim"]({{bbox}});']},
@@ -109,6 +111,13 @@ const CATEGORIES=[
   {tag:"carrepair",service:true,re:/автосервис|шиномонтаж|автомастерск|техобслуживан|ремонт машин|ремонт авто|развал.схожден/,queries:["автосервис","шиномонтаж"],en:["car repair","mechanic","garage","tyres?","tires?","car service","oil change","wheel alignment"],queriesEn:["car repair","tyre shop"],osm:['nwr["shop"~"^(car_repair|tyres)$"]({{bbox}});']},
   {tag:"fuel",service:true,re:/заправк|бензин|азс(?![а-я])|зарядк для электро/,queries:["заправка"],en:["gas station","petrol station","petrol","fuel","ev charging","charging station"],queriesEn:["petrol station"],osm:['nwr["amenity"="fuel"]({{bbox}});','nwr["amenity"="charging_station"]({{bbox}});']},
   {tag:"parking",service:true,re:/парковк|где оставить машин|припарков/,queries:["парковка"],en:["parking","park my car","car park"],queriesEn:["parking"],osm:['nwr["amenity"="parking"]({{bbox}});']},
+  // Станции метро и трамвая. Русский шаблон узкий: «бар у метро» — это бар,
+  // а не станция; английский — так же («near the metro» станцию не ищет).
+  // Фильтр по сети: в OSM уже нарисована строящаяся Blue Line (без network).
+  {tag:"metro",service:true,re:/станци[а-я]* метро|ближайш[а-я]* (?:станци[а-я]* )?метро|где (?:здесь |тут )?метро/,queries:["станция метро"],
+   en:["metro stations?","metro stops?","(?:nearest|closest) metro","dubai metro","(?<!near (?:the |a )?|by (?:the |a )?|next to (?:the |a )?|close to (?:the |a )?|from (?:the |a )?|off (?:the |a )?)metro(?! card| brewing)","(?:red|green) line","route 2020","tram stations?","tram stops?","dubai tram","(?:take|catch|ride) the tram","subway stations?","(?:nearest|closest) subway"],
+   queriesEn:["metro station","tram station"],
+   osm:['nwr["railway"="station"]["station"="subway"]["network"="Dubai Metro"]({{bbox}});','nwr["railway"="tram_stop"]["network"~"^(Dubai Tram|ترام دبي)$"]({{bbox}});']},
 
   // ---- Покупки и ночлег ----
   {tag:"mall",service:true,re:/торгов[а-я]* центр|(?<![а-я])тц(?![а-я])|(?<![а-я])молл(?![а-я])|шопинг|купить одежд|за покупк/,queries:["торговый центр"],en:["malls?","shopping","shopping cent(?:er|re)","buy clothes","go shopping","outlet"],queriesEn:["shopping mall"],osm:['nwr["shop"~"^(mall|department_store)$"]({{bbox}});']},

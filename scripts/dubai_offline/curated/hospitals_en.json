@@ -1,0 +1,29 @@
+{
+  "_about": "Английские названия крупных больниц Дубая (с отделением неотложной помощи) для мест, у которых в OSM только арабское имя. Ключ — значение name в OSM. Источник английских имён — сайты больниц / DHA (dha.gov.ae).",
+  "names": {
+    "مستشفى راشد": "Rashid Hospital",
+    "مستشفى دبي": "Dubai Hospital",
+    "مستشفى لطيفة": "Latifa Hospital",
+    "مستشفى لطيفة للنساء والأطفال": "Latifa Hospital for Women and Children",
+    "مستشفى الجليلة للأطفال": "Al Jalila Children's Specialty Hospital",
+    "مستشفى حتا": "Hatta Hospital",
+    "مستشفى الكويت": "Al Kuwait Hospital",
+    "مستشفى البراحة": "Al Baraha Hospital",
+    "المستشفى السعودي الألماني": "Saudi German Hospital",
+    "المستشفى الأمريكي": "American Hospital Dubai",
+    "مستشفى الزهراء": "Al Zahra Hospital",
+    "المستشفى الإيراني": "Iranian Hospital",
+    "مستشفى ميديكلينيك سيتي": "Mediclinic City Hospital",
+    "مستشفى ميديكلينك سيتي": "Mediclinic City Hospital",
+    "مستشفى كينجز كوليدج": "King's College Hospital Dubai",
+    "مستشفى الجراحة العصبية والعمود الفقري": "Neuro Spinal Hospital",
+    "مستشفى بلهول التخصصي": "Belhoul Speciality Hospital",
+    "المستشفى الكندي التخصصي": "Canadian Specialist Hospital",
+    "مستشفى زليخة": "Zulekha Hospital",
+    "مستشفى إن إم سي رويال": "NMC Royal Hospital",
+    "مستشفى برايم": "Prime Hospital",
+    "مستشفى أستر": "Aster Hospital",
+    "مستشفى فقيه الجامعي": "Fakeeh University Hospital",
+    "مستشفى الإمارات": "Emirates Hospital"
+  }
+}
