@@ -146,6 +146,34 @@ for(const cat of targets){
   await sleep(PAUSE_MS);
 }
 
+// Второй и третий заходы по тому, что не собралось. Раньше такие категории
+// просто выпадали до завтрашнего таймера: город считался собранным, а на
+// «театр» или «гольф» поиск молчал. Overpass часто отказывает из-за загрузки,
+// а не навсегда — через пару минут та же категория проходит. Бюджет на заход
+// больше, пауза перед ним длиннее, чтобы зеркала успели остыть.
+for(let pass=2;pass<=3&&failed.length;pass++){
+  const retry=failed.splice(0,failed.length);
+  console.log(`\nЗаход ${pass}: повторяю ${retry.length} категорий — ${retry.map(f=>f.tag).join(", ")}`);
+  await sleep(PAUSE_MS*20);
+  for(const f of retry){
+    const cat=targets.find(c=>c.tag===f.tag);if(!cat)continue;
+    const before=total;let got=0;
+    const onBatch=(els)=>{got+=els.length;total=snap.put(els,cat.tag)};
+    try{
+      await withBudget((signal)=>collectCategory(cat,CITY_BBOX,{fetchCell,cap:CAP,pause:()=>sleep(PAUSE_MS*2),onBatch,signal}),
+        CAT_BUDGET_MS*2,cat.tag);
+      snap.markDone(cat.tag);
+      console.log(`  ${cat.tag.padEnd(16)} ${String(got).padStart(5)} объектов, всего ${total} (+${total-before})`);
+    }catch(e){
+      const why=String(e&&e.message||e);
+      if(total-before>=PARTIAL_OK){snap.markDone(cat.tag);partial.push({tag:cat.tag,places:total-before,error:why});
+        console.log(`  ${cat.tag.padEnd(16)} частично: +${total-before}`)}
+      else{failed.push({tag:cat.tag,error:why});console.log(`  ${cat.tag.padEnd(16)} снова ошибка: ${why.slice(0,60)}`)}
+    }
+    await sleep(PAUSE_MS*2);
+  }
+}
+
 // Лучше оставить прежний снимок, чем подменить его огрызком.
 const verdict=snapshotAcceptable({total,failed:failed.length,targets:targets.length});
 if(!verdict.ok){
