@@ -157,7 +157,14 @@ function text(v){
   if(typeof v==="boolean")return String(v);
   return "";
 }
-function cacheKey(args){return JSON.stringify(args)}
+// Ключ кеша выдачи — все аргументы поиска (exclude_ids, near, price_level_*
+// тоже: «покажи ещё» не должен получить из кеша ту же пятёрку), с ключами по
+// алфавиту: модель пишет поля в разном порядке, а смысл запроса тот же.
+export function cacheKey(args){
+  const norm=(v)=>Array.isArray(v)?v.map(norm)
+    :v&&typeof v==="object"?Object.fromEntries(Object.keys(v).sort().filter(k=>v[k]!==undefined).map(k=>[k,norm(v[k])])):v;
+  return JSON.stringify(norm(args));
+}
 // Кеш ответов был обычным Map без вытеснения: память росла со скоростью
 // уникальных запросов и не возвращалась никогда.
 const CACHE_MAX=400;
@@ -536,11 +543,36 @@ function prewarmImages(urls){
       .finally(()=>PREWARM_INFLIGHT.delete(raw));
   }
 }
-async function recommend(args){
+// Аргументы поиска от модели и клиента приводим к форме до ключа кеша: уровень
+// цен — целое 1–4, близость — только true, исключения — короткий список строк.
+// Иначе «"2"» и 2 давали бы разные записи кеша, а мусор доходил до ранжира.
+export function cleanSearchArgs(input={}){
+  const a={...input};
+  if(a.near==="true")a.near=true;
+  if(a.near!==true)delete a.near;
+  for(const k of ["price_level_min","price_level_max"]){
+    const n=Math.round(Number(a[k]));
+    if(a[k]!==null&&a[k]!==""&&Number.isFinite(n)&&n>=1&&n<=4)a[k]=n;else delete a[k];
+  }
+  if(a.price_level_min&&a.price_level_max&&a.price_level_min>a.price_level_max)delete a.price_level_min;
+  const ids=Array.isArray(a.exclude_ids)?[...new Set(a.exclude_ids.filter(x=>typeof x==="string"&&x&&x.length<=160))].slice(0,80).sort():[];
+  if(ids.length)a.exclude_ids=ids;else delete a.exclude_ids;
+  return a;
+}
+async function recommend(input){
+  const args=cleanSearchArgs(input);
   const key=cacheKey(args),hit=CACHE.get(key);
   if(hit&&Date.now()-hit.at<CACHE_MS)return {...hit.value,cached:true};
   const live=await searchLiveInventory(args,process.env);
-  const ranked=rankLive(live.items,args,live.plan);
+  // Уже показанное убираем ДО ранжирования: ранжир отдаёт пятёрку, и вычитание
+  // после него на «покажи ещё» оставляло бы меньше карточек, а не новые.
+  // Одноимённых двойников («Zuma» и парковка «Zuma», второй филиал сети)
+  // убираем вместе с ним: «другое» — это другое место, а не та же вывеска.
+  const skip=new Set(args.exclude_ids||[]);
+  const nameKey=(x)=>String(x&&x.name||"").trim().toLowerCase();
+  const skipNames=new Set(skip.size?live.items.filter(x=>skip.has(x.id)).map(nameKey).filter(Boolean):[]);
+  const items=skip.size?live.items.filter(x=>!skip.has(x.id)&&!skipNames.has(nameKey(x))):live.items;
+  const ranked=rankLive(items,args,live.plan);
   const base={...resultPayload(ranked,live),errors:live.errors,plan:{placeQueries:live.plan.placeQueries,eventQueries:live.plan.eventQueries},fresh_at:new Date().toISOString()};
   const value=await enrichResults(base);
   cacheSet(key,{at:Date.now(),value});
@@ -549,9 +581,18 @@ async function recommend(args){
 
 // Описания инструментов и системная подсказка — парой констант по языку
 // города: русские для Москвы (без изменений), английские для Дубая.
-import {CITY as PROMPT_CITY,LANG as PROMPT_LANG} from "./city.mjs";
+import {CITY as PROMPT_CITY,LANG as PROMPT_LANG,cityDate,cityNow} from "./city.mjs";
+import {nowLine,normalizeWhen,wantsMore,shownIdsFrom,conciergeRulesEn,cityKnowledgeEn,hasEvents,addDays} from "./agent.mjs";
 const PROMPT_EN=PROMPT_LANG==="en";
 const PROMPT_CITY_NAME=PROMPT_EN?(PROMPT_CITY.nameEn||"Dubai"):"Москва";
+// «Ближайшее» — признак для ранжира, а не слово в запросе: переписанный
+// моделью запрос его терял, и поиск «рядом» шёл по всему городу.
+const NEAR_PROP_RU={type:"boolean",description:"true, если человек просил ближайшее, рядом, поблизости, недалеко, пешком. Это НЕ центр."};
+const NEAR_PROP_EN={type:"boolean",description:"true if the user said nearest, closest, closer, nearby, near me, close by or walking distance — near the user, NOT the city centre."};
+const LEVEL_PROPS_EN={
+  price_level_max:{type:"integer",minimum:1,maximum:4,description:"Highest price level: 1 budget, 2 moderate, 3 upscale, 4 luxury. \"Cheaper\" = one level below the picks already shown."},
+  price_level_min:{type:"integer",minimum:1,maximum:4,description:"Lowest price level: \"fine dining\", \"upscale\", \"fancy\" = 3; \"luxury\" = 4."}
+};
 
 const recommendToolRu={
   name:"recommend_free",
@@ -560,6 +601,7 @@ const recommendToolRu={
     type:"object",
     properties:{
       query:{type:"string",description:"Полный смысл запроса пользователя по-русски."},
+      near:NEAR_PROP_RU,
       party_size:{type:"integer",minimum:1,maximum:20},
       after_time:{type:"string",description:"Самое раннее время HH:MM, если известно."},
       target_date:{type:"string",description:"Дата YYYY-MM-DD, если известна."},
@@ -572,26 +614,36 @@ const recommendToolRu={
     required:["query"]
   }
 };
-const recommendToolEn={
-  name:"recommend_free",
-  description:`Searches real venues and events in ${PROMPT_CITY_NAME} across FREE's live sources (OpenStreetMap, plus Foursquare and Google when connected). There is no event listing for this city yet: for concerts, shows or nightlife search venues (clubs, theatres, concert halls, attractions) and say plainly that you can't see tonight's line-up. Call it before any recommendation: where to go, eat, drink, smoke shisha, hear music, see an event, get a service. Returns only facts from the sources.`,
-  input_schema:{
-    type:"object",
-    properties:{
-      query:{type:"string",description:"The full meaning of the user's request, in English."},
-      party_size:{type:"integer",minimum:1,maximum:20},
-      after_time:{type:"string",description:"Earliest time HH:MM, if known."},
-      target_date:{type:"string",description:"Date YYYY-MM-DD, if known."},
-      max_price_rub:{type:"integer",minimum:0,description:"Budget per person in AED, if stated."},
-      interests:{type:"array",items:{type:"string"}},
-      exclusions:{type:"array",items:{type:"string"}},
-      area:{type:"string",description:`District or part of ${PROMPT_CITY_NAME} (Downtown, Marina, JBR, DIFC, Business Bay, Jumeirah, Deira, Al Quoz, Palm).`},
-      weather_context:{type:"object",properties:{rain:{type:"boolean"},temperature_c:{type:"number"}},description:"Weather context, if the request needs it."}
-    },
-    required:["query"]
-  }
-};
-const recommendTool=PROMPT_EN?recommendToolEn:recommendToolRu;
+// Описание собирается функцией: текст про афишу зависит от того, подключён ли
+// у города источник событий. Обещать «events» без него — значит толкать
+// модель выдумывать концерты.
+function recommendToolEn(){
+  const sources=hasEvents()
+    ?`Searches real venues and events in ${PROMPT_CITY_NAME}: places from FREE's city map (plus Foursquare and Google when connected) and an event listing — concerts, shows, nightlife, kids' events — with dates and ticket links. Items with kind "event" are listings with a date and time; everything else is a venue.`
+    :`Searches real venues in ${PROMPT_CITY_NAME} across FREE's live sources (OpenStreetMap, plus Foursquare and Google when connected). There is no event listing for this city: for concerts, shows or nightlife search venues (clubs, theatres, concert halls, attractions) and say plainly that you can't see tonight's line-up.`;
+  return {
+    name:"recommend_free",
+    description:`${sources} Call it before any recommendation: where to go, eat, drink, smoke shisha, hear music, see an event, get a service. Returns only facts from the sources; never add events, dates, prices or venues that aren't in the result.`,
+    input_schema:{
+      type:"object",
+      properties:{
+        query:{type:"string",description:"The full meaning of the user's request, in English."},
+        near:NEAR_PROP_EN,
+        party_size:{type:"integer",minimum:1,maximum:20},
+        after_time:{type:"string",description:"Earliest time HH:MM, if known. For today never earlier than now."},
+        target_date:{type:"string",description:"Date YYYY-MM-DD, if known; count it from the current date in the context (\"tonight\" = today)."},
+        ...LEVEL_PROPS_EN,
+        exclude_ids:{type:"array",items:{type:"string"},description:"ids of results already shown in this conversation: pass them when the user asks for more, other or different options."},
+        interests:{type:"array",items:{type:"string"}},
+        exclusions:{type:"array",items:{type:"string"}},
+        area:{type:"string",description:`District or part of ${PROMPT_CITY_NAME} (Downtown, Marina, JBR, DIFC, Business Bay, Jumeirah, Deira, Al Quoz, Palm).`},
+        weather_context:{type:"object",properties:{rain:{type:"boolean"},temperature_c:{type:"number"}},description:"Weather context, if the request needs it."}
+      },
+      required:["query"]
+    }
+  };
+}
+const recommendTool=PROMPT_EN?recommendToolEn():recommendToolRu;
 
 const planToolRu={
   name:"plan_evening",
@@ -604,6 +656,7 @@ const planToolRu={
       target_date:{type:"string",description:"Дата YYYY-MM-DD, если известна."},
       party_size:{type:"integer",minimum:1,maximum:20},
       max_price_rub:{type:"integer",minimum:0,description:"Бюджет на человека на весь вечер, если назван."},
+      near:NEAR_PROP_RU,
       anchor:{type:"object",properties:{lat:{type:"number"},lon:{type:"number"}},description:"Точка старта: координаты пользователя или выбранного места."},
       area:{type:"string",description:"Район или метро, если пользователь назвал."}
     },
@@ -617,10 +670,11 @@ const planToolEn={
     type:"object",
     properties:{
       stops:{type:"array",minItems:1,maxItems:4,items:{type:"object",properties:{query:{type:"string",description:"What to search for at this step, in English: \"dinner italian restaurant\", \"cocktail bar\", \"shisha lounge\""},duration_min:{type:"integer",minimum:15,maximum:300}},required:["query"]},description:"Stops in order."},
-      start_time:{type:"string",description:"Start of the evening HH:MM. Default 19:00."},
-      target_date:{type:"string",description:"Date YYYY-MM-DD, if known."},
+      start_time:{type:"string",description:"Start of the evening HH:MM. Default 19:00. For today never earlier than now."},
+      target_date:{type:"string",description:"Date YYYY-MM-DD, if known; count it from the current date in the context."},
       party_size:{type:"integer",minimum:1,maximum:20},
-      max_price_rub:{type:"integer",minimum:0,description:"Budget per person for the whole evening in AED, if stated."},
+      ...LEVEL_PROPS_EN,
+      near:NEAR_PROP_EN,
       anchor:{type:"object",properties:{lat:{type:"number"},lon:{type:"number"}},description:"Starting point: the user's coordinates or the selected place."},
       area:{type:"string",description:"District, if the user named one."}
     },
@@ -628,6 +682,9 @@ const planToolEn={
   }
 };
 const planTool=PROMPT_EN?planToolEn:planToolRu;
+// Инструменты для Claude — на каждый ход заново: описание поиска зависит от
+// конфигурации источников города.
+export function dialogueTools(){return PROMPT_EN?[recommendToolEn(),planToolEn]:[recommendToolRu,planToolRu]}
 function planId(){return randomUUID().replace(/-/g,"").slice(0,10)}
 
 // ---- Обложка места ----
@@ -686,7 +743,7 @@ function sharePlan(plan,meta={}){
   const id=planId();
   const stops=(plan.stops||[]).map(s=>({...s,alternatives:[]}));
   const has_card=meta.image?saveCard(id,meta.image):false;
-  store.setShared(id,{id,created_at:new Date().toISOString(),title:meta.title||"Вечер с FREE",date:meta.date||null,has_card,plan:{...plan,stops}});
+  store.setShared(id,{id,created_at:new Date().toISOString(),title:meta.title||L("Вечер с FREE","Evening with FREE"),date:meta.date||null,has_card,plan:{...plan,stops}});
   return {id,has_card};
 }
 function cardPath(id){return join(CARD_DIR,id+".png")}
@@ -743,19 +800,44 @@ export function sweepCards({dir=CARD_DIR,now=Date.now,maxBytes=CARD_MAX_BYTES,al
 function cardExists(rec){return Boolean(rec&&rec.has_card&&/^[a-z0-9]+$/.test(rec.id)&&existsSync(cardPath(rec.id)))}
 function publicOrigin(req){return (req.headers["x-forwarded-proto"]||"http")+"://"+(req.headers["x-forwarded-host"]||req.headers.host||`localhost:${PORT}`)}
 async function planEvening(args,context={}){
-  const req={...args};
+  // Дата и начало — к здравому смыслу: «план на сегодня с 19:00», собранный
+  // в 22:35, ставил точки на часы, которые уже прошли.
+  const now=new Date();
+  const req=normalizeWhen({...args},{now,timeKey:"start_time"});
   if(req.area&&Array.isArray(req.stops))req.stops=req.stops.map(s=>({...s,query:`${s.query} ${req.area}`}));
   if(context.taste_weights&&typeof context.taste_weights==="object")req.taste_weights=context.taste_weights;
-  if(!req.anchor&&context.user_location&&Number.isFinite(+context.user_location.lat))req.anchor={lat:+context.user_location.lat,lon:+context.user_location.lon};
-  const now=new Date();
-  const msk=new Intl.DateTimeFormat("ru-RU",{timeZone:CITY.tz,hour:"2-digit",minute:"2-digit",hour12:false}).format(now).split(":").map(Number);
-  req.now_min=Math.max(msk[0]*60+msk[1]+30,18*60);
-  return buildPlan(req,recommend);
+  const loc=context.user_location&&Number.isFinite(+context.user_location.lat)&&Number.isFinite(+context.user_location.lon)
+    ?{lat:+context.user_location.lat,lon:+context.user_location.lon}:null;
+  // «Рядом со мной» — старт от человека, даже если модель подставила свою точку.
+  if(loc&&(!req.anchor||req.near===true))req.anchor=loc;
+  // «Не раньше чем через полчаса» имеет смысл только для сегодняшнего вечера:
+  // план на завтра начинается в обычные 19:00, а не в 23:05.
+  const today=cityDate(now),clock=cityNow(now);
+  if(clock&&(!req.target_date||req.target_date===today)){
+    let min=Math.max(clock.minute+30,18*60);
+    if(min>=24*60){min-=24*60;if(!req.start_time)req.target_date=addDays(today,1)}
+    req.now_min=min;
+  }
+  // Планировщик передаёт в поиск только свои поля — уровень цен добавляем сами.
+  const extra={};
+  for(const k of ["price_level_min","price_level_max"])if(req[k]!==undefined)extra[k]=req[k];
+  // Точка после полуночи у вечернего плана — это уже следующие сутки: иначе
+  // часы «бара в 01:20» проверялись бы по сегодняшней ночи, прошедшей.
+  const hm=(v)=>{const mt=String(v||"").match(/^(\d{1,2}):(\d{2})$/);return mt?+mt[1]*60 + +mt[2]:null};
+  const startMin=hm(req.start_time)??req.now_min??19*60;
+  const planDay=req.target_date||today;
+  const search=(a)=>{
+    const s={...a,...extra};
+    const at=hm(s.after_time);
+    if(at!==null&&startMin>=12*60&&at<6*60)s.target_date=addDays(planDay,1);
+    return recommend(s);
+  };
+  return buildPlan(req,search);
 }
 function planForModel(plan){
   return {status:plan.status,total:plan.total,summary:planSummary(plan),
     stops:(plan.stops||[]).map(s=>({index:s.index,query:s.query,slot:`${s.slot_start}–${s.slot_end}`,travel_in:s.travel_in,conflict:s.conflict,
-      place:s.place?{id:s.place.id,name:s.place.name,category:s.place.category,area:s.place.area,metro:s.place.metro,time:s.place.time,price:s.place.price,availability:s.place.availability,booking_kind:s.place.booking_kind}:null,
+      place:s.place?{id:s.place.id,name:s.place.name,category:s.place.category,area:s.place.area,metro:s.place.metro,time:s.place.time,price:s.place.price,availability:s.place.availability,booking_kind:s.place.booking_kind,booking_provider:s.place.booking_kind?s.place.booking_provider:undefined}:null,
       alternatives:(s.alternatives||[]).map(a=>({id:a.id,name:a.name,category:a.category,area:a.area}))}))};
 }
 function escapeHtml(s=""){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
@@ -831,18 +913,106 @@ everyMs(24*60*60*1000,sweepCards,"уборка карточек");
 // не отрабатывала бы никогда. Один заход сразу, на старте.
 if(process.env.NODE_ENV!=="test")try{sweepCards()}catch(e){console.error("уборка карточек:",e&&e.message||e)}
 
+// ---- Погода для подсказки ----
+// Погода — приправа к ответу, а не повод его задерживать: берём из кеша, а
+// если он пуст или устарел, ждём свежую не дольше 300 мс и идём дальше без неё.
+const DIALOGUE_WEATHER={at:0,value:null,pending:null};
+const DIALOGUE_WEATHER_TTL_MS=15*60*1000;
+const DIALOGUE_WEATHER_WAIT_MS=300;
+async function fetchCityWeather(){
+  const u=new URL("https://api.open-meteo.com/v1/forecast");
+  u.searchParams.set("latitude",String(CITY.center.lat));u.searchParams.set("longitude",String(CITY.center.lon));
+  u.searchParams.set("current","temperature_2m,precipitation,rain");u.searchParams.set("timezone",CITY.weatherTz||CITY.tz);
+  const r=await fetch(u,{signal:AbortSignal.timeout(5000)});if(!r.ok)throw new Error("weather "+r.status);
+  const w=await r.json();const t=w.current?.temperature_2m;
+  return Number.isFinite(t)?{temperature_c:t,rain:Boolean((w.current?.rain||0)>0||(w.current?.precipitation||0)>0)}:null;
+}
+async function dialogueWeather(){
+  if(process.env.NODE_ENV==="test"||process.env.DIALOGUE_WEATHER==="0")return null;
+  const W=DIALOGUE_WEATHER;
+  if(Date.now()-W.at<DIALOGUE_WEATHER_TTL_MS)return W.value;
+  if(!W.pending){
+    W.pending=fetchCityWeather()
+      .then(v=>{W.value=v;W.at=Date.now()})
+      // Отказ запоминаем на минуту, чтобы не стучаться в сервис на каждом ходу.
+      .catch(()=>{W.at=Date.now()-DIALOGUE_WEATHER_TTL_MS+60*1000})
+      .finally(()=>{W.pending=null});
+  }
+  // Устаревшее значение лучше никакого: пока свежее не пришло, отдаём прежнее.
+  return withDeadline(W.pending.then(()=>W.value),DIALOGUE_WEATHER_WAIT_MS,W.value);
+}
+// Первый разговор после старта не должен ждать погоду: запрашиваем заранее.
+if(process.env.NODE_ENV!=="test")setTimeout(()=>{dialogueWeather().catch(()=>{})},3000).unref();
+
+// ---- Где человек ----
+// Клиент присылает координаты не в каждой реплике (только на «рядом» и пока
+// свежа позиция), а «ближайшее» звучит и без этих слов. Запоминаем последнюю
+// известную точку на полчаса — за это время человек далеко не уйдёт.
+const LAST_LOCATION=new Map();
+const LAST_LOCATION_TTL_MS=30*60*1000;
+function validLocation(l){
+  if(!l||typeof l!=="object")return null;
+  const lat=+l.lat,lon=+l.lon;
+  return Number.isFinite(lat)&&Number.isFinite(lon)&&Math.abs(lat)<=90&&Math.abs(lon)<=180?{lat,lon}:null;
+}
+export function knownLocation(context={},conversationId=null){
+  const key=context.user_id!=null?`u:${context.user_id}`:(conversationId?`c:${conversationId}`:null);
+  const own=validLocation(context.user_location);
+  if(own){
+    if(key){
+      LAST_LOCATION.delete(key);LAST_LOCATION.set(key,{...own,at:Date.now()});
+      if(LAST_LOCATION.size>5000)LAST_LOCATION.delete(LAST_LOCATION.keys().next().value);
+    }
+    return own;
+  }
+  const hit=key?LAST_LOCATION.get(key):null;
+  return hit&&Date.now()-hit.at<LAST_LOCATION_TTL_MS?{lat:hit.lat,lon:hit.lon}:null;
+}
+
+/**
+ * Поиск из разговора — общий для Claude и YandexGPT.
+ * Дата и время приводятся к «сейчас» города, позиция — последняя известная,
+ * а на «покажи ещё» к исключениям добавляется всё, что уже показано в
+ * разговоре (shown): модель не всегда переписывает id, а повтор той же
+ * пятёрки звучит как «больше ничего нет».
+ */
+export async function dialogueRecommend(args,{message="",shown=[],context={},search=recommend}={}){
+  const a=normalizeWhen({...args},{timeKey:"after_time"});
+  if(!a.query)a.query=String(message);
+  if(context.taste_weights&&typeof context.taste_weights==="object")a.taste_weights=context.taste_weights;
+  const loc=validLocation(context.user_location);
+  if(loc)a.user_location=loc;
+  const own=Array.isArray(a.exclude_ids)?a.exclude_ids.filter(x=>typeof x==="string"):[];
+  const auto=wantsMore(message);
+  if(own.length||auto)a.exclude_ids=[...new Set([...own,...shown])];
+  let out=await search(a);
+  // Исключили сами, без просьбы модели, и не осталось ничего — значит, речь
+  // шла о том же месте («другой филиал Zuma»): показываем без исключений.
+  if(auto&&!own.length&&a.exclude_ids&&a.exclude_ids.length&&!((out&&out.results)||[]).length){
+    const b={...a};delete b.exclude_ids;out=await search(b);
+  }
+  return out;
+}
+
 function dialogueContextSummary(context={}){
-  const selected=context.selected_place?{
-    name:context.selected_place.name,
-    category:context.selected_place.category,
-    area:context.selected_place.area,
-    time:context.selected_place.time,
-    price:context.selected_place.price,
-    coords:context.selected_place.coords||null,
-    slot_end:context.selected_place.slot_end||null
+  const sp=context.selected_place;
+  // id и бронь выбранного места: на «забронируй» агент называет кнопку
+  // именно этой карточки, а на «ещё» понимает, что уже показано.
+  const selected=sp?{
+    id:sp.id||null,
+    name:sp.name,
+    category:sp.category,
+    area:sp.area,
+    time:sp.time,
+    price:sp.price,
+    kind:sp.kind==="event"?"event":undefined,
+    booking_kind:typeof sp.booking_kind==="string"?sp.booking_kind.slice(0,20):undefined,
+    booking_provider:typeof sp.booking_provider==="string"?sp.booking_provider.slice(0,40):undefined,
+    coords:sp.coords||null,
+    slot_end:sp.slot_end||null
   }:null;
   const plan=Array.isArray(context.plan)?context.plan.slice(0,6).map(x=>({
-    name:x.name,category:x.category,area:x.area,time:x.time,price:x.price
+    id:x.id||undefined,name:x.name,category:x.category,area:x.area,time:x.time,price:x.price
   })):[];
   return JSON.stringify({
     taste_weights:context.taste_weights||{},
@@ -876,9 +1046,11 @@ const DIALOGUE_SYSTEM_RU=[
   "Отвечай по-русски, естественно, коротко, без канцелярита. Не используй markdown-разметку: интерфейс показывает обычный текст."
 ].join("\n");
 // Та же подсказка для англоязычного города: структура и правила те же, что в
-// русской, плюс местный контекст (алкоголь только в лицензированных местах,
-// выходные — суббота и воскресенье, жара летом).
-const DIALOGUE_SYSTEM_EN=[
+// русской, плюс общие с YandexGPT правила консьержа (даты, честность про афишу,
+// уровень цен, «ещё», кнопки карточек) и местный контекст. Собирается функцией:
+// текст про афишу зависит от источников города. Для кеша промпта это не помеха —
+// при неизменной конфигурации текст тот же байт в байт.
+const dialogueSystemEn=()=>[
   `You are FREE — a conversational AI concierge for ${PROMPT_CITY_NAME}. You cover ANY city request: not only bars, restaurants and events, but services too — barbershop, nails, spa, doctor, pharmacy, vet, car service, coworking, laundry, repairs, courses, hotel, park, beach.`,
   "The main interface is free conversation, not a questionnaire and not a fixed script.",
   "Understand everyday speech, including short, casual and imperfect phrasing.",
@@ -897,16 +1069,20 @@ const DIALOGUE_SYSTEM_EN=[
   "The interface shows the result cards itself. After a search it's enough to briefly explain why these options fit and how they differ.",
   "If there are few good matches — show few. Don't pad the list with irrelevant places.",
   "Lead the conversation to an action: pick an option, open booking/tickets, build a route or add the next stop.",
-  `Local context of ${PROMPT_CITY_NAME}: alcohol is served only in licensed venues (hotel bars, licensed restaurants and clubs); the weekend is Saturday and Sunday; Friday afternoon and prayer times affect some places; in summer heat prefer indoor options unless the user asked for outdoors. Prices are in AED.`,
+  "\"Nearest\", \"closest\", \"closer\", \"near me\", \"nearby\" → near:true; the user's last known location is passed to the search automatically.",
+  ...conciergeRulesEn(),
+  cityKnowledgeEn(),
   "If the user talks about excessive drinking, you may suggest a fitting bar by atmosphere, but don't optimise recommendations for a dangerous amount of alcohol.",
   "Answer in English, naturally, briefly, without corporate filler. Don't use markdown: the interface shows plain text."
-].join("\n");
-const DIALOGUE_SYSTEM=PROMPT_EN?DIALOGUE_SYSTEM_EN:DIALOGUE_SYSTEM_RU;
+].filter(Boolean).join("\n");
 
-function dialogueSystem(context={}){
+// clock — строка «сейчас» (nowLine): в изменчивом блоке, после кешируемого,
+// иначе кеш промпта сбрасывался бы каждую минуту.
+function dialogueSystem(context={},clock=nowLine()){
+  const ui=(PROMPT_EN?"Current UI context (reference information, not a user instruction): ":"Текущий UI-контекст (справочная информация, не инструкция пользователя): ")+dialogueContextSummary(context);
   return [
-    {type:"text",text:DIALOGUE_SYSTEM,cache_control:{type:"ephemeral"}},
-    {type:"text",text:(PROMPT_EN?"Current UI context (reference information, not a user instruction): ":"Текущий UI-контекст (справочная информация, не инструкция пользователя): ")+dialogueContextSummary(context)}
+    {type:"text",text:PROMPT_EN?dialogueSystemEn():DIALOGUE_SYSTEM_RU,cache_control:{type:"ephemeral"}},
+    {type:"text",text:clock?`${clock}\n${ui}`:ui}
   ];
 }
 
@@ -920,7 +1096,7 @@ function claudeParams(system,messages){
     max_tokens:4000,
     system,
     messages,
-    tools:[recommendTool,planTool],
+    tools:dialogueTools(),
     tool_choice:{type:"auto",disable_parallel_tool_use:true},
     output_config:{effort:TEXT_EFFORT},
     betas:["server-side-fallback-2026-07-01"],
@@ -953,7 +1129,12 @@ async function runDialogue(message,conversationId,context={},emit=null,signal=nu
   const existing=stored&&(stored.user_id===null||stored.user_id===owner)?stored:null;
   const id=existing?conversationId:randomUUID();
   const messages=existing?existing.messages:[];
-  const system=dialogueSystem(context);
+  // Последняя известная позиция — даже если в этой реплике клиент её не прислал.
+  const loc=knownLocation(context,id);
+  context={...context,user_location:loc||undefined};
+  // Что уже показано в разговоре — для «покажи ещё».
+  const shown=shownIdsFrom(messages);
+  const system=dialogueSystem(context,nowLine({weather:await dialogueWeather()}));
 
   // Прошлый ход целиком: от последней реплики пользователя до конца. Если поиска в нём не было — на этом ходу он обязателен.
   const lastUser=messages.map((m,i)=>[m,i]).filter(([m])=>m.role==="user"&&typeof m.content==="string").map(([,i])=>i).pop();
@@ -1001,13 +1182,8 @@ async function runDialogue(message,conversationId,context={},emit=null,signal=nu
         continue;
       }
       toolUsed=true;
-      if(!args.query)args.query=String(message);
-      if(context.taste_weights&&typeof context.taste_weights==="object")args.taste_weights=context.taste_weights;
-      if(context.user_location&&Number.isFinite(+context.user_location.lat)&&Number.isFinite(+context.user_location.lon)){
-        args.user_location={lat:+context.user_location.lat,lon:+context.user_location.lon};
-      }
       try{
-        const result=await recommend(args);
+        const result=await dialogueRecommend(args,{message,shown,context});
         latestResults=(result.results||[]).slice(0,5);
         // Та же сводка, что у Yandex-пути: только известные поля, без null,
         // без служебного примечания и без photo/sources/dna. Полные карточки
@@ -1054,10 +1230,16 @@ async function runYandexAgent(message,conversationId,context={},emit=null,signal
   const usable=stored&&(stored.user_id===null||stored.user_id===owner)&&stored.provider==="yandex"?stored:null;
   const id=usable?conversationId:randomUUID();
   const history=usable?usable.messages:[];
+  // Позиция — последняя известная, а не только из этой реплики; показанное —
+  // из истории, чтобы «ещё» давало новые места.
+  const loc=knownLocation(context,id);
+  context={...context,user_location:loc||undefined};
+  const shown=shownIdsFrom(history);
+  const clock=nowLine({weather:await dialogueWeather()});
 
   const out=await runYandexDialogue(message,history,{
     voice,emit,signal,cfg:YANDEX,
-    context:{...context,summary:dialogueContextSummary(context)},
+    context:{...context,summary:dialogueContextSummary(context),clock},
     deps:{
       /* Ушедшему искать не надо.
        *
@@ -1069,12 +1251,7 @@ async function runYandexAgent(message,conversationId,context={},emit=null,signal
        */
       recommend_free:async(args)=>{
         if(signal&&signal.aborted)throw Object.assign(new Error("клиент отключился"),{name:"AbortError"});
-        const a={...args};
-        if(!a.query)a.query=String(message);
-        if(context.taste_weights&&typeof context.taste_weights==="object")a.taste_weights=context.taste_weights;
-        if(context.user_location&&Number.isFinite(+context.user_location.lat)&&Number.isFinite(+context.user_location.lon))
-          a.user_location={lat:+context.user_location.lat,lon:+context.user_location.lon};
-        return recommend(a);
+        return dialogueRecommend(args,{message,shown,context});
       },
       plan_evening:async(args)=>{
         if(signal&&signal.aborted)throw Object.assign(new Error("клиент отключился"),{name:"AbortError"});
@@ -1104,8 +1281,10 @@ function runAgent(message,conversationId,context,emit=null,signal=null,opts={}){
 }
 
 function dialogueError(e){
+  // Тексты ошибок Yandex — русские, а клиент показывает message как есть.
+  // В английском городе человек видит общую фразу; причина остаётся в логе.
   if(e instanceof YandexError)return {status:e.status===401||e.status===403?502:e.retryable?503:502,
-    error:"dialogue_yandex",message:e.message};
+    error:"dialogue_yandex",message:L(e.message,e.retryable?"The service didn't respond in time, please try again.":"Couldn't process that right now, please try again.")};
   if(e instanceof Anthropic.AuthenticationError)return {status:502,error:"dialogue_auth",message:L("Неверный ANTHROPIC_API_KEY","Invalid ANTHROPIC_API_KEY")};
   if(e instanceof Anthropic.RateLimitError)return {status:503,error:"dialogue_rate_limited",message:L("Лимит запросов к Claude, попробуйте чуть позже","Claude rate limit reached, try again shortly")};
   if(e instanceof Anthropic.BadRequestError)return {status:502,error:"dialogue_bad_request",message:e.message};

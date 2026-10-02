@@ -85,8 +85,12 @@ test("схема инструмента валидна", ()=>{
 
 test("plan_evening: план возвращается в ответе, модель получает сводку", async ()=>{
   const {sharePlan,sharedPlanPage}=await import("../server.mjs");
+  const {cityDate}=await import("../city.mjs");
+  const {addDays}=await import("../agent.mjs");
+  // План на завтра: на сегодня 19:00 после семи вечера сдвигается к «сейчас».
+  const tomorrow=addDays(cityDate(),1);
   const client=mockClient([
-    ()=>({model:"m",stop_reason:"tool_use",content:[{type:"tool_use",id:"tu_p",name:"plan_evening",input:{stops:[{query:"ужин"},{query:"бар"}],start_time:"19:00"}}]}),
+    ()=>({model:"m",stop_reason:"tool_use",content:[{type:"tool_use",id:"tu_p",name:"plan_evening",input:{stops:[{query:"ужин"},{query:"бар"}],start_time:"19:00",target_date:tomorrow}}]}),
     (req)=>{const tr=req.messages.at(-1).content[0];assert.equal(tr.tool_use_id,"tu_p");const parsed=JSON.parse(tr.content);assert.ok("summary" in parsed);assert.equal(parsed.stops.length,2);
       return {model:"m",stop_reason:"end_turn",content:[{type:"text",text:"План готов."}]}}
   ]);

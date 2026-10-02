@@ -83,7 +83,8 @@ export async function runYandexDialogue(message,history=[],{
 }={}){
   if(!Number.isFinite(maxRounds))maxRounds=voice?VOICE_ROUNDS:MAX_ROUNDS;
   const send=(type,data)=>{if(emit){try{emit(type,data)}catch{}}};
-  const system=agentSystem({voice,context:context.summary||""});
+  // clock — «сейчас» с погодой от сервера; без него подсказка считает время сама.
+  const system=agentSystem({voice,context:context.summary||"",clock:context.clock});
   const messages=trimHistory([...history,{role:"user",text:String(message||"")}]);
 
   const says=[];let results=[],plan=null,toolUsed=false;
