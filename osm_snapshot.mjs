@@ -263,6 +263,22 @@ export function openSnapshot(file,{now=Date.now}={}){
     order by (p.lat-?)*(p.lat-?)+(p.lon-?)*(p.lon-?)*${LON_WEIGHT}
     limit ?`);
 
+  // Отбор по тегу из tags_json («"outdoor_seating":"yes"», «"free:michelin":»):
+  // таких признаков нет в индексе рубрик, а уточнение запроса («с террасой»,
+  // «Мишлен», «приёмный покой») без них не найти среди 120 ближайших.
+  // Полный проход по 50 тысячам строк — десятки миллисекунд, и делается только
+  // для запросов с таким уточнением.
+  const byJson=db.prepare(`
+    select p.pid,p.otype,p.oid,p.lat,p.lon,p.tags_json
+    from place p
+    where instr(p.tags_json,?)>0 and p.lat between ? and ? and p.lon between ? and ?
+    order by (p.lat-?)*(p.lat-?)+(p.lon-?)*(p.lon-?)*${LON_WEIGHT}
+    limit ?`);
+  // Рубрики, которые есть в самой базе (их добавляет сборка карты, например
+  // «metro»), ищутся, даже если справочник категорий о них ещё не знает.
+  let ptagSet=new Set();
+  try{ptagSet=new Set(db.prepare("select distinct tag from ptag").all().map(r=>r.tag))}catch{}
+
   const row=(r)=>{
     let tags={};try{tags=JSON.parse(r.tags_json)}catch{}
     return {type:r.otype,id:r.oid,lat:r.lat,lon:r.lon,tags};
@@ -315,6 +331,11 @@ export function openSnapshot(file,{now=Date.now}={}){
         }catch{/* синтаксис FTS — не повод падать */}
       }
       const focus=(Array.isArray(plan.focus)?plan.focus:[]).map(w=>norm(w)).filter(w=>w.length>=3).slice(0,3);
+      // Слово с синонимами сначала ищется само по себе: «Maui Kayak Shop» не
+      // должен тонуть среди сорока ближайших «Watersports» по синониму.
+      for(const w of focus)if(aliases[w]){
+        try{for(const r of byName.all(one(w),box.south,box.north,box.west,box.east,at.lat,at.lat,at.lon,at.lon,40))if(!seen.has(r.pid))seen.set(r.pid,row(r))}catch{}
+      }
       if(focus.length){
         const qAnd=fq(focus,"AND");
         const qOr=fq(focus,"OR");
@@ -326,7 +347,13 @@ export function openSnapshot(file,{now=Date.now}={}){
           if(seen.size)break;
         }
       }
-      const tags=(plan.tags||[]).filter(t=>CATEGORY_KEYS.has(t));
+      const cats=new Set(Array.isArray(plan.cats)?plan.cats:[]);
+      // Соседние занятия («kayaking» → «watersports») — по названию, после основного.
+      for(const w of (Array.isArray(plan.relatedFocus)?plan.relatedFocus:[]).map(x=>norm(x)).filter(x=>x.length>=3).slice(0,4)){
+        const q=w.includes(" ")?`"${w.replace(/"/g,'""')}"`:`"${w.replace(/"/g,'""')}"*`;
+        try{for(const r of byName.all(q,box.south,box.north,box.west,box.east,at.lat,at.lat,at.lon,at.lon,30))if(!seen.has(r.pid))seen.set(r.pid,row(r))}catch{}
+      }
+      const tags=(plan.tags||[]).filter(t=>CATEGORY_KEYS.has(t)||(cats.has(t)&&ptagSet.has(t)));
       // Лимит делится между тегами: раньше первый тег забирал его целиком, и
       // «куда сходить вечером» (бары, еда, кальян) давало одни бары.
       const per=tags.length?Math.max(20,Math.ceil(limit/tags.length)):limit;
@@ -334,9 +361,29 @@ export function openSnapshot(file,{now=Date.now}={}){
         for(const r of byTag.all(t,box.south,box.north,box.west,box.east,at.lat,at.lat,at.lon,at.lon,per))
           if(!seen.has(r.pid))seen.set(r.pid,row(r));
       }
+      // Уточнения из тегов (терраса, Мишлен, приёмный покой, станция метро) —
+      // поверх рубрик: по городу, ближайшие к точке. Идут отдельным списком
+      // после основного, чтобы общий предел их не срезал.
+      const head=new Map([...seen.entries()].slice(0,limit));
+      const extra=new Map();
+      const add=(r)=>{if(!head.has(r.pid)&&!extra.has(r.pid))extra.set(r.pid,row(r))};
+      const jsonTags=(Array.isArray(plan.jsonTags)?plan.jsonTags:[]).filter(s=>typeof s==="string"&&s.length>=4).slice(0,6);
+      const jbox=p?box:CITY_BBOX;
+      for(const jt of jsonTags){
+        try{
+          for(const r of byJson.all(jt,jbox.south,jbox.north,jbox.west,jbox.east,at.lat,at.lat,at.lon,at.lon,60))add(r);
+        }catch{/* повреждённая строка не повод падать */}
+      }
+      // «Ресторан с видом на Бурдж-Халифу»: те же рубрики вокруг ориентира.
+      const anchor=ok(plan.landmark);
+      if(anchor){
+        const ab={south:anchor.lat-0.02,north:anchor.lat+0.02,west:anchor.lon-0.022,east:anchor.lon+0.022};
+        for(const t of tags)
+          for(const r of byTag.all(t,ab.south,ab.north,ab.west,ab.east,anchor.lat,anchor.lat,anchor.lon,anchor.lon,Math.max(30,per)))add(r);
+      }
       // Категория не опознана, но место всё равно ищут по названию — как и в
       // живом запросе, где для этого собирается фильтр по name.
-      if(!seen.size){
+      if(!seen.size&&!extra.size){
         const q=ftsQuery(plan.coreQuery||plan.safeQuery||plan.raw||"");
         if(q){
           try{
@@ -345,7 +392,7 @@ export function openSnapshot(file,{now=Date.now}={}){
           }catch{/* синтаксис FTS — не повод падать */}
         }
       }
-      return [...seen.values()].slice(0,limit);
+      return [...[...seen.values()].slice(0,limit),...extra.values()];
     },
     close(){try{db.close()}catch{}}
   };

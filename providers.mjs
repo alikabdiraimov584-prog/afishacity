@@ -7,7 +7,8 @@ import {structuralTags,placeTitle,tagTitle} from "./osm_tags.mjs";
 import {openSnapshot} from "./osm_snapshot.mjs";
 import {statSync,readFileSync} from "node:fs";
 import {DatabaseSync} from "node:sqlite";
-import {CITY,cityDate,bboxString,L} from "./city.mjs";
+import {CITY,cityDate,cityNow,bboxString,L} from "./city.mjs";
+import {hoursSane} from "./hours.mjs";
 export {structuralTags};
 
 // Центр города в формате «lon,lat» — для 2GIS и Яндекса.
@@ -122,23 +123,434 @@ function districtOf(q){
 }
 // Кухни: «sushi», «italian», «indian» — не категория, а уточнение внутри «еды».
 // Ищутся по тегу cuisine и по названию, и место не той кухни уходит вниз.
-export const CUISINES=new Set(["sushi","japanese","italian","indian","chinese","thai","lebanese","arabic","arab","emirati","turkish","french","mexican","korean","vietnamese","greek","persian","iranian","pakistani","filipino","american","pizza","steak","steakhouse","seafood","fish","vegan","vegetarian","georgian","russian","spanish","mediterranean","asian","ramen","burger","burgers","bbq","barbecue","shawarma","falafel","indonesian","malaysian","african","ethiopian","brazilian","peruvian","argentinian","syrian","egyptian","moroccan","uzbek","afghan","nepalese","srilankan","german","british","healthy","kebab","noodles","noodle","dimsum","tapas","poke","pasta","biryani","mandi","dumplings","cantonese","sichuan","yemeni","levantine","fusion","breakfast","brunch","tea","dosa","dimsum","tacos","taco","thali","southindian"]);
+export const CUISINES=new Set(["sushi","japanese","italian","indian","chinese","thai","lebanese","arabic","arab","emirati","turkish","french","mexican","korean","vietnamese","greek","persian","iranian","pakistani","filipino","american","pizza","steak","steakhouse","seafood","fish","vegan","vegetarian","georgian","russian","spanish","mediterranean","asian","ramen","burger","burgers","bbq","barbecue","shawarma","falafel","indonesian","malaysian","african","ethiopian","brazilian","peruvian","argentinian","syrian","egyptian","moroccan","uzbek","afghan","nepalese","srilankan","german","british","healthy","kebab","noodles","noodle","dimsum","tapas","poke","pasta","biryani","mandi","dumplings","cantonese","sichuan","yemeni","levantine","fusion","breakfast","brunch","tea","dosa","dimsum","tacos","taco","thali","southindian",
+  // Диеты — тоже уточнение внутри «еды»: «keto friendly food», «gluten free bakery».
+  "keto","lowcarb","paleo","glutenfree","dairyfree","sugarfree","organic"]);
 // Слова, которые описывают желание, а не название: по ним не ищем в названиях.
-const FOCUS_SKIP=new Set(["cheap","expensive","luxury","luxurious","romantic","quiet","cozy","cosy","family","friendly","late","open","now","top","nice","new","popular","local","authentic","traditional","fancy","budget","affordable","upscale","casual","great","cool","fun","hidden","gem","gems","famous","must","see","visit","worth","free","small","big","beautiful","amazing","awesome","perfect","date","kids","children","couple","couples","group","outdoor","indoor","inside","outside","view","views","terrace","live","music","night","day","weekend","dinner","lunch","city","area","street","near","close","walking","distance","here","there","tonight","today","tomorrow","evening","morning","afternoon","good","best","the","and","for","with","what","where","which","some","any","get","go","going","eat","drink","drinks","try","want","need","like","love","place","places","spot","spots","recommend","suggest","show","find","looking","dubai","uae","can","could","would","will","shall","may","might","must","india","pakistan","philippines","nepal","bangladesh","egypt","uk","usa","abroad","home","country","fine","rental","rentals","south","north","east","west","first","time","should","somewhere","someplace","anywhere","local","locals","hidden","gem","watch","whats","thing","work","working","study","studying","sea","ocean","water","seaside","beachfront","take","bring","read","reading","relax","relaxing","sit","talk","meet","meeting","celebrate","spend","enjoy","explore","taste","watch","listen","play","stay","sunset","sunrise","district","neighborhood","neighbourhood","quarter","public","private","idea","plan","plans","holiday","vacation","parents","mom","dad","mother","father","grandparents","colleagues","team","boss","client","clients","guests","visitors","tourist","tourists","anniversary","occasion","speaking","english","hindi","rainy","sunny","hot","cold","weather","buy","purchase","order","rent","hire","get","make","do","see","visit","monday","tuesday","wednesday","thursday","friday","saturday","sunday","mondays","tuesdays","wednesdays","thursdays","fridays","saturdays","sundays","class","classes","lesson","lessons","session","sessions","course","trip","tour","ticket","tickets","booking","book","reservation","table","seat","seats","option","alone","solo","friend","friends","wife","husband","family","parents","people","guys","girls","hours","late","early","midnight","24h","hour","minutes","away","walk","drive","car","taxi","metro","station","under","over","less","more","much","many","very","really","just","only","also","still","again","another","other","else","different","same","similar","like","good","better","quick","fast","slow","easy","hard"]);
+const FOCUS_SKIP=new Set(["halal","cheap","expensive","luxury","luxurious","romantic","quiet","cozy","cosy","family","friendly","late","open","now","top","nice","new","popular","local","authentic","traditional","fancy","budget","affordable","upscale","casual","great","cool","fun","hidden","gem","gems","famous","must","see","visit","worth","free","small","big","beautiful","amazing","awesome","perfect","date","kids","children","couple","couples","group","outdoor","indoor","inside","outside","view","views","terrace","live","music","night","day","weekend","dinner","lunch","city","area","street","near","close","walking","distance","here","there","tonight","today","tomorrow","evening","morning","afternoon","good","best","the","and","for","with","what","where","which","some","any","get","go","going","eat","drink","drinks","try","want","need","like","love","place","places","spot","spots","recommend","suggest","show","find","looking","dubai","uae","can","could","would","will","shall","may","might","must","india","pakistan","philippines","nepal","bangladesh","egypt","uk","usa","abroad","home","country","fine","rental","rentals","south","north","east","west","first","time","should","somewhere","someplace","anywhere","local","locals","hidden","gem","watch","whats","thing","work","working","study","studying","sea","ocean","water","seaside","beachfront","take","bring","read","reading","relax","relaxing","sit","talk","meet","meeting","celebrate","spend","enjoy","explore","taste","watch","listen","play","stay","sunset","sunrise","district","neighborhood","neighbourhood","quarter","public","private","idea","plan","plans","holiday","vacation","parents","mom","dad","mother","father","grandparents","colleagues","team","boss","client","clients","guests","visitors","tourist","tourists","anniversary","occasion","speaking","english","hindi","rainy","sunny","hot","cold","weather","buy","purchase","order","rent","hire","get","make","do","see","visit","monday","tuesday","wednesday","thursday","friday","saturday","sunday","mondays","tuesdays","wednesdays","thursdays","fridays","saturdays","sundays","class","classes","lesson","lessons","session","sessions","course","trip","tour","ticket","tickets","booking","book","reservation","table","seat","seats","option","alone","solo","friend","friends","wife","husband","family","parents","people","guys","girls","hours","late","early","midnight","24h","hour","minutes","away","walk","drive","car","taxi","metro","station","under","over","less","more","much","many","very","really","just","only","also","still","again","another","other","else","different","same","similar","like","good","better","quick","fast","slow","easy","hard"]);
 const SPECIFIC_EN=new Set(["bike","bikes","bicycle","bicycles","scooter","scooters","desert","camping","glamping","spice","spices","dates","eye","eyes","ophthalmologist","dermatologist","dermatology","pediatrician","paediatrician","gynecologist","orthopedic","cardiologist","rooftop","outlet","dolphin","jetski","zipline","dimsum","paddleboarding","lasertag","driving","dosa","surf","kitesurf","dance","dancing","cooking","cookery","pottery","painting","guitar","piano","singing","ballet","salsa","zumba","baking","barista","calligraphy","shoe","shoes","cobbler","abra","coworking","cowork","skydiving","skydive","paragliding","zipline","ziplining","bungee","camel","balloon","helicopter","seaplane","hammam","moroccan","padel","squash","badminton","pickleball","pilates","crossfit","boxing","kickboxing","muay","karate","taekwondo","judo","jiujitsu","bjj","gelato","kunafa","knafeh","baklava","abaya","abayas","kandura","oud","bakhoor","iphone","samsung","sim","kayak","kayaking","paddleboard","jetski","parasailing","flyboard","snorkeling","snorkelling","scuba","fishing","dhow","bowling","billiards","snooker","darts","trampoline","paintball","archery","horse","horseback","riding","polo","cricket","football","basketball","volleyball","surfing","kitesurfing","wakeboarding","sandboarding","quad","buggy","dune","stargazing","massage","facial","waxing","threading","eyebrow","eyelash","lashes","botox","filler","braces","whitening","implant","lasik","tattoo","piercing","henna","manicure","pedicure","balayage","keratin","sauna","jacuzzi","steam","cryotherapy","hijama","acupuncture","physiotherapy","chiropractor"]);
 // Как занятие пишут в названиях: «XLine» — это зиплайн, «Surf School» — сёрфинг.
 export const FOCUS_ALIAS={jetski:["jetski","jet ski"],zipline:["zipline","zip line","xline"],dimsum:["dimsum","dim sum"],
   paddleboarding:["paddle","sup"],lasertag:["laser tag","lasertag","laser quest"],surfing:["surf"],kitesurfing:["kitesurf","kite surf"],
-  skiing:["ski"],kayaking:["kayak"],snorkeling:["snorkel"],snorkelling:["snorkel"],sandboarding:["sandboard"],wakeboarding:["wakeboard"],
+  skiing:["ski"],kayaking:["kayak","canoe"],
+  keto:["keto","low carb","healthy","salad","poke","protein"],lowcarb:["keto","low carb","healthy","salad","protein"],glutenfree:["gluten"],snorkeling:["snorkel"],snorkelling:["snorkel"],sandboarding:["sandboard"],wakeboarding:["wakeboard"],
   skydiving:["skydiv"],paragliding:["paraglid"],driving:["driving"],dosa:["dosa","south indian","udupi"],southindian:["south indian","dosa","udupi"]};
 const NAME_STOP=new Set(["by","sea","ocean","water","view","views","the","a","an","of","to","in","at","on","for","is","are","where","what","how","get","go","going","visit","visiting","ticket","tickets","price","prices","cost","open","opening","hours","time","times","near","me","nearby","best","top","please","show","find","tell","about","i","we","can","do","you","my","our","and","with","from","it","there","here","s"]);
 const FOCUS_GENERIC=new Set(["shop","shops","store","stores","salon","salons","studio","studios","center","centre","centers","centres","venue","venues","lounge","lounges","house","room","rooms","point","service","services","branch","shopping","food","foods","drink","restaurant","restaurants","cafe","cafes","options","option","ideas","idea","activity","activities","thing","things","stuff","experience","experiences","attraction","attractions","sightseeing","entertainment","fun","relax","relaxing","chill"]);
 function wordIsCategory(w){
   for(const r of PLACE_RULES)if(r.re.test(w))return true;
   for(const r of EVENT_RULES)if(r.re.test(w))return true;
+  // Дубай: «comedy», «concert», «events» — рубрика афиши, а не название места.
+  if(CITY.lang==="en")for(const r of EVENT_RULES_EN)if(r.re.test(w))return true;
   return false;
 }
+
+/* ---- Английский словарь намерений (Дубай) ----
+   Раньше всё, что не было рубрикой, становилось поиском по названию:
+   «what's open after midnight» находил барбершоп «Before & After», «michelin
+   restaurant» — шины Michelin, «girls night out» — салон «Blow Out», «surprise
+   me» — «Surprise Cinema», «call me a taxi» — «Call Doctor». Здесь запрос
+   разбирается на намерения: время, цена, повод, «удиви меня», «в помещении»,
+   действие («забронируй столик в X» → ищем X). Слова намерений из запроса
+   вырезаются, и по названию ищется только то, что действительно похоже на имя. */
+// Общие английские слова: по ним никогда не ищем названия мест.
+const GENERIC_EN=new Set(["within","walk","walkable","min","mins","km","meters","metres","me","my","mine","i","im","ive","id","it","its","you","your","yours","we","us","our","they","them","their","this","that","these","those","is","are","was","were","be","been","am","do","does","did","doing","done","go","goes","went","get","gets","got","let","lets","make","take","call","calling","book","need","want","wanna","gonna","gotta","like","feel","feeling","so","too","very","really","just","also","out","up","down","off","over","into","onto","about","after","before","since","until","till","around","through","while","during","now","then","than","when","why","how","who","whom","whose","which","what","whats","where","wheres","there","here","right","yes","no","not","dont","doesnt","cant","wont","isnt","ok","okay","hey","hi","hello","thanks","thank","please","pls","sure","maybe","something","anything","everything","nothing","someone","anyone","somewhere","anywhere","everywhere","one","ones","two","three","four","five","six","seven","eight","nine","ten","eleven","twelve","people","person","persons","pax","guests","guys","girls","girl","ladies","lady","boys","men","women","lot","lots","bit","little","much","many","more","most","less","least","few","some","any","all","both","each","every","other","another","such","same","own","new","old","big","small","low","long","short","hot","cold","warm","cool","nice","good","great","best","better","bad","fun","funny","interesting","boring","bored","surprise","random","different","special","unique","unusual","exciting","cheap","cheaper","cheapest","expensive","pricey","fancy","free","open","opened","closed","late","early","night","nights","nite","tonight","today","tomorrow","yesterday","morning","afternoon","evening","midnight","noon","weekend","week","day","days","hour","hours","minute","minutes","time","times","star","stars","starred","rated","guide","michelin","table","tables","reservation","reservations","seat","directions","direction","way","route","number","phone","address","location","map","near","nearest","closest","closer","nearby","close","far","walking","distance","inside","outside","indoor","indoors","outdoor","outdoors","heat","weather","sunny","rain","rainy","raining","air","conditioned","aircon","birthday","bday","party","celebrate","celebrating","celebration","occasion","business","meeting","client","clients","corporate","solo","alone","myself","ourselves","friendly","allowed","welcome","diet","options","option","serve","serves","serving","drinks","alcohol","licensed","boozy","group","crowd","gang","squad","hen","bachelorette","entertain","ideas","idea","dunno","know","kill","spend","available","still","currently","moment","asap","quick","quickly","soon","later","tonights","todays","whole","entire","top","seating","area","seats","al","fresco","alfresco","terrace","view","views","overlooking","facing","looking","emergency","urgent","er","ae","casualty","ambulance","trauma"]);
+const NUM_WORDS={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,eleven:11,twelve:12,fifteen:15,twenty:20};
+const DOW_CODES=["mo","tu","we","th","fr","sa","su"];
+const DOW_FULL={monday:"mo",tuesday:"tu",wednesday:"we",thursday:"th",friday:"fr",saturday:"sa",sunday:"su"};
+// Достопримечательности, «вид на которые» просят: сама башня — не ответ на
+// «ресторан с видом на Бурдж-Халифу», ответ — рестораны рядом с видом.
+const LANDMARKS=[
+  // cue — где вид на ориентир точно есть: Souk Al Bahar и отели вокруг фонтана,
+  // Madinat и Al Qasr напротив Burj Al Arab.
+  {re:/burj khalifa|dubai fountains?|the fountains?|\bfountain\b/,name:"burj khalifa",lat:25.1972,lon:55.2744,
+    cue:"souk al bahar|palace downtown|address downtown|address sky view|address boulevard|burj park|waterfront|fountain|burj lake|at the top|armani hotel|vida downtown|manzil"},
+  {re:/burj al arab/,name:"burj al arab",lat:25.1412,lon:55.1853,cue:"madinat|al qasr|mina a salam|jumeirah beach hotel|al naseem|souk madinat"},
+  {re:/ain dubai/,name:"ain dubai",lat:25.0797,lon:55.1201},
+  {re:/dubai frame/,name:"dubai frame",lat:25.2353,lon:55.3004},
+  {re:/\bthe palm\b|palm jumeirah|atlantis/,name:"palm",lat:25.1124,lon:55.1390},
+  {re:/dubai creek|\bcreek\b/,name:"creek",lat:25.2400,lon:55.3300},
+  {re:/dubai marina|\bmarina\b/,name:"marina",lat:25.0805,lon:55.1403}
+];
+// Местное время «HH:MM» из текста: «at 2am», «2 a.m.», «after 11pm», «23:30»,
+// «till 4am». Ответ {min, kind:"at"|"after"|"until"|"before"} или null.
+// «for 10 people» и «under 50 aed» временем не считаются: нужен am/pm или «:».
+function clockOf(lo){
+  let m=lo.match(/(?:^|[^a-z0-9])(at|after|around|by|till|til|until|before|from|past)?\s*(\d{1,2})(?:[:.](\d{2}))?\s*(a\.?\s?m\b\.?|p\.?\s?m\b\.?)/);
+  let h,mm,kind;
+  if(m){
+    h=+m[2]%12;if(/^p/.test(m[4]))h+=12;mm=+(m[3]||0);kind=m[1]||"at";
+  }else{
+    m=lo.match(/(?:^|[^a-z0-9])(at|after|around|by|till|til|until|before|from|past)?\s*([01]?\d|2[0-3]):([0-5]\d)(?!\d)/);
+    if(m){h=+m[2];mm=+m[3];kind=m[1]||"at"}
+    else if((m=lo.match(/(at|after|past|around|till|til|until|before|by)\s+(midnight|noon)/))){h=m[2]==="noon"?12:0;mm=0;kind=m[1]}
+  }
+  if(h===undefined||h>23||mm>59)return null;
+  kind=/^(till|til|until|by)$/.test(kind)?"until":/^(after|past|from)$/.test(kind)?"after":kind==="before"?"before":"at";
+  return {min:h*60+mm,kind};
+}
+const hhmm2=(min)=>`${String(Math.floor(((min%1440)+1440)%1440/60)).padStart(2,"0")}:${String(((min%1440)+1440)%1440%60).padStart(2,"0")}`;
+export function englishIntent(raw,args={}){
+  const lo=text(raw).toLowerCase().replace(/[’`]/g,"'");
+  // Апостроф склеивает слово: «what's» → «whats», «i'm» → «im», «kid's» → «kids».
+  let q=norm(lo.replace(/'/g,"")).replace(/\bgolf courses?\b/g,"golf").replace(/\bplant based\b/g,"vegan")
+    .replace(/\bgluten[ -]?free\b/g,"glutenfree").replace(/\blow[ -]?carbs?\b/g,"lowcarb").replace(/\bdairy[ -]?free\b/g,"dairyfree").replace(/\bsugar[ -]?free\b/g,"sugarfree");
+  const I={};
+  const cut=(re)=>{q=q.replace(re," ").replace(/\s+/g," ").trim()};
+  let m;
+  // --- Действие: такси, бронь, звонок, дорога. Слово действия — не название.
+  if(/\b(?:call|get|book|order|need|want|find|grab|hail)(?: me| us)? (?:a |an )?(?:taxi|cab|uber|careem|ride)\b|^(?:a )?(?:taxi|cab)(?: please| now)?$|\b(?:taxi|cab) (?:to|please|now)\b/.test(q)){
+    I.action="taxi";q="";
+  }else if((m=q.match(/^(?:please |can you |could you |i want to |i d like to |id like to |help me |i need to )?(?:book|reserve|get|grab|make)(?: me| us)?(?: an?)?(?: table| spot| reservation| booking| seat)s?(?: for (?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|twelve)(?: people| persons| of us| guests| pax| adults)?)?(?: tonight| today| tomorrow)?(?: at| in| for)? ?(.*)$/))&&/table|spot|reservation|booking|seat/.test(q.slice(0,60))){
+    I.action="book";q=m[1]||"";
+  }else if((m=q.match(/^(?:please )?(?:book|reserve)(?: me| us)? (?:at|in) (.+)$/))){
+    I.action="book";q=m[1];
+  }else if((m=q.match(/^(?:please |can you |could you )?(?:call|dial)(?: up)? (?!me\b|us\b|cent(?:er|re)s?\b)(.+)$/))){
+    I.action="call";q=m[1];
+  }else if((m=q.match(/^(?:please )?(?:(?:give me |show me |get )?directions? to|route to|navigate to|(?:take|get|drive|walk|bring) me to|how (?:do|can|could) (?:i|we) get to|how to get to|way to|show me the way to|guide me to) (.+)$/))){
+    I.action="directions";q=m[1];
+  }else if((m=q.match(/^(?:(?:what is |whats )?(?:the )?(?:phone number|number|menu|opening hours|hours|address|reviews?|price|prices|location) (?:of|for|at)|tell me about|info (?:on|about)|information (?:on|about)|what about|where is|wheres) (.+)$/))){
+    I.action="lookup";q=m[1];
+  }else if((m=q.match(/^is (.+?) open(?: right)?(?: now| today| tonight| tomorrow| late)?$/))){
+    I.action="lookup";I.openNow=!/tomorrow/.test(q);q=m[1];
+  }
+  // Запрос до вырезания слов времени: «show tonight» — это театр, а без
+  // «tonight» слово «show» рубрику уже не даёт.
+  I.preTime=q;
+  // Глагол в начале («book a desert safari», «find me sushi») — не рубрика «книги».
+  cut(/^(?:please )?(?:book|reserve|find|show|recommend|suggest|get)(?: me| us)?\b(?! (?:shops?|stores?|club|fair|sellers?|cafe)\b)/);
+  // --- Время и день.
+  const clock=clockOf(lo);
+  if(clock){
+    I.timeMin=clock.kind==="until"?clock.min-30:clock.kind==="before"?clock.min-60:clock.min;
+    I.timeExplicit=true;
+    if(clock.min>=23*60||clock.min<=5*60)I.lateNight=true;
+    cut(/\b(?:at|after|around|by|till|til|until|before|from|past)? ?\d{1,2}(?: \d{2})? ?(?:a m|p m|am|pm)\b/g);
+    cut(/\b(?:at|after|around|by|till|til|until|before|from|past)? ?(?:[01]?\d|2[0-3]) [0-5]\d\b/g);
+  }
+  if(/\b(?:after|past) midnight\b|\blate ?night\b|\bopen late\b|\blate (?:food|eats|bite|dinner|snacks?|spots?|places?|bars?|cafes?|restaurants?|hours|opening)\b|\btill late\b|\buntil late\b|\bnight ?owl\b|\bafter hours\b|\bwee hours\b/.test(q)){
+    I.lateNight=true;if(I.timeMin===undefined){I.timeMin=30;I.timeSoft=true}
+    cut(/\b(?:after|past) midnight\b|\blate ?night\b|\bopen late\b|\btill late\b|\buntil late\b|\bnight ?owl\b|\bafter hours\b|\bwee hours\b|\blate\b/g);
+  }
+  if(/\b24 ?(?:h|hrs?|hours?)\b|\b24 ?7\b|\bround the clock\b|\baround the clock\b|\ball night\b|\bopen all day and night\b|\bnonstop\b/.test(q)||/24\/7/.test(lo)){
+    I.allNight=true;cut(/\b24 ?(?:h|hrs?|hours?)\b|\b24 ?7\b|\b(?:a)?round the clock\b|\ball night\b|\bopen all day and night\b|\bnonstop\b|\bhours?\b/g);
+  }
+  if(/\bopen (?:right )?now\b|\bright now\b|\bcurrently open\b|\bstill open\b|\bopen at the moment\b|\bopen\b.*\bnow\b|\bnow\b/.test(q)&&I.timeMin===undefined){I.openNow=true}
+  if(/\b(?:whats|what is|anything|something|places?|where s|wheres|stuff) (?:still )?open\b/.test(q)&&I.timeMin===undefined&&!I.allNight)I.openNow=true;
+  cut(/\b(?:open (?:right )?now|right now|currently open|still open|at the moment|open)\b|\bnow\b/g);
+  if(/\btonight\b|\bthis evening\b|\btoday evening\b|\bthis night\b|\btonights\b/.test(q)){I.tonight=true;cut(/\btonights?\b|\bthis evening\b|\btoday evening\b|\bthis night\b/g)}
+  if(/\btomorrow\b/.test(q)){I.tomorrow=true;if(/tomorrow (?:night|evening)/.test(q)&&I.timeMin===undefined){I.timeMin=20*60;I.timeSoft=true}cut(/\btomorrow(?: (?:night|evening|morning|afternoon))?\b/g)}
+  if(/\btoday\b/.test(q)){I.today=true;cut(/\btoday\b/g)}
+  if(/\b(?:this |next |the |on the |for the )?weekend\b/.test(q)){I.weekend=true;cut(/\b(?:this |next |the |on the |for the |on )?weekends?\b/g)}
+  for(const [full,code] of Object.entries(DOW_FULL)){
+    const re=new RegExp(`\\b(?:on |this |next |coming )?${full}s?\\b`);
+    if(re.test(q)){I.dow=code;cut(new RegExp(re.source,"g"));break}
+  }
+  I.afterTime=q;
+  // Приёмы пищи задают время, когда место должно работать.
+  if(/\bbreakfast\b/.test(q)&&I.timeMin===undefined){I.timeMin=9*60;I.timeSoft=true;I.meal="breakfast"}
+  if(/\bbrunch\b/.test(q)&&I.timeMin===undefined){I.timeMin=13*60;I.timeSoft=true;I.meal="brunch"}
+  if(/\blunch\b/.test(q)&&I.timeMin===undefined){I.timeMin=13*60;I.timeSoft=true;I.meal="lunch"}
+  // --- Цена и класс.
+  if(/\bmichelin\b|\bbib gourmand\b/.test(q)){I.michelin=true;cut(/\bmichelin(?: guide)?(?: (?:star|stars|starred|rated|recommended|listed|restaurants? guide))?\b|\bbib gourmand\b|\bstarred\b|\b(?:\d|one|two|three) stars?\b|\bstars?\b/g)}
+  if(/fine dining|upscale|luxur\w*|fancy|high.?end|gourmet|classy|elegant|sophisticated|posh|\bexpensive\b|high class|exclusive|premium|\bswanky\b|\bupmarket\b/.test(q)&&!/\b(?:not|less|in)expensive\b|not too expensive/.test(q)){I.upscale=true;I.priceMin=3}
+  if(/\bcheap(?:er|est)?\b|\bbudget\b|\baffordable\b|\binexpensive\b|\blow.?cost\b|\bvalue for money\b|\bnot (?:too )?expensive\b|\bless expensive\b|\blower price|\bon a budget\b|\bbargain\b/.test(q)){I.cheap=true;I.priceMax=/cheap(?!er)|budget|bargain/.test(q)?1:2;delete I.priceMin;I.upscale=false}
+  if((m=lo.match(/(?:under|below|less than|max|maximum|up to|within|for)\s*(?:aed|dhs?|dirhams?)?\s*(\d{2,4})\s*(?:aed|dhs?|dirhams?)?/))&&/aed|dhs?\b|dirham/.test(lo)){
+    const aed=+m[1];I.budgetAed=aed;I.priceMax=aed<=60?1:aed<=150?2:aed<=350?3:4;cut(/\b(?:under|below|less than|max|maximum|up to|within|for)? ?(?:aed|dhs?|dirhams?)? ?\d{2,4} ?(?:aed|dhs?|dirhams?)?\b/g);
+  }
+  // --- Поводы.
+  if(/\bgirls? ?(?:night|nite|day|trip|out)\b|\bladies ?(?:night|nite)\b|\bnight out with (?:the |my )?girls\b|\bhen (?:party|night|do)\b|\bbachelorette\b/.test(q)){
+    I.occasion="girls";cut(/\b(?:girls?|ladies) ?(?:night|nite|day|trip)?(?: out)?\b|\bnight out with (?:the |my )?girls\b|\bhen (?:party|night|do)\b|\bbachelorette(?: party)?\b|\bout\b/g);
+  }else if(/\bnight out\b|\bgo(?:ing)? out tonight\b|\bparty tonight\b/.test(q)){I.occasion="nightout";cut(/\bnight out\b|\bgo(?:ing)? out\b/g)}
+  if(/\b(?:birthday|bday|b day)\b/.test(q)){I.occasion="birthday";cut(/\b(?:birthday|bday|b day)\b|\bcelebrat\w*\b/g)}
+  if(/\bbusiness (?:lunch|dinner|meeting|breakfast)\b|\bclient (?:lunch|dinner|meeting)\b|\blunch meeting\b|\bworking lunch\b|\bcorporate (?:lunch|dinner)\b|\bmeet(?:ing)? (?:a |with )?clients?\b|\bimpress (?:a |my )?clients?\b/.test(q)){
+    I.occasion="business";cut(/\bbusiness\b|\bclients?\b|\bcorporate\b|\bmeeting\b|\bworking\b|\bimpress\b/g);
+  }
+  if(/\bsolo\b|\balone\b|\bby myself\b|\bon my own\b/.test(q)){I.occasion=I.occasion||"solo";cut(/\bsolo(?: travell?er)?\b|\balone\b|\bby myself\b|\bon my own\b/g)}
+  const ps=Number(args.party_size);
+  if(Number.isFinite(ps)&&ps>0)I.partySize=ps;
+  else if((m=q.match(/\b(?:for|of|group of|party of|table for|with)\s+(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty)\s*(?:people|persons|guests|pax|friends|adults|of us|colleagues)?\b/))||(m=q.match(/\b(\d{1,2})\s*(?:people|persons|guests|pax|adults|of us)\b/))){
+    const n=NUM_WORDS[m[1]]||+m[1];if(n>=2&&n<=60){I.partySize=n;cut(/\b(?:for|of|group of|party of|table for|with)? ?(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty) (?:people|persons|guests|pax|friends|adults|of us|colleagues)\b/g)}
+  }
+  // --- «Удиви меня», «скучно», «что-нибудь интересное»: не название места.
+  const VAGUE=/\bsurprise me\b|\bim bored\b|\bi am bored\b|\bbored\b|\bsomething (?:fun|different|interesting|cool|new|unusual|exciting|nice)\b|\banything fun\b|\bfun things?\b|\bsomething to do\b|\bwhat (?:should|can|could) (?:i|we) do\b|\bwhat to do\b|\bentertain me\b|\bdont know what to do\b|\bany ideas\b|\bideas\b|\brandom\b|\bkill (?:some )?time\b|\bthings to do\b|\bwhat can i do\b|\bfun\b/;
+  if(VAGUE.test(q)){I.vague=true;cut(new RegExp(VAGUE.source.replace(/\\bfun\\b$/,"\\bfun\\b|\\bto do\\b|\\bsomething\\b|\\banything\\b"),"g"))}
+  // --- «Жарко, хочу в помещение».
+  const INDOOR=/\bindoors?\b|\binside\b|\bair ?con\w*\b|\bac\b|\btoo hot\b|\bits (?:so |too |really |very )?hot\b|\bso hot\b|\bvery hot\b|\b(?:escape|beat|avoid) the heat\b|\bout of the (?:sun|heat)\b|\bcool (?:off|down)\b|\brainy\b|\bits raining\b|\braining\b/;
+  if(INDOOR.test(q)){I.indoor=true;cut(new RegExp(INDOOR.source,"g"))}
+  // --- Уточнения к месту.
+  if(/\boutdoor (?:seating|terrace|tables?|area|dining|space)\b|\bterrace\b|\bal ?fresco\b|\bpatio\b|\bgarden (?:seating|area)\b|\bsit outside\b|\boutside seating\b|\bseating outside\b|\bopen air\b|\boutdoor\b/.test(q)&&!/\boutdoor (?:activit|sports?|pool|cinema|adventure)/.test(q)){
+    I.outdoor=true;cut(/\boutdoor (?:seating|terrace|tables?|area|dining|space)\b|\boutdoor\b|\bal ?fresco\b|\bsit outside\b|\boutside seating\b|\bseating outside\b/g);
+  }
+  if(/\b(?:pet|dog|cat)s? ?friendly\b|\bwith (?:my|a|our) (?:dog|pet|puppy)\b|\bdogs? (?:allowed|welcome)\b|\bbring (?:my|a|our) dog\b/.test(q)){
+    I.pet=true;cut(/\b(?:pet|dog|cat)s? ?friendly\b|\bwith (?:my|a|our) (?:dog|pet|puppy)\b|\bdogs? (?:allowed|welcome)\b|\bbring (?:my|a|our) dog\b/g);
+  }
+  if(/\blive (?:music|band|bands|jazz|singer|singers|performance|performances|entertainment|acts?|dj)\b|\bband playing\b|\bjazz (?:bar|club|night|lounge)\b|\bgigs?\b/.test(q))I.liveMusic=true;
+  if(/\bwith drinks\b|\bboozy\b|\blicensed\b|\balcohol\b|\bserv(?:es|ing) (?:alcohol|beer|wine|drinks)\b|\bget a (?:beer|drink|glass of wine)\b|\bbubbly\b/.test(q))I.drinks=true;
+  // Вид на достопримечательность: сама башня в выдачу ресторанов не идёт.
+  if(/\bviews?\b|\boverlooking\b|\bfacing\b|\blooking (?:at|over)\b/.test(q)){
+    I.view=true;
+    const lm=LANDMARKS.find(l=>l.re.test(q));
+    if(lm&&!/\b(?:sea|ocean|water)\b/.test(q.replace(lm.re," "))||lm&&lm.name!=="marina"){
+      I.landmark={name:lm.name,lat:lm.lat,lon:lm.lon,cue:lm.cue||null};
+      // Марина остаётся районом поиска, остальные ориентиры вырезаем из имени.
+      if(lm.name!=="marina")cut(new RegExp(lm.re.source,"g"));
+    }
+    cut(/\b(?:with |a |an |the |great |nice |good |amazing |stunning )*views? (?:of|on|over|to)(?: the)?\b|\bviews?\b|\boverlooking(?: the)?\b|\bfacing(?: the)?\b|\blooking (?:at|over)(?: the)?\b/g);
+  }
+  // --- Скорая и больница.
+  if(/\bemergency\b|\ber\b|\ba ?(?:&|and)? ?e\b(?= (?:room|department|dept))|\burgent care\b|\bcasualty\b|\btrauma (?:center|centre|unit)\b|\bambulance\b/.test(q)){
+    I.emergency=true;cut(/\bemergency(?: (?:room|department|dept|ward|unit|services?))?\b|\ber\b|\burgent care\b|\bcasualty\b|\bambulance\b/g);
+  }
+  if(/\bhospitals?\b/.test(q))I.hospital=true;
+  // --- Метро и трамвай: «station» без «gas/petrol/police» — это станция.
+  if(/\b(?:metro|subway|underground|tram)\b|\btrain stations?\b|\b(?:nearest|closest) stations?\b|^stations?$/.test(q)&&!/\b(?:gas|petrol|fuel|police|fire|bus|charging|service|radio|play) stations?\b/.test(q)){
+    I.metro=true;cut(/\b(?:metro|subway|underground|tram|train)\b|\bstations?\b|\bstops?\b/g);
+  }
+  I.clean=q.replace(/\s+/g," ").trim();
+  return I;
+}
+// Ближайший день недели (код «mo»…«su») от даты «сегодня» по городу.
+function nextDow(code,today,todayCode){
+  const d=(DOW_CODES.indexOf(code)-DOW_CODES.indexOf(todayCode)+7)%7;
+  return addDays(today,d);
+}
+// Даты из намерения: «tonight» — сегодня, «this weekend» — суббота и
+// воскресенье (выходные в ОАЭ — Sat–Sun), «on Friday» — ближайшая пятница.
+function intentDates(I,now){
+  const today=cityDate(now),t=cityNow(now);
+  if(!t)return null;
+  if(I.tonight||I.today)return {from:today,to:today};
+  if(I.tomorrow){const d=addDays(today,1);return {from:d,to:d}}
+  if(I.weekend){
+    if(t.weekday==="sa")return {from:today,to:addDays(today,1)};
+    if(t.weekday==="su")return {from:today,to:today};
+    const sat=nextDow("sa",today,t.weekday);return {from:sat,to:addDays(sat,1)};
+  }
+  if(I.dow){const d=nextDow(I.dow,today,t.weekday);return {from:d,to:d}}
+  return null;
+}
+// Рубрики для смешанной выдачи «удиви меня»: днём — достопримечательности и
+// развлечения, вечером — бары, кальян, клубы, караоке и виды.
+function vagueCats(now,kids){
+  const t=cityNow(now);const h=t?Math.floor(t.minute/60):15;
+  if(kids)return ["themepark","zoo","aquapark","family","park","museum"];
+  return h>=18||h<4?["bar","hookah","club","karaoke","sights","bowling","cinema","food"]
+    :["sights","museum","themepark","zoo","gallery","beach","bowling","quest"];
+}
+// Чем заняться в помещении: молл, музей, кино, крытые развлечения, аквариум.
+const INDOOR_CATS=["mall","museum","cinema","themepark","zoo","bowling","icerink","quest","gallery","karting","climbing","vr"];
+const OUTDOOR_CATS=new Set(["beach","park","tours","boat","golf","outdoors"]);
+// Поисковые фразы конкретных занятий вместо рубрики: «skydiving», а не
+// «desert safari» с «tour operator».
+const ACTIVITY_RELATED_WORDS={kayaking:["watersport","water sport","paddle"],kayak:["watersport","water sport","paddle"],
+  paddleboarding:["watersport","kayak"],jetski:["watersport"],snorkeling:["diving","dive"],snorkelling:["diving","dive"]};
+const ACTIVITY_QUERY={balloon:"hot air balloon ride",skydiving:"skydiving",skydive:"skydiving",kayak:"kayak rental",kayaking:"kayak rental",
+  paddleboarding:"paddle board rental",jetski:"jet ski rental",zipline:"zipline",paragliding:"paragliding",helicopter:"helicopter tour",
+  camel:"camel ride",scuba:"scuba diving",snorkeling:"snorkeling",fishing:"fishing trip",parasailing:"parasailing",flyboard:"flyboarding"};
+// Английские правила событий (для города с афишей): поисковые фразы и теги
+// совпадают с cat_tags источника событий (concert/theatre/comedy/club/kids/sport/exhibition/festival).
+const EVENT_RULES_EN=[
+  {re:/\bstand ?up(?! paddle)\b|\bcomed(?:y|ian|ians)\b|\bcomic\b/,q:"comedy show",tags:["comedy"]},
+  {re:/\bconcerts?\b|\bgigs?\b|\blive (?:music|band|bands)\b|\bjazz\b|\bmusic (?:festival|event|night|show)s?\b|\borchestra\b|\bsymphony\b|\brecital\b/,q:"concert",tags:["concert"]},
+  {re:/\btheat(?:re|er)\b|\bmusicals?\b|\bplays?\b(?! ?(?:area|ground|zone|date|room|centre|center))|\bopera\b|\bballet\b|\bperformances?\b|\bshows?\b(?! ?rooms?)/,q:"theatre show",tags:["theatre"]},
+  {re:/\bexhibitions?\b|\bexpos?\b|\bart (?:show|fair|event)s?\b|\binstallations?\b/,q:"exhibition",tags:["exhibition"]},
+  {re:/\bfestivals?\b|\bcarnival\b|\bnight market\b|\bfair\b/,q:"festival",tags:["festival"]},
+  {re:/\bclub nights?\b|\bdj (?:set|night)s?\b|\bline ?ups?\b|\braves?\b|\bparty\b|\bparties\b/,q:"club night",tags:["club"]},
+  {re:/\b(?:match|game|fixture|tournament|grand prix|race day|sports? events?)\b/,q:"sports event",tags:["sport"]},
+  {re:/\b(?:kids?|children|family|families) (?:events?|shows?)\b|\bevents? for (?:kids|children|families)\b/,q:"kids event",tags:["kids"]},
+  {re:/\bevents?\b|\bwhats on\b|\bwhat is on\b|\bhappening\b|\btickets?\b|\bgoing on\b/,q:"events",tags:[],any:true}
+];
 export function buildSearchPlan(args={}){
+  // Дубай: сначала словарь намерений — слова времени, цены, повода и действия
+  // не должны становиться ни рубрикой («book» → книжный), ни поиском по имени.
+  if(CITY.lang==="en"){
+    const intent=englishIntent(args.query||"",args);
+    const plan=buildSearchPlanEn({...args,query:intent.clean,_orig:args.query||""},intent,args);
+    plan.original=args.query||"";
+    return plan;
+  }
+  return buildSearchPlanCore(args);
+}
+function buildSearchPlanEn(args,I,orig){
+  const plan=buildSearchPlanCore(args);
+  applyIntent(plan,I,orig);
+  return plan;
+}
+// Намерения → поля плана: рубрики, время, даты, цена, уточнения для ранкера.
+function applyIntent(plan,I,orig){
+  const now=orig.now?new Date(orig.now):new Date();
+  plan.intent=I;plan.query=I.clean;
+  plan.action=I.action||null;
+  plan.openNow=Boolean(I.openNow);plan.tonight=Boolean(I.tonight);
+  if(I.lateNight)plan.lateNight=true;
+  plan.allNight=Boolean(I.allNight);
+  if(I.timeMin!==undefined){plan.textTime=hhmm2(I.timeMin);plan.timeSoft=Boolean(I.timeSoft)}
+  else if(I.tonight){plan.textTime="20:00";plan.timeSoft=true}
+  const dates=intentDates(I,now);
+  if(dates){plan.dateFrom=dates.from;plan.dateTo=dates.to}
+  // Время в тексте — строгий фильтр часов: закрытое к этому времени не показываем.
+  // Завтрак и бранч — мягкое время: открытые к нему — вперёд, но ресторан
+  // при отеле без часов на карте из-за этого не прячется.
+  plan.timeStrict=Boolean((I.timeMin!==undefined&&!I.meal)||I.openNow||I.tonight||I.lateNight||I.allNight);
+  plan.meal=I.meal||null;plan.dowAsk=I.dow||null;
+  if(I.priceMax)plan.priceMax=I.priceMax;
+  if(I.priceMin)plan.priceMin=I.priceMin;
+  if(I.upscale)plan.upscale=true;
+  if(I.cheap){plan.cheap=true;plan.upscale=false}
+  plan.michelin=Boolean(I.michelin);
+  plan.occasion=I.occasion||null;
+  plan.partySize=I.partySize||null;
+  plan.outdoorAsk=Boolean(I.outdoor);plan.petAsk=Boolean(I.pet);plan.liveMusic=Boolean(I.liveMusic);
+  plan.drinksAsk=Boolean(I.drinks);plan.indoorAsk=Boolean(I.indoor);
+  plan.emergency=Boolean(I.emergency);plan.metroAsk=Boolean(I.metro);
+  if(I.view){plan.viewAsk=true;plan.landmark=I.landmark||null}
+  // «Рядом» по-английски: «near me», «nearest», «closest», «close by», «walking distance».
+  if(orig.near===true||/\bnear(?:est| me| by|by)\b|\bclosest\b|\bclose ?by\b|\bclose to me\b|\baround here\b|\baround me\b|\bwalking distance\b|\bcloser\b|\bin my area\b/.test(norm(orig.query||"")))plan.near=true;
+  const setCats=(cats,extraTags=[])=>{
+    plan.cats=[...new Set(cats)];
+    plan.tags=[...new Set([...cats,...extraTags])];
+    plan.placeQueries=[...new Set(cats.flatMap(c=>queriesFor(c,"en")))].slice(0,4);
+    plan.placeIntent=true;plan.generic=false;plan.focus=plan.focus||[];
+  };
+  // Запасной «общий» план (виды и музеи или бары и рестораны) подставлялся,
+  // когда в запросе не нашлось рубрики. Если рубрику задаёт намерение
+  // («surprise me», «too hot», «girls night»), запасной план не нужен.
+  const fallback=plan.generic?{cats:plan.cats,tags:plan.tags,placeQueries:plan.placeQueries,placeIntent:plan.placeIntent}:null;
+  if(fallback){plan.cats=[];plan.tags=[]}
+  const restore=()=>{
+    if(fallback&&!plan.cats.length&&!(plan.tags||[]).length){Object.assign(plan,fallback);plan.generic=true}
+  };
+  // Действие «такси» — не поиск мест: выдача пустая, кнопки такси даёт интерфейс.
+  if(I.action==="taxi"){plan.cats=[];plan.tags=[];plan.placeQueries=[];plan.eventQueries=[];plan.placeIntent=false;plan.eventIntent=false;plan.taxi=true;plan.focus=[];plan.phrase=null;plan.generic=false;return}
+  // Станции метро и трамвая: рубрика «metro» (её добавляет сборка карты) и
+  // теги станции. Автомойка или банк «у метро» — не ответ.
+  const noEvents=()=>{plan.eventIntent=false;plan.eventQueries=[];plan.serviceOnly=true};
+  if(I.metro){
+    setCats(["metro"]);plan.focus=[];plan.phrase=null;plan.cuisine=[];plan.placeQueries=["metro station"];
+    plan.jsonTags=['"station":"subway"','"station":"light_rail"','"railway":"tram_stop"'];noEvents();return;
+  }
+  // Скорая: больницы с приёмным покоем (emergency=yes) — первыми; стоматология
+  // и «медсестра на дом» — не ответ.
+  if(I.emergency){
+    setCats(["hospital"]);plan.focus=[];plan.phrase=null;plan.cuisine=[];plan.placeQueries=["hospital emergency room","hospital"];
+    plan.jsonTags=[...(plan.jsonTags||[]),'"emergency":"yes"'];noEvents();return;
+  }
+  if(I.hospital&&plan.cats.includes("hospital")){
+    // «hospital» ловит и «clinic» (в её словаре есть слово hospital): больница — главная.
+    plan.cats=plan.cats.filter(c=>c!=="clinic"&&c!=="dentist");plan.tags=(plan.tags||[]).filter(t=>t!=="clinic"&&t!=="dentist");
+    plan.hospitalAsk=true;
+  }
+  // Рубрика пропала вместе со словом времени («show tonight» → «show»):
+  // берём её из запроса до вырезания, если в остатке рубрик нет вовсе.
+  if(!plan.cats.length&&I.preTime&&I.preTime!==I.afterTime&&!I.action){
+    const cats=(t)=>new Set(PLACE_RULES.filter(r=>r.re.test(t)).map(r=>r.cat));
+    const after=cats(I.afterTime);
+    const lost=[...cats(I.preTime)].filter(c=>!after.has(c)&&!["books","date","birthday"].includes(c));
+    if(lost.length)setCats(lost);
+  }
+  const kids=Boolean(plan.kidsAsk);
+  // Повод «день рождения»: детские центры — только когда просили детей.
+  // «birthday dinner for 10 people» — ресторан на компанию, а не KidZania.
+  if(I.occasion==="birthday"){
+    const base=plan.cats.filter(c=>!["birthday","family","themepark"].includes(c)||kids);
+    const cats=base.length?base:kids?["family","themepark","food"]:["food","bar","karaoke"];
+    setCats(cats,kids?["family"]:["friends"]);
+  }
+  if(I.occasion==="girls"||I.occasion==="nightout"){
+    const base=plan.cats.filter(c=>!["beauty","nails","cosmetology","barber","clothes"].includes(c));
+    setCats(base.length?base:["bar","hookah","club","food"],["nightlife"]);
+    plan.evening=true;
+  }
+  if(I.occasion==="business"){
+    // Деловой обед — ресторан: не коворкинг, не кальянная, не фастфуд.
+    setCats(plan.cats.filter(c=>c!=="work").length?plan.cats.filter(c=>c!=="work"):["food"]);
+    if(!plan.cats.includes("food"))plan.cats.push("food");
+    plan.tags=(plan.tags||[]).filter(t=>t!=="work");
+    plan.business=true;if(!plan.priceMax&&!plan.priceMin)plan.priceSoftMin=2;
+  }
+  // Большая компания без детей: ни детских центров, ни парков развлечений.
+  if(plan.partySize>=6&&!kids&&plan.cats.some(c=>["family","themepark","food","birthday"].includes(c))){
+    const cats=plan.cats.filter(c=>c!=="family"&&c!=="themepark");
+    setCats(cats.length?cats:["food"]);plan.bigGroup=true;
+  }
+  if(I.michelin&&!plan.cats.includes("food")){setCats(["food",...plan.cats.filter(c=>c!=="coffee")]);}
+  if(I.michelin)plan.jsonTags=[...(plan.jsonTags||[]),'"free:michelin":'];
+  if((plan.upscale||plan.priceMin>=3)&&!plan.cats.length&&!(plan.focus||[]).length)setCats(["food"]);
+  if(plan.upscale&&plan.cats.includes("food"))plan.jsonTags=[...(plan.jsonTags||[]),'"free:price":"3"','"free:price":"4"','"free:michelin":'];
+  if((plan.cheap||plan.priceMax)&&!plan.cats.length&&!(plan.focus||[]).length&&!plan.phrase)setCats(["food"]);
+  if(I.outdoor){
+    if(!plan.cats.length&&!(plan.focus||[]).length&&!plan.phrase)setCats(["food","coffee"]);
+    plan.jsonTags=[...(plan.jsonTags||[]),'"outdoor_seating":"yes"','"outdoor_seating":"terrace"'];
+  }
+  if(I.pet){
+    const cats=plan.cats.filter(c=>c!=="petshop"&&c!=="vet");
+    setCats(cats.length?cats:["coffee","food"]);
+    plan.jsonTags=[...(plan.jsonTags||[]),'"dog":"yes"','"outdoor_seating":"yes"'];
+  }
+  if(I.liveMusic){
+    if(!plan.cats.length)setCats(["bar","concert"]);
+    plan.jsonTags=[...(plan.jsonTags||[]),'"live_music":"yes"'];
+  }
+  if(I.view&&I.landmark&&!plan.cats.length&&!plan.phrase)setCats(["food","bar"]);
+  const nothing=()=>!plan.cats.length&&!(plan.focus||[]).length&&!plan.phrase;
+  // Путешествие в одиночку: виды, музеи, рынки, кофейни — не бары.
+  if(I.occasion==="solo"&&nothing())setCats(["sights","museum","market","gallery","coffee"]);
+  // «Удиви меня», «скучно»: смесь популярного, открытого сейчас.
+  // «What to do with kids»: смесь детских развлечений, а не детские площадки.
+  if(I.vague&&(nothing()||(kids&&plan.cats.every(c=>c==="family")))){
+    setCats(I.indoor?INDOOR_CATS:vagueCats(now,kids));plan.vague=true;plan.openNow=plan.openNow||(!plan.dateFrom&&!kids);
+    if(plan.openNow)plan.timeStrict=true;
+  }
+  // «Жарко»: крытые развлечения, и никаких пляжей и сафари.
+  if(I.indoor){
+    if(!plan.cats.length&&!(plan.focus||[]).length&&!plan.phrase){setCats(INDOOR_CATS);plan.vague=true}
+    else if(plan.cats.length>1){const c=plan.cats.filter(x=>!OUTDOOR_CATS.has(x));if(c.length)setCats(c)}
+  }
+  // Жанр афиши без рубрики мест («comedy tonight», «exhibition»): площадки
+  // этого жанра — запасной ответ, если событий нет.
+  if(!plan.cats.length&&!plan.phrase){
+    const src=norm(text(orig.query).toLowerCase().replace(/['’]/g,""));
+    const EV2CAT={comedy:"theatre",concert:"concert",theatre:"theatre",exhibition:"gallery",festival:"sights",club:"club",kids:"family"};
+    const cats=[...new Set(EVENT_RULES_EN.filter(r=>r.re.test(src)).flatMap(r=>r.tags.map(t=>EV2CAT[t]).filter(Boolean)))];
+    if(cats.length)setCats(cats);
+  }
+  // Конкретное занятие ищется своим словом, а не общей рубрикой.
+  const act=(plan.focus||[]).map(w=>ACTIVITY_QUERY[w]).filter(Boolean);
+  // «skydiving» ищется как скайдайвинг (и рубрикой в запас), а не «desert safari».
+  if(act.length)plan.placeQueries=[...new Set([...act,...plan.placeQueries.slice(0,1)])].slice(0,3);
+  // Соседние занятия ищутся по названию тоже: каяки дают и центры водного спорта.
+  const rel=(plan.focus||[]).flatMap(w=>ACTIVITY_RELATED_WORDS[w]||[]);
+  if(rel.length)plan.relatedFocus=[...new Set(rel)];
+  // Пустой запрос после вырезания намерений («open now», «tonight») — вечер в городе.
+  if(!plan.cats.length&&!(plan.focus||[]).length&&!plan.phrase&&!(plan.tags||[]).length&&(plan.openNow||plan.tonight||plan.lateNight||plan.timeStrict)){
+    setCats(plan.lateNight||plan.tonight?["bar","food","hookah","club"]:["food","coffee","bar","sights"]);plan.vague=true;
+  }
+  restore();
+  if(plan.jsonTags)plan.jsonTags=[...new Set(plan.jsonTags)];
+  // События: в городе с афишей английские правила дают поисковые фразы и теги.
+  // Русские правила (EVENT_RULES) к английскому тексту не применяются.
+  if((CITY.providers.events||[]).length){
+    const src=norm(text(orig.query).toLowerCase().replace(/['’]/g,""));
+    const hits=EVENT_RULES_EN.filter(r=>r.re.test(src));
+    if(hits.length){
+      plan.eventIntent=true;
+      plan.eventQueries=[...new Set(hits.map(r=>r.q))].slice(0,4);
+      plan.eventTags=[...new Set(hits.flatMap(r=>r.tags))];
+      plan.eventAny=hits.every(r=>r.any);
+      if(plan.eventAny&&(!plan.cats.length||plan.vague||plan.generic)&&!plan.phrase){
+        // «What's on tonight»: события в первую очередь, места — запасом.
+        plan.placeIntent=true;plan.tags=[...new Set([...(plan.tags||[]),"nightlife","concert","theatre"])];
+      }
+    }else if(plan.vague){plan.eventIntent=true;plan.eventAny=true;plan.eventQueries=["events"];plan.eventTags=[]}
+    else if(plan.phrase&&plan.phrase.length){
+      // Название («Dubai Opera tonight»): события на этой площадке тоже ответ.
+      plan.eventIntent=true;plan.eventQueries=[plan.phrase.join(" ")];plan.eventTags=[];plan.eventVenue=plan.phrase;
+    }else{plan.eventIntent=false;plan.eventQueries=[];plan.eventTags=[]}
+    plan.serviceOnly=!plan.eventIntent&&(plan.tags||[]).some(t=>SERVICE_TAGS.has(t));
+  }
+}
+function buildSearchPlanCore(args={}){
   const plan=buildSearchPlanBase(args);
   const qn0=norm(args.query||""),an=norm(args.area||"");
   // Многословные занятия и кухни — одним словом, чтобы «dim sum», «jet ski»
@@ -197,14 +609,17 @@ export function buildSearchPlan(args={}){
     }
   }
   // Уточнения, которые не категория: «late night», «by the sea».
-  plan.upscale=/fine dining|upscale|luxur\w*|michelin|fancy|high.?end|gourmet|classy|elegant|sophisticated/.test(qn);
-  plan.cheap=/\bcheap|budget|affordable|inexpensive|low.?cost|value for money|not expensive/.test(qn);
-  plan.lateNight=/late ?night|after midnight|open late|24 ?(?:h|hrs?|hours?)\b|24\/7|all night|midnight/.test(qn);
+  // Уточнения считаются по исходному тексту: в Дубае словарь намерений уже
+  // вырезал из запроса «sea view» и «late night», а признаки нужны ранкеру.
+  const fq=CITY.lang==="en"&&typeof args._orig==="string"?norm(args._orig.toLowerCase().replace(/['’]/g,"")):qn;
+  plan.upscale=/fine dining|upscale|luxur\w*|michelin|fancy|high.?end|gourmet|classy|elegant|sophisticated/.test(fq);
+  plan.cheap=/\bcheap|budget|affordable|inexpensive|low.?cost|value for money|not expensive/.test(fq);
+  plan.lateNight=/late ?night|after midnight|open late|24 ?(?:h|hrs?|hours?)\b|24\/7|all night|midnight/.test(fq);
   // «sunset views», «best view of the city»: смотровые площадки и виды.
-  plan.viewAsk=/\b(?:views?|sunset|skyline|panoram\w*|observation)\b/.test(qn);
-  plan.kidsAsk=/\b(?:kids?|children|child|toddlers?|family|families)\b/.test(qn);
-  plan.rooftop=/\broof ?top|\bon the roof|sky ?bar|sky ?lounge/.test(qn);
-  plan.seaside=/by the (?:sea|water|beach)|sea ?view|beach ?front|on the beach|seaside|water ?front|ocean view|overlooking the (?:sea|water)|marina view/.test(qn);
+  plan.viewAsk=/\b(?:views?|sunset|skyline|panoram\w*|observation)\b/.test(fq);
+  plan.kidsAsk=/\b(?:kids?|children|child|toddlers?|family|families)\b/.test(fq);
+  plan.rooftop=/\broof ?top|\bon the roof|sky ?bar|sky ?lounge/.test(fq);
+  plan.seaside=/by the (?:sea|water|beach)|sea ?view|beach ?front|on the beach|seaside|water ?front|ocean view|overlooking the (?:sea|water)|marina view/.test(fq);
   // «Центр»/«downtown» в поле area — это рамка центра (centerBbox), её
   // обрабатывает своя логика; район из area берём только конкретный.
   const d=districtOf(qn)||(wantsCenter(args.area)?null:districtOf(an));
@@ -219,7 +634,8 @@ export function buildSearchPlan(args={}){
   // Слова-уточнения: кухня или собственное имя («atlantis hotel», «zuma»).
   // Им снимок ищет места по названию поверх категории, а ранкер поднимает совпавшие.
   if(CITY.lang==="en"){
-    const words=norm(rest).split(" ").filter(w=>w.length>=3&&!/[0-9]/.test(w)&&!STOP.has(w)&&!FOCUS_SKIP.has(w));
+    // Общие английские слова («too», «out», «after», «call») названием не бывают.
+    const words=norm(rest).split(" ").filter(w=>w.length>=3&&!/[0-9]/.test(w)&&!STOP.has(w)&&!FOCUS_SKIP.has(w)&&!GENERIC_EN.has(w));
     // Кухня — только когда спрашивают про еду или рубрику не назвали вовсе:
     // «thai massage» — тайский массаж, а не тайская кухня.
     const FOODISH=new Set(["food","coffee","bakery","pastry","bar","hookah"]);
@@ -265,7 +681,7 @@ export function buildSearchPlan(args={}){
       const districtInName=Boolean(d&&hitD&&!new RegExp(`\\b(?:in|at|near|around|by|on|from)\\s+(?:the\\s+)?(?:dubai\\s+)?${esc}`).test(qn));
       const src=districtInName?qn:rest;
       const toks=norm(src).split(/[^a-z0-9]+/).filter(Boolean);
-      const content=toks.filter(w=>w.length>=2&&!NAME_STOP.has(w)&&!(STOP.has(w)&&w!=="dubai")&&!FOCUS_SKIP.has(w)&&!FOCUS_GENERIC.has(w));
+      const content=toks.filter(w=>w.length>=2&&!NAME_STOP.has(w)&&!(STOP.has(w)&&w!=="dubai")&&!FOCUS_SKIP.has(w)&&!FOCUS_GENERIC.has(w)&&!GENERIC_EN.has(w));
       const distWords=new Set(districtInName?norm(hitD).split(" "):[]);
       const proper=content.filter(w=>w!=="dubai"&&!CUISINES.has(w)&&!SPECIFIC_EN.has(w)&&!wordIsCategory(w)&&!wordIsCategory(w.replace(/e?s$/,""))&&(distWords.has(w)||!partOfCategory(w)));
       // «marina hotels», «jbr bars»: район + рубрика — это не имя, а запрос
@@ -303,7 +719,7 @@ function buildSearchPlanBase(args={}){
   for(const r of EVENT_RULES)if(r.re.test(q)){eventQueries.push(...r.queries);tags.push(...r.tags)}
   const safeQuery=q.replace(/(^|\s)(сильно|очень|много|побольше|до упаду|в хлам)(?=\s|$)/g," ").replace(/\s+/g," ").trim();
   // Ядро запроса без стоп-слов: то, что реально стоит искать в провайдерах.
-  const coreQuery=safeQuery.split(" ").filter(w=>w.length>3&&!/[0-9]/.test(w)&&!STOP.has(w)&&!/^бесплат/.test(w)).slice(0,5).join(" ");
+  const coreQuery=safeQuery.split(" ").filter(w=>w.length>3&&!/[0-9]/.test(w)&&!STOP.has(w)&&!/^бесплат/.test(w)&&!(CITY.lang==="en"&&GENERIC_EN.has(w))).slice(0,5).join(" ");
   if(!placeQueries.length&&!eventQueries.length&&coreQuery){eventQueries.push(coreQuery);placeQueries.push(coreQuery)}
   // «Куда сходить вечером», «посоветуй что-нибудь», «чем заняться»: каждое
   // слово — стоп-слово, план пустой, и поиск не шёл вовсе. Для человека это
@@ -690,7 +1106,7 @@ export function normalizeFoursquareItem(x,plan){
     primary_tags:rubricTags(cats.slice(0,1)),
     area:text(x.location?.formatted_address)||CITY.name,metro:"",
     date_start:null,date_end:null,times:[],hours_label:text(x.hours?.display)||null,open_now:open,
-    price_label:priceTier(x.price),price_min:null,free:false,
+    price_label:priceTier(x.price),price_min:null,free:false,price_level:priceTier(x.price)?Math.round(Number(x.price)):null,
     availability:null,rating:fsqRating(x.rating),rating_count:Number(x.stats?.total_ratings)||0,closed:Boolean(x.date_closed),
     aggregator_image:photo,aggregator_name:photo?"Foursquare":null,
     source:link,point_source:link,official_source:site,
@@ -756,6 +1172,7 @@ export function normalizeGoogleItem(x,plan){
     area:text(x.formattedAddress)||CITY.name,metro:"",
     date_start:null,date_end:null,times:[],hours_label:hours,open_now:open,
     price_label:GOOGLE_PRICE[text(x.priceLevel)]||null,price_min:null,free:false,
+    price_level:{PRICE_LEVEL_INEXPENSIVE:1,PRICE_LEVEL_MODERATE:2,PRICE_LEVEL_EXPENSIVE:3,PRICE_LEVEL_VERY_EXPENSIVE:4}[text(x.priceLevel)]||null,
     availability:null,rating:Number.isFinite(rating)&&rating>0?Math.round(rating*10)/10:null,rating_count:Number(x.userRatingCount)||0,
     closed:/CLOSED_PERMANENTLY|CLOSED_TEMPORARILY/.test(text(x.businessStatus)),
     aggregator_image:photo,aggregator_name:photo?"Google":null,
@@ -790,7 +1207,7 @@ const CITY_BBOX = bboxString(CITY.bbox);
 const OVERPASS_TIMEOUT_S=12;
 // Версия формата карточки. Поднимайте её, когда меняется то, что кладут
 // normalize*-функции: это разом обесценивает файловый кеш.
-const ITEM_SCHEMA=3;
+const ITEM_SCHEMA=4;
 // Центр — в Москве примерно кольцо радиусом 5 км вокруг Кремля: Садовое и ближние районы.
 const CENTER_BBOX = bboxString(CITY.centerBbox);
 export function wantsCenter(area){return /центр|\bcent(?:er|re)\b|downtown/i.test(text(area))}
@@ -884,6 +1301,120 @@ export function safeLink(raw){
 }
 // Имя-заглушка места без названия: такие из выдачи OSM выбрасываются.
 const OSM_NONAME=L("Заведение","Venue");
+
+/* ---- Дубай: поля для решения «идти или нет» ----
+   Цена, бронь, меню, Мишлен, статус и сезон приходят тегами free:* из сборки
+   карты (их пишут инженеры данных; у большинства мест их пока нет). Всё здесь
+   работает только для англоязычного города: московская карточка не меняется. */
+const PRICE_WORDS={1:"budget",2:"moderate",3:"upscale",4:"luxury"};
+// free:price: «1»…«4», «$$», «moderate», «expensive» — уровень 1–4 или null.
+export function priceLevelOf(v){
+  const s=text(v).trim().toLowerCase();if(!s)return null;
+  if(/^[1-4]$/.test(s))return +s;
+  if(/^\$+$/.test(s))return Math.min(4,s.length);
+  if(/very expensive|luxury|fine dining/.test(s))return 4;
+  if(/expensive|upscale|high/.test(s))return 3;
+  if(/moderate|mid/.test(s))return 2;
+  if(/cheap|inexpensive|budget|low/.test(s))return 1;
+  return null;
+}
+// Подпись цены: «$$ · moderate». Уровень по догадке — «likely», чтобы подпись
+// не звучала увереннее, чем мы знаем.
+export function priceLabelOf(level,estimated=false){
+  if(!(level>=1&&level<=4))return null;
+  return `${"$".repeat(level)} · ${estimated?"likely ":""}${PRICE_WORDS[level]}`;
+}
+const CHEAP_OV=/^(fast_food_restaurant|food_court|cafeteria|food_truck_stand|sandwich_shop|juice_bar|bubble_tea_shop|doner_kebab_restaurant|chicken_restaurant|pizza_delivery_service|shawarma_restaurant|falafel_restaurant)$/;
+const CHEAP_NAME=/shawarma|karak|falafel|cafeteria|\bchai\b|\bmanakeesh\b|\bmcdonald|\bkfc\b|burger king|\bsubway\b|pizza hut|domino|hardee|popeyes|texas chicken|jollibee|al baik|operation falafel|zaatar w zeit|\bcanteen\b|\bdhaba\b/;
+const HOTEL_CUE=/\bhotel\b|\bresort\b|ritz|four seasons|armani|atlantis|\baddress\b|\bpalace\b|waldorf|st\.? regis|bulgari|one ?& ?only|raffles|fairmont|sofitel|kempinski|shangri|conrad|park hyatt|grosvenor|oberoi|\btaj\b|rosewood|mandarin oriental|habtoor|burj al arab|madinat|al qasr|mina a salam|jumeirah (?:beach|emirates|creekside|al naseem|zabeel)|\bfive (?:palm|jbr)\b|siro|sls\b|paramount|anantara|kerzner|banyan tree|caesars/;
+const FINE_CUE=/steak ?house|fine dining|gourmet|brasserie|omakase|wagyu|caviar|\bchef\b|grill room|teppanyaki|kaiseki|sky ?(?:bar|lounge)|prime\b/;
+// Уровень по признакам: фастфуд, фудкорт, шаурма, карак — 1; ресторан отеля
+// с признаками высокой кухни — 3; звезда Мишлен — 4, Bib Gourmand — 2.
+// Всё это догадка (estimated), а не цена из источника.
+export function priceGuess(t={},name=""){
+  const mich=text(t["free:michelin"]).toLowerCase();
+  if(mich){
+    if(/bib/.test(mich))return 2;
+    if(/[1-3]\s*stars?|^[1-3]$|star/.test(mich))return 4;
+    return 3;
+  }
+  const am=text(t.amenity),ov=text(t["overture:category"]),n=norm([name,t.brand,t.cuisine].filter(Boolean).join(" "));
+  if(/^(fast_food|food_court)$/.test(am)||CHEAP_OV.test(ov)||CHEAP_NAME.test(n))return 1;
+  if(/^(restaurant|bar)$/.test(am)||/restaurant|steakhouse|bar$/.test(ov)){
+    const where=norm([name,t["addr:full"],t["addr:place"],t["addr:housename"]].filter(Boolean).join(" "));
+    if(HOTEL_CUE.test(where)&&(FINE_CUE.test(n)||/^(steakhouse|french_restaurant)$/.test(ov)))return 3;
+  }
+  return null;
+}
+// Арабское имя без английского: «مستشفى راشد» → «Rashid Hospital» не выйдет
+// без словаря, но и арабская вязь в английской карточке не читается. Слова-типы
+// переводим, остальное транслитерируем по буквам — это лишь страховка.
+const AR_WORDS={"مستشفى":"Hospital","مسجد":"Mosque","جامع":"Mosque","مطعم":"Restaurant","مقهى":"Cafe","كافيه":"Cafe","صيدلية":"Pharmacy","سوق":"Souk","حديقة":"Park","منتزه":"Park","مدرسة":"School","عيادة":"Clinic","مركز":"Center","فندق":"Hotel","بنك":"Bank","متحف":"Museum","شاطئ":"Beach","محطة":"Station","مترو":"Metro","مخبز":"Bakery","صالون":"Salon","بقالة":"Grocery"};
+const AR_TYPE=new Set(["Hospital","Mosque","Restaurant","Cafe","Pharmacy","Park","School","Clinic","Center","Hotel","Bank","Museum","Beach","Station","Bakery","Salon","Grocery"]);
+const AR_CHARS={"ا":"a","أ":"a","إ":"i","آ":"aa","ب":"b","ت":"t","ث":"th","ج":"j","ح":"h","خ":"kh","د":"d","ذ":"dh","ر":"r","ز":"z","س":"s","ش":"sh","ص":"s","ض":"d","ط":"t","ظ":"z","ع":"a","غ":"gh","ف":"f","ق":"q","ك":"k","ل":"l","م":"m","ن":"n","ه":"h","ة":"a","و":"w","ي":"y","ى":"a","ء":"","ؤ":"u","ئ":"i"};
+export function translitArabic(s){
+  const words=text(s).split(/\s+/).filter(Boolean).map(w=>{
+    if(AR_WORDS[w])return AR_WORDS[w];
+    if(!/[؀-ۿ]/.test(w))return w;
+    const al=w.startsWith("ال")&&w.length>3;
+    const body=[...(al?w.slice(2):w)].map(c=>AR_CHARS[c]??(/[ً-ٰٟ]/.test(c)?"":/[؀-ۿ]/.test(c)?"":c)).join("");
+    if(!body)return "";
+    const cap=body[0].toUpperCase()+body.slice(1);
+    return al?`Al ${cap}`:cap;
+  }).filter(Boolean);
+  // «Hospital Rashid» → «Rashid Hospital»: тип места по-английски идёт в конце.
+  if(words.length>1&&AR_TYPE.has(words[0]))words.push(words.shift());
+  return words.join(" ");
+}
+const AR_RE=/[؀-ۿ]/;
+function englishName(t){
+  for(const k of ["name:en","int_name","official_name:en","alt_name:en","brand:en","short_name:en"])if(t[k]&&!AR_RE.test(t[k]))return t[k];
+  const n=t.name||t.brand;
+  if(n&&AR_RE.test(n)){const tr=translitArabic(n);return /[a-z]/i.test(tr)?tr:n}
+  return n;
+}
+// Решения для карточки по тегам OSM/сборки. Только для англоязычного города.
+function osmDecision(t,name,x){
+  const today=cityDate();
+  const ohRaw=t.opening_hours||null;
+  const eatery=/^(restaurant|bar|pub|nightclub|hookah_lounge|biergarten)$/.test(text(t.amenity));
+  // Часы-ошибки ввода («Fr-Su 00:00-12:15» у стейкхауса) считаем неизвестными.
+  const sane=ohRaw?hoursSane(ohRaw,{eatery}):true;
+  const known=priceLevelOf(t["free:price"]);
+  const guess=known?null:priceGuess(t,name);
+  const level=known||guess||null;
+  const status=text(t["free:status"]).toLowerCase().replace(/[\s-]+/g,"_");
+  // Место ещё не открылось (opening_date в будущем), закрыто (closed=yes,
+  // free:status=closed) или заброшено (disused:*) — в выдачу не идёт.
+  const future=/^\d{4}(-\d{2}(-\d{2})?)?$/.test(text(t.opening_date))&&text(t.opening_date).padEnd(10,"-01").slice(0,10)>today;
+  const disused=Object.keys(t).some(k=>/^disused:/.test(k));
+  const closed=status==="closed"||status==="permanently_closed"||t.closed==="yes"||disused||future;
+  const tempClosed=status==="temporarily_closed";
+  const bookUrl=safeLink(t["free:booking_url"]);
+  const diet=Object.keys(t).filter(k=>/^diet:/.test(k)&&/^(yes|only)$/.test(text(t[k]))).map(k=>k.slice(5).replace(/_/g," "));
+  return {
+    hours_raw:ohRaw,hours_ok:sane,
+    price_level:level,price_level_estimated:Boolean(!known&&guess),
+    closed_extra:closed,temp_closed:tempClosed,
+    status_note:tempClosed?"Temporarily closed":null,
+    season:/^\d{2}-\d{2}\s*\/\s*\d{2}-\d{2}$/.test(text(t["free:season"]).trim())?text(t["free:season"]).trim():null,
+    booking:bookUrl?{url:bookUrl,kind:"reserve",provider:text(t["free:booking_provider"]).trim()||"online booking"}:null,
+    menu_url:safeLink(t["free:menu"])||safeLink(t["website:menu"])||null,
+    michelin:text(t["free:michelin"]).trim()||null,
+    // Признаки для уточнений запроса: терраса, живая музыка, приёмный покой,
+    // станция метро, диета, «в помещении», можно с собакой.
+    attrs:{
+      outdoor:/^(yes|terrace|garden|patio|sidewalk)$/.test(text(t.outdoor_seating)),
+      live_music:t.live_music==="yes"||/live music|live band|live entertainment/i.test(text(t.description)),
+      emergency:t.emergency==="yes",
+      hospital:t.amenity==="hospital"||t.healthcare==="hospital",
+      indoor:t.indoor==="yes"||t.indoor==="room",
+      dog:/^(yes|leashed|outside)$/.test(text(t.dog)),
+      metro:t.station==="subway"||t.station==="light_rail"||t.railway==="tram_stop"||(t.public_transport==="station"&&/metro|tram/i.test(text(t.network)+" "+text(t.name)+" "+text(t["name:en"]))),
+      diet
+    }
+  };
+}
 function normalizeOsmItem(x,plan){
   const t=x.tags||{};
   const phone=t["contact:phone"]||t.phone||null;
@@ -896,8 +1427,11 @@ function normalizeOsmItem(x,plan){
   const directBook=telegram||whatsapp||reservation||(phone?`tel:${text(phone).replace(/[^\d+]/g,"")}`:null);
   // В англоязычном городе берём английское имя, если оно есть: name в Дубае
   // нередко по-арабски.
-  const name=(CITY.lang==="en"?t["name:en"]||t.name||t.brand:t.name||t["name:ru"]||t.brand)||OSM_NONAME;
+  // Арабское имя без английского варианта — транслитерация (englishName).
+  const EN=CITY.lang==="en";
+  const name=(EN?englishName(t):t.name||t["name:ru"]||t.brand)||OSM_NONAME;
   const amenity=t.amenity||t.leisure||t.sport||"place";
+  const dec=EN?osmDecision(t,name,x):null;
   // overture:category («sushi_restaurant», «fast_food_restaurant») — точная
   // рубрика из каталога: по ней ранкер узнаёт фастфуд и кухню.
   const hay=[name,t.brand,t.cuisine,amenity,t["overture:category"],t.description,t["description:ru"],t["smoking"],t["opening_hours"]].filter(Boolean).join(" ");
@@ -933,7 +1467,7 @@ function normalizeOsmItem(x,plan){
     // заведения», «часы лучше перепроверить». Они уходили и на карточку, и
     // модели — та честно зачитывала их вслух, и человек слышал «у сервиса нет
     // данных», хотя место найдено. Чего нет — того нет: поле пустое.
-    date_start:null,date_end:null,times:[],hours_label:t.opening_hours||null,
+    date_start:null,date_end:null,times:[],hours_label:dec&&!dec.hours_ok?null:(t.opening_hours||null),
     price_label:null,price_min:null,free:false,
     availability:null,
     // Сигналы качества для ранжирования: у OSM нет рейтингов, и полнота
@@ -943,11 +1477,15 @@ function normalizeOsmItem(x,plan){
     // opening_hours=off или «(закрыт)» в названии. Раньше ничего из этого не
     // проверялось, и человека звали в заведение, которого нет.
     closed:Boolean(t["disused:amenity"]||t["abandoned:amenity"]||t.disused==="yes"||t.abandoned==="yes"||t.end_date
-      ||/^(off|closed)$/i.test(t.opening_hours||"")||/закрыт|closed/i.test(t.name||"")),
+      ||/^(off|closed)$/i.test(t.opening_hours||"")||/закрыт|closed/i.test(t.name||"")||(dec&&dec.closed_extra)),
     source:osmSource(x),point_source:osmSource(x),official_source:site!==osmSource(x)?site:null,
     image_url:null,
     booking_url:directBook||((site!==osmSource(x))?site:null),booking_kind:telegram?"telegram":whatsapp?"whatsapp":reservation?"site":phone?"phone":(site!==osmSource(x)?"site":null),
     booking_provider:telegram?"Telegram":whatsapp?"WhatsApp":phone?L("телефон","phone"):(site!==osmSource(x)?L("официальный сайт","official website"):null),phone,
+    // Дубай: настоящая бронь столика (free:booking_url) важнее телефона.
+    ...(dec&&dec.booking?{booking_url:dec.booking.url,booking_kind:dec.booking.kind,booking_provider:dec.booking.provider}:{}),
+    ...(dec?{hours_raw:dec.hours_raw,hours_suspect:!dec.hours_ok,price_level:dec.price_level,price_level_estimated:dec.price_level_estimated,
+      temp_closed:dec.temp_closed,status_note:dec.status_note,season:dec.season,menu_url:dec.menu_url,michelin:dec.michelin,attrs:dec.attrs}:{}),
     desc:clampText(t.description||t[CITY.lang==="en"?"description:en":"description:ru"]||[cuisineLabel(t.cuisine),t["opening_hours"]].filter(Boolean).join(" · ")),
     keywords:norm(hay),coords:{lat:x.lat||x.center?.lat||null,lon:x.lon||x.center?.lon||null}
   };
@@ -1028,13 +1566,20 @@ export function snapshotStatus(){
     age_hours:Math.round(h.ageMs()/36e5),stale:h.stale(),file:SNAPSHOT_FILE,last_build:last,building};
 }
 
+// Сколько кандидатов брать из снимка. Дубай: когда фильтр строгий («открыто в
+// 2 ночи», «fine dining», «Мишлен») подходящих среди 120 ближайших почти нет —
+// берём больше, отбор всё равно делает ранкер.
+function snapshotLimit(plan){
+  if(CITY.lang==="en"&&(plan.timeStrict||plan.meal||plan.upscale||plan.michelin||plan.priceMin||plan.vague))return 360;
+  return plan.userLocation?160:120;
+}
 // Мгновенный ответ из локального снимка, если он есть; иначе null.
 function snapshotFirst(plan,opts){
   if(opts&&opts.providers)return null;               // тесты подменяют источники целиком
   const snap=getSnapshot();
   if(!snap)return null;
   try{
-    const els=snap.search(plan,{center:centerFor(plan),limit:plan.userLocation?160:120,
+    const els=snap.search(plan,{center:centerFor(plan),limit:snapshotLimit(plan),
       point:searchPoint(plan),order:plan.userLocation});
     const items=els.map(x=>normalizeOsmItem(x,plan)).filter(x=>x.name!==OSM_NONAME);
     return items.length?{items,errors:[],from_cache:false,degraded:false,disabled:false,from_snapshot:true}:null;
@@ -1045,7 +1590,7 @@ export async function searchOSM(plan,opts={}){
   const snap=opts.snapshot!==undefined?opts.snapshot:getSnapshot();
   if(snap){
     try{
-      const els=snap.search(plan,{center:centerFor(plan),limit:plan.userLocation?160:120,
+      const els=snap.search(plan,{center:centerFor(plan),limit:snapshotLimit(plan),
         point:searchPoint(plan),order:plan.userLocation});
       const items=els.map(x=>normalizeOsmItem(x,plan)).filter(x=>x.name!==OSM_NONAME);
       // Снимок ответил — в сеть не идём вовсе. Пусто в снимке ещё не значит
@@ -1098,6 +1643,8 @@ function mergePlaces(a,b){
   const empty=(v)=>v===undefined||v===null||v===""||v===0||v===false;
   const out={...base};
   for(const k of FROM_2GIS)if(empty(out[k])&&!empty(from2[k]))out[k]=from2[k];
+  // Ценовой уровень из каталога (Google, Foursquare) точнее нашей догадки.
+  if(!empty(from2.price_level)&&(empty(out.price_level)||out.price_level_estimated)){out.price_level=from2.price_level;out.price_level_estimated=false}
   if(from2.closed)out.closed=true;                            // 2GIS знает, что закрылось
   if(!out.official_source&&from2.official_source)out.official_source=from2.official_source;
   out.provider=base.provider.includes(from2.provider)?base.provider:`${base.provider}+${from2.provider}`;
@@ -1245,6 +1792,12 @@ export async function searchLiveInventory(args={},env=process.env,opts={}){
   const anyStale=relevantDegraded.some(x=>x.from_cache);
   const notes=[];
   if(plan.heavyDrinkingPhrase)notes.push(L("Запрос интерпретирован как поиск баров/пабов/ночных заведений; FREE не ранжирует места по количеству алкоголя.","Interpreted as a search for bars, pubs and nightlife; FREE does not rank places by how much alcohol they serve."));
+  // Дубай: честные примечания там, где карта не может ответить.
+  if(CITY.lang==="en"){
+    if(plan.taxi)notes.push("Taxis aren't places on the map — use the Uber or Careem button to call one.");
+    else if(plan.metroAsk&&!items.some(x=>(x.cat_tags||[]).includes("metro")||x.attrs?.metro))notes.push("Metro stations aren't on my map yet.");
+    else if(plan.michelin&&!items.some(x=>x.michelin))notes.push("I don't have Michelin Guide data for these places yet — showing upscale restaurants instead.");
+  }
   if(relevantDegraded.length&&thin)notes.push(!items.length?L("Источник мест сейчас не отвечает — попробуйте через минуту.","The places source isn't responding right now — try again in a minute.")
     :anyStale?L("Часть источников не ответила — показываю сохранённое.","Some sources didn't respond — showing saved results."):L("Часть источников не ответила — показываю, что нашлось.","Some sources didn't respond — showing what I found."));
   return {

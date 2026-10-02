@@ -145,3 +145,75 @@ export function parseHours(text,now=new Date()){
   }
   return {open_now:false,closes_at:null,opens_at:opens};
 }
+
+/* Правдоподобие часов. Часы на карте вносят руками, и в Дубае встречается
+   откровенная ошибка ввода: стейкхаус «Fr-Su 00:00-12:15» (хотели 12:00-00:15),
+   ресторан в молле «09:00-12:00», «00:00-00:00». Такие часы честнее считать
+   неизвестными, чем звать человека в закрытое место или прятать открытое.
+   Правила намеренно узкие:
+   — окно нулевой длины («12:00-12:00», «00:00-00:00») — всегда ошибка;
+   — у ресторана, бара, паба, клуба, кальянной (eatery=true) единственное окно
+     дня начинается в полночь и кончается раньше 15:00;
+   — у них же всё расписание кончается к 12:30 — так рестораны не работают.
+   Кафе сюда не входят: завтраки до полудня бывают на самом деле. */
+export function hoursSane(text,{eatery=false}={}){
+  const n=normalizeText(text);if(!n)return true;
+  for(const m of n.matchAll(TIME_RANGE_RE)){
+    const a=toMin(m[1],m[2]),b=toMin(m[3],m[4]);
+    if(a!==null&&b!==null&&a===b)return false;
+  }
+  if(!eatery)return true;
+  const week=parseSchedule(text);if(!week)return true;
+  let maxEnd=0,any=false;
+  for(const day of week){
+    if(!day||!day.length)continue;any=true;
+    if(day.length===1&&day[0].start===0&&day[0].end<15*60)return false;
+    for(const r of day)maxEnd=Math.max(maxEnd,r.end);
+  }
+  if(any&&maxEnd<=12*60+30)return false;
+  return true;
+}
+
+const EN_DAY_NAMES=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+/* Часы по-человечески, для карточки: «Open today 12:00–23:30»,
+   «Open now · until 02:00», «Closed now · opens 12:00»,
+   «Closed now · opens tomorrow 09:00», «Open 24 hours». null — неизвестно.
+   Строка OSM вроде «Su-We 08:00-24:00; Th-Sa 08:00-01:00» человеку ничего не
+   говорит: её отдаём отдельным полем для подробной карточки. */
+export function hoursSummary(text,now=new Date()){
+  const week=parseSchedule(text);if(!week)return null;
+  const t=localNow(now);if(!t)return null;
+  if(week.every(r=>r&&r.length===1&&r[0].start===0&&r[0].end===1440))return "Open 24 hours";
+  const h=parseHours(text,now);
+  if(h.open_now===null)return null;
+  const today=week[t.day]||[];
+  if(h.open_now){
+    const win=today.find(r=>t.minute>=r.start&&t.minute<r.end);
+    if(win&&win.start===0&&win.end>=1440)return "Open 24 hours today";
+    if(win)return `Open today ${fmt(win.start)}–${fmt(win.end)}`;
+    return h.closes_at?`Open now · until ${h.closes_at}`:"Open now";
+  }
+  if(!h.opens_at)return "Closed now";
+  if(today.some(r=>r.start>t.minute))return `Closed now · opens ${h.opens_at}`;
+  for(let i=1;i<7;i++){
+    const rs=week[(t.day+i)%7];
+    if(rs&&rs.length)return `Closed now · opens ${i===1?"tomorrow":EN_DAY_NAMES[(t.day+i)%7]} ${h.opens_at}`;
+  }
+  return "Closed now";
+}
+
+const MONTHS_EN=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+/* Сезон «MM-DD/MM-DD» (free:season): Global Village работает с октября по май,
+   и в остальное время карта честно показывает его часы — но ворота закрыты.
+   Сезон может переходить через Новый год («10-14/05-10»).
+   date — «YYYY-MM-DD» по местному времени. Ответ: {open:boolean, opens:"14 Oct"|null}
+   или null, если строка сезона не разобрана. */
+export function seasonState(season,date){
+  const m=String(season||"").trim().match(/^(\d{2})-(\d{2})\s*\/\s*(\d{2})-(\d{2})$/);
+  const d=String(date||"").match(/^\d{4}-(\d{2})-(\d{2})$/);
+  if(!m||!d)return null;
+  const from=+m[1]*100+ +m[2],to=+m[3]*100+ +m[4],cur=+d[1]*100+ +d[2];
+  if(!(+m[1]>=1&&+m[1]<=12&&+m[3]>=1&&+m[3]<=12))return null;
+  const open=from<=to?cur>=from&&cur<=to:cur>=from||cur<=to;
+  return {open,opens:open?null:`${+m[2]} ${MONTHS_EN[+m[1]-1]}`};
+}
