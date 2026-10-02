@@ -1,0 +1,11 @@
+{
+ "city": "dubai",
+ "sha256": "ad6c63acd597597950d2d395e0d9c7571c26de813e8e1c99c329509ab5ca4295",
+ "places": 38478,
+ "categories": 83,
+ "source": "osm+overture",
+ "built_at": "2026-10-02T21:03:43Z",
+ "with_photo": 4040,
+ "illustrative_photos": 852,
+ "notes": "v5: only Dubai emirate, closures/seasons, metro, MICHELIN, site hours/prices/booking"
+}
