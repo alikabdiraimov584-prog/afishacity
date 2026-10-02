@@ -91,6 +91,10 @@ function splitRules(text){
   for(const chunk of String(text).split(";")){
     let buf="";
     for(const part of chunk.split(",")){
+      // «Mo-Fr 07:00-12:00,14:00-22:00» — второй интервал того же правила
+      // (перерыв днём), а не новое правило на всю неделю: без дней впереди он
+      // раньше открывал заведение в выходные и терял утро.
+      if(RULE_DONE.test(buf)&&/^\s*\d{1,2}[:.]\d{2}\s*-\s*\d{1,2}[:.]\d{2}\s*$/.test(part)){buf=buf+","+part;continue}
       if(RULE_DONE.test(buf)){out.push(buf.trim());buf=part}
       else buf=buf?buf+","+part:part;
     }

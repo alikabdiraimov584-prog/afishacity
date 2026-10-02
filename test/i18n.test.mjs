@@ -79,7 +79,7 @@ test("сервер отдаёт главную на языке города: lan
 const {server}=await import(${JSON.stringify(new URL("../server.mjs",import.meta.url).href)});
 await new Promise(r=>server.listen(0,"127.0.0.1",r));
 const html=await (await fetch("http://127.0.0.1:"+server.address().port+"/")).text();
-server.close();process.stdout.write(JSON.stringify({html}));process.exit(0);`;
+server.close();process.stdout.write(JSON.stringify({html}),()=>process.exit(0));`;
   const out=execFileSync(process.execPath,["--no-warnings","--input-type=module","-e",script],
     {cwd:fileURLToPath(new URL("..",import.meta.url)),env:{...process.env,CITY:"dubai",NODE_ENV:"test"},encoding:"utf8",maxBuffer:32*1024*1024});
   const {html}=JSON.parse(out);

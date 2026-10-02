@@ -1133,6 +1133,15 @@ function queryFromState(){
 }
 async function liveArgs(){
   const s=chatState.slots,args={query:queryFromState(),taste_weights:{...taste}};
+  // Дубай: запрос человека целиком — сервер разбирает его сам; слоты сценария
+  // («вечер» = 18:00, бюджет в рублях) только мешали бы.
+  if(LANG==="en"&&chatState.queryText){
+    const a2={query:chatState.queryText,taste_weights:{...taste}};
+    if(chatState.excludeIds&&chatState.excludeIds.length)a2.exclude_ids=chatState.excludeIds.slice(-30);
+    const g2=s.near?await geo(false):freshGeo();
+    if(g2)a2.user_location={lat:g2.lat,lon:g2.lon};
+    return a2;
+  }
   if(s.max_price_rub&&s.max_price_rub<999999)args.max_price_rub=s.max_price_rub;if(s.party_size)args.party_size=s.party_size;if(s.after_time)args.after_time=s.after_time;
   if(["today","tomorrow","weekend"].includes(s.date_word))args.target_date=dateStr(s.date_word);
   if(s.area)args.area=s.area;
@@ -1336,6 +1345,8 @@ function hoursLines(r){
 function openStatus(r){
   if(r.kind==="event")return null;
   if(r.status_note)return {cls:"note",text:String(r.status_note)};
+  // Спросили на другое время («tonight», «at 2am»): важно, открыто ли тогда.
+  if(r.requested_time&&r.open_at_requested===true&&r.open_now!==true)return {cls:"open",text:LANG==="en"?`Open ${r.requested_time}`:`Открыто ${r.requested_time}`};
   if(r.open_now===true)return {cls:"open",text:r.closes_at?t("detail.openTill",{t:r.closes_at}):t("detail.openNow")};
   if(r.open_now===false)return {cls:"closed",text:r.opens_at?t("detail.opensAt",{t:r.opens_at}):t("detail.closed")};
   return null;
@@ -1437,7 +1448,7 @@ function cardHtml(r,i,score){
     </div></div>`;
 }
 function cards(rs){
-  currentResults=rs;rememberPlaces(rs);
+  currentResults=rs;rememberPlaces(rs);chatState.lastShownIds=(rs||[]).map(r=>r&&r.id);
   const shown=shownMatches(rs);
   // Точки под лентой: сколько вариантов и какой сейчас на экране.
   const dots=rs.length>1?`<div class="cardDots" aria-hidden="true">${rs.map((_,i)=>`<i class="${i?"":"on"}"></i>`).join("")}</div>`:"";
@@ -1569,6 +1580,23 @@ async function submitScriptedUser(text,alreadyAdded=false){
   }
   const multi=FreePlanner.parseStops(text);
   if(multi.length>=2){mergeSlots(text);await buildEveningScripted(multi);return}
+  // Дубай: сервер сам понимает английский запрос целиком (время, цену, повод,
+  // «рядом»), поэтому без уточняющих вопросов — слова человека уходят как есть.
+  // «Cheaper», «closer», «something else» уточняют прошлый запрос, а не
+  // начинают новый; «else/more» не повторяют уже показанные места.
+  if(LANG==="en"&&!isContinuation){
+    const n2=norm(text);
+    const refine=/^(?:(?:something|anything|show me|a bit|maybe|ok|okay|and)\s+)?(?:cheaper|less expensive|more affordable|closer|nearer|more upscale|fancier|nicer|quieter|livelier|another|other|else|more|different)\b|^(?:something|anything|show me|show) (?:else|more|different)|^(?:other|more) (?:options|places|ideas)/.test(n2);
+    if(refine&&chatState.rawQuery){
+      chatState.queryText=chatState.rawQuery+" "+text;
+      if(/\b(?:another|other|else|more|different)\b/.test(n2))chatState.excludeIds=[...new Set([...(chatState.excludeIds||[]),...(chatState.lastShownIds||[]).filter(Boolean)])];
+    }else{
+      if(["results","selected","action"].includes(chatState.phase))resetSearchContext({keepShared:false,announce:false});
+      chatState.rawQuery=text;chatState.queryText=text;chatState.excludeIds=[];
+    }
+    chatState.intent=newIntent;mergeSlots(text);chatState.asked=1;
+    await showMatches();return;
+  }
   if(!chatState.intent || (newIntent!=="general"&&chatState.intent==="general"))chatState.intent=newIntent;
   mergeSlots(text);
 

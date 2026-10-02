@@ -186,6 +186,9 @@ function dateOkayEn(x,args,plan,today){
   const last=x.date_end||x.date_start;
   if(last&&last<today)return false;
   if(!from)return true;
+  // В окне дат ничего нет и афиша отдала ближайшие даты («Dubai Opera tonight»
+  // — сегодня спектакля нет, следующий в среду): их показываем с пометкой.
+  if(plan.eventAsk&&plan.eventAsk.fallback&&x.provider_id==="dubai_events"||plan.eventAsk&&plan.eventAsk.fallback&&String(x.id||"").startsWith("evt:"))return true;
   if(!x.date_start)return false;
   return x.date_start<=to&&(x.date_end||x.date_start)>=from;
 }
@@ -491,7 +494,9 @@ export function rankLive(items,args={},plan={}){
     // WS5: спросили афишу («what's on tonight», «concert this weekend») —
     // событие в нужные даты уже отобрано источником (events_dubai.mjs) по
     // рубрике и дате: оно и есть ответ, а не «бар без рубрики».
-    const evAsk=Boolean(plan.eventAsk)&&x.kind==="event";
+    // Спросили конкретный вид («comedy», «show») — афиша поднимает только его:
+    // «Korean Market» на «show tonight» не ответ.
+    const evAsk=Boolean(plan.eventAsk)&&x.kind==="event"&&(!evTags.size||Boolean(plan.eventAny)||[...evTags].some(t=>ctags.has(t)||xtags.has(t))||atVenue);
     const bypass=core||(named&&!(plan.cats||[]).length)||evHit||evAsk;
     if(evHit){s+=45+(atVenue?40:0);reasons.push(L("событие","event"))}
     if(hours&&hours.open_now){
@@ -631,7 +636,13 @@ export function rankLive(items,args={},plan={}){
       if(plan.michelin&&x.michelin){michelin=true;s+=80;reasons.push(/bib/i.test(x.michelin)?"Michelin Bib Gourmand":/star|^[1-3]$/i.test(x.michelin)?"Michelin star":"Michelin Guide")}
       // Скорая: приёмный покой; отделения, стоматология, «медсестра на дом» — нет.
       if(plan.emergency){
-        if(a.emergency){s+=70;attrHit=true;reasons.push("emergency department")}
+        if(a.emergency){
+          s+=70;attrHit=true;reasons.push("emergency department");
+          // Взрослому «в приёмный покой» нужна многопрофильная больница, а не
+          // детская, женская или клиника позвоночника — если о них не просили.
+          const SPEC=/\b(child|children|kids|paediatric|pediatric|women|maternity|orthopa?edic|spine|spinal|neuro|eye|dental|cosmetic|fertility|rehab\w*|psychiatr\w*)\b/;
+          if(SPEC.test(nm)&&!SPEC.test(norm(args.query||"")))s-=45;
+        }
         else if(NOT_ER.test(nm)&&!/hospital/.test(nm))continue;
         else if(/\bward\b|department|\bunit\b|out ?patient/.test(nm))continue;
         else if(a.hospital&&/hospital/.test(nm))s+=25;

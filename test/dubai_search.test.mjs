@@ -233,3 +233,15 @@ test("арабское имя без английского — транслит
   const t=translitArabic("مستشفى راشد");
   assert.match(t,/^[A-Za-z ]+$/);assert.match(t,/Hospital$/);
 });
+
+test("«show tonight» — спектакль, стендап и концерт, а не ярмарка",()=>{
+  const p=buildSearchPlan({query:"show tonight",now:NOW});
+  for(const t of ["theatre","comedy","concert"])assert.ok(p.eventTags.includes(t),t);
+  assert.ok(!p.eventTags.includes("festival"));
+});
+
+test("точное название из карты: акценты и короткие слова не мешают",async()=>{
+  const {foldName}=await import("../osm_snapshot.mjs");
+  assert.equal(foldName("CÉ LA VI"),"ce la vi");
+  assert.equal(foldName("Café  Bateel & Co."),"cafe bateel and co");
+});

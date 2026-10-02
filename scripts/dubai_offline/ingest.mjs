@@ -59,6 +59,9 @@ function dropBadSite(t){
 // Один сайт на многих мест: у сети это свой сайт («Tim Hortons» —
 // timhortonsgcc.com), а у портала или оператора — чужой (dubai-marina.com у
 // ресторана, cravia.com у «Cinnabon»). Кадр с чужого сайта — не фото места.
+// Часы, цены, онлайн-бронь и меню с собственных сайтов мест (site_meta/).
+const {loadSiteMeta,applySiteMeta}=await import(new URL("./site_meta/apply_site_meta.mjs",import.meta.url));
+const SITE_META=loadSiteMeta(process.env.SITE_META||IN.replace(/[^/]+$/,"photos/site_meta.jsonl"));let siteMetaTags=0;
 const SITE_USERS=new Map();
 for(const c of targets)for(const e of data[c.tag]||[]){
   const s=siteOf(e.tags||{});if(!s)continue;
@@ -108,6 +111,7 @@ const open=(e)=>{if(e.tags?.["free:status"]==="closed"){closedDropped++;return f
 const APPLY=[
   (t,e)=>cleanNames(e),
   nameFromEn,enStreet,dropBadSite,attachPhoto,
+  (t,e)=>{const s=siteOf(t),r=s&&SITE_META.get(s);if(r)siteMetaTags+=applySiteMeta(t,r,{lat:e.lat??e.center?.lat,lon:e.lon??e.center?.lon,users:SITE_USERS.get(s)?.size||1}).length},
   // Контора с пометкой «достопримечательность» (муниципалитет, офис) — не
   // то, куда зовут гулять: пометку снимаем, рубрика остаётся.
   (t,e)=>{if(t.tourism==="attraction"&&t.office){delete t.tourism;e._notSight=true}},
@@ -125,4 +129,4 @@ for(const c of targets){
 }
 const v=snapshotAcceptable({total,failed:0,targets:targets.length});
 const res=snap.finish({source:"osm+overture"});
-console.log(JSON.stringify({site_photos:SITE_PHOTO.size,with_photo:photos,text_dropped:textDropped,dead_sites:deadSites,foreign_site:foreignDropped,dropped_nonlatin:dropped,closed_dropped:closedDropped,named_from_en:namedFromEn,labelled,translated,streets:Object.keys(STREETS).length,categories:targets.length,places:res.places,verdict:v,empty,size_mb:+(fs.statSync(OUT).size/1048576).toFixed(1)}));
+console.log(JSON.stringify({site_meta:SITE_META.size,site_meta_tags:siteMetaTags,site_photos:SITE_PHOTO.size,with_photo:photos,text_dropped:textDropped,dead_sites:deadSites,foreign_site:foreignDropped,dropped_nonlatin:dropped,closed_dropped:closedDropped,named_from_en:namedFromEn,labelled,translated,streets:Object.keys(STREETS).length,categories:targets.length,places:res.places,verdict:v,empty,size_mb:+(fs.statSync(OUT).size/1048576).toFixed(1)}));

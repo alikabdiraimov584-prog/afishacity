@@ -398,6 +398,16 @@ class Curator:
     # 8. MICHELIN и 50 Best.
     self.michelin(reg,cats,drop)
     self.awards(reg,cats,drop)
+    # 8b. Закрытия — и для мест, добавленных шагами 7–8: гид MICHELIN добавляет
+    # ресторан закрытого на ремонт отеля (Armani Ristorante) уже после шага 2.
+    added=[e for k,e in reg.items() if k not in drop and is_curated(e) and not e["tags"].get("free:status")]
+    if added:
+      for r in load("closures.json")["rules"]:
+        if r.get("rename"):continue
+        for e in Matcher(added).find(r["match"]):
+          t=e["tags"];t["free:status"]=r["status"];t["free:status_note"]=r["note"];t["free:status_src"]=r["src"]
+          self.stats["status_added:"+r["status"]]+=1
+          if r["status"]=="closed":kill(e,"closed_curated")
     # 9. Дубли: одно имя в пределах 150 м — одно место.
     self.dedupe(reg,cats,drop)
     # 10. Метро и трамвай: понятное английское имя.

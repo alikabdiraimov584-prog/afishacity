@@ -48,7 +48,7 @@
     {"match": {"name": "burj al arab|^al muntaha\\b|^al mahara\\b|^l.olivo\\b|^sal\\b|^skyview bar\\b|^gilt\\b|^junsui\\b|^bab al yam\\b|^scape\\b|^talise spa", "near": [25.1412, 55.1855], "radius_m": 160},
      "status": "temporarily_closed", "note": "Burj Al Arab and all its restaurants closed on 15 April 2026 for an 18-month restoration; reopening expected late 2027",
      "src": "https://www.khaleejtimes.com/uae/dubai-burj-al-arab-close-restoration-what-we-know"},
-    {"match": {"name": "^armani\\b", "near": [25.1973, 55.2742], "radius_m": 300},
+    {"match": {"name": "^armani\\b(?!.*\\b(caff[eè]|exchange|a/x|outlet|fiori|clinics?|rent|dubai mall|entrance)\\b)", "near": [25.1973, 55.2742], "radius_m": 300},
      "status": "temporarily_closed", "note": "Armani Hotel Dubai and its restaurants closed on 1 April 2026 for a full refurbishment; full reopening planned for March 2027",
      "src": "https://gulfnews.com/business/armani-hotel-dubai-to-reopen-on-this-date-after-landmark-transformation-inside-burj-khalifa-1.500673880"},
     {"match": {"name": "^park hyatt dubai$|^park hyatt dubai creek", "near": [25.2443, 55.3337], "radius_m": 500},

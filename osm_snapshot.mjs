@@ -234,7 +234,13 @@ function ftsQuery(text){
 }
 
 /** Открывает снимок для чтения. Возвращает null, если снимка нет. */
+// Имя для точного сравнения: без акцентов, регистра и знаков («CÉ LA VI» → «ce la vi»).
+export function foldName(s=""){
+  return String(s).normalize("NFKD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/&/g," and ")
+    .replace(/[^a-z0-9а-яё]+/g," ").replace(/\s+/g," ").trim();
+}
 export function openSnapshot(file,{now=Date.now}={}){
+  let exactIdx=null;
   if(!file||!existsSync(file))return null;
   let db;
   try{db=new DatabaseSync(file,{readOnly:true})}catch{return null}
@@ -393,6 +399,26 @@ export function openSnapshot(file,{now=Date.now}={}){
         }
       }
       return [...[...seen.values()].slice(0,limit),...extra.values()];
+    },
+    /** Точное название места («CÉ LA VI», «Zuma», «Il Borro») → имя из базы или null.
+     *  Короткие слова и буквы с акцентами поиск по словам не находит; таблица
+     *  «свёрнутое имя → имя» строится один раз (≈40 тыс. строк, десятки мс). */
+    exactName(text){
+      const key=foldName(text);if(!key||key.length<2)return null;
+      if(!exactIdx){
+        exactIdx=new Map();
+        try{
+          for(const r of db.prepare("select name,tags_json from place").all()){
+            let t={};try{t=JSON.parse(r.tags_json)}catch{}
+            for(const n of new Set([r.name,t["name:en"],t.name].filter(Boolean))){
+              const k=foldName(n);if(!k)continue;
+              for(const v of [k,k.replace(/^the /,""),k.replace(/ dubai$/,"")])if(v&&!exactIdx.has(v))exactIdx.set(v,r.name);
+            }
+          }
+        }catch{}
+      }
+      for(const v of [key,key.replace(/^the /,""),key.replace(/ dubai$/,"")])if(exactIdx.has(v))return exactIdx.get(v);
+      return null;
     },
     close(){try{db.close()}catch{}}
   };

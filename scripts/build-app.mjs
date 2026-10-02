@@ -9,6 +9,14 @@ if(!/^https?:\/\//.test(apiBase))throw new Error("app/app.config.json: apiBase �
 const out=join(root,"app","www");mkdirSync(out,{recursive:true});
 for(const f of readdirSync(join(root,"public"))){const p=join(root,"public",f);if(statSync(p).isFile()&&f!=="index.html")copyFileSync(p,join(out,f))}
 let html=readFileSync(join(root,"public","index.html"),"utf8");
+// Город приложения (CITY или "city" в app.config.json): первый экран сразу на
+// его языке — так же, как сервер отдаёт страницу в браузер (cityIndexHtml).
+const city=process.env.CITY||cfg.city;
+if(city){
+  process.env.CITY=city;process.env.NODE_ENV=process.env.NODE_ENV||"test";
+  const {cityIndexHtml}=await import("../server.mjs");
+  html=cityIndexHtml(html);
+}
 const inject=`<script>window.FREE_CONFIG=${JSON.stringify({apiBase,app:true,builtAt:new Date().toISOString()})};</script>\n<script src="planner.js"></script>`;
 if(!html.includes(`<script src="planner.js"></script>`))throw new Error("не нашёл подключение planner.js");
 html=html.replace(`<script src="planner.js"></script>`,inject);

@@ -711,7 +711,8 @@ export function coverUrl(x){
     c:String(x.category||x.cat||"").slice(0,60),
     t:(x.tags||[]).slice(0,4),
     a:String(x.area||x.metro||"").slice(0,80),
-    h:String(x.hours_label||"").slice(0,120),
+    // Обложка разбирает часы сама: ей нужна исходная строка, а не подпись «Open today …».
+    h:String(x.hours_raw||x.hours_label||"").slice(0,120),
     p:String(x.price_label||x.price||"").slice(0,60),
     k:x.kind==="event"?"event":"venue",
     g:x.coords||null
@@ -1383,15 +1384,15 @@ const server=http.createServer(async(req,res)=>{
           yandex_maps:Boolean(process.env.YANDEX_MAPS_API_KEY)&&Boolean(CITY.yandexBbox),
           foursquare:Boolean(process.env.FOURSQUARE_API_KEY)&&CITY.providers.places.includes("foursquare"),
           google_places:Boolean(process.env.GOOGLE_PLACES_API_KEY)&&CITY.providers.places.includes("google")},
-        foursquare:{enabled:Boolean(process.env.FOURSQUARE_API_KEY)&&CITY.providers.places.includes("foursquare"),gives:["рейтинг и число оценок","фотографии","часы, телефон и сайт","ценовой уровень"]},
-        google_places:{enabled:Boolean(process.env.GOOGLE_PLACES_API_KEY)&&CITY.providers.places.includes("google"),gives:["рейтинг и число отзывов","фотографии (через /api/gphoto)","часы, телефон и сайт","ценовой уровень"]},
+        foursquare:{enabled:Boolean(process.env.FOURSQUARE_API_KEY)&&CITY.providers.places.includes("foursquare"),gives:L(["рейтинг и число оценок","фотографии","часы, телефон и сайт","ценовой уровень"],["rating and votes","photos","hours, phone and website","price level"])},
+        google_places:{enabled:Boolean(process.env.GOOGLE_PLACES_API_KEY)&&CITY.providers.places.includes("google"),gives:L(["рейтинг и число отзывов","фотографии (через /api/gphoto)","часы, телефон и сайт","ценовой уровень"],["rating and reviews","photos (via /api/gphoto)","hours, phone and website","price level"])},
         // Яндекс Карты: часы, телефон, сайт и рубрики заведений. Рейтинга и фото
         // API не отдаёт — это было только у 2GIS.
-        yandex_maps:{enabled:Boolean(process.env.YANDEX_MAPS_API_KEY),gives:["часы работы","телефон и сайт","рубрики","точные координаты"]},
+        yandex_maps:{enabled:Boolean(process.env.YANDEX_MAPS_API_KEY),gives:L(["часы работы","телефон и сайт","рубрики","точные координаты"],["opening hours","phone and website","categories","exact coordinates"])},
         // Отдельно и явно: без ключа 2GIS у выдачи нет ни рейтингов, ни фото
         // заведений — по одному этому полю видно, почему места «так себе».
         dgis:{enabled:Boolean(process.env.DGIS_API_KEY||process.env.TWOGIS_API_KEY),
-          gives:["рейтинг и число отзывов","фотографии заведений","признак закрытия","телефон и часы"]},
+          gives:L(["рейтинг и число отзывов","фотографии заведений","признак закрытия","телефон и часы"],["rating and reviews","venue photos","closure flag","phone and hours"])},
         // Партнёрская ссылка на такси: ref считает заказы, пришедшие от нас.
         // Держим на сервере, чтобы подключение к программе Яндекс Go не
         // требовало правки клиентского кода.
@@ -1675,7 +1676,7 @@ function cityIndexHtml(src){
   return out;
 }
 
-export {runDialogue,conversationTrim,recommendTool,planTool,dialogueSystem,sharePlan,sharedPlanPage,planEvening,server,store,identify,clientKey};
+export {runDialogue,conversationTrim,recommendTool,planTool,dialogueSystem,sharePlan,sharedPlanPage,planEvening,server,store,identify,clientKey,cityIndexHtml};
 
 if(process.env.NODE_ENV!=="test"){
   server.listen(PORT,HOST,()=>{

@@ -45,3 +45,12 @@ test("parseHours принимает Date и невалидную дату не �
   assert.equal(parseHours("24/7",new Date(SUN_2130)).open_now,true);
   assert.equal(parseHours("24/7","not a date").open_now,null);
 });
+
+test("parseSchedule: перерыв днём — два интервала одного правила, выходные закрыты", ()=>{
+  const w=parseSchedule("Mo-Fr 07:00-12:00,14:00-22:00");
+  assert.deepEqual(w[0],[{start:420,end:720},{start:840,end:1320}]);
+  assert.deepEqual(w[4],[{start:420,end:720},{start:840,end:1320}]);
+  assert.deepEqual(w[5],[]);assert.deepEqual(w[6],[]);
+  // Перечисление дней через запятую по-прежнему одно правило.
+  assert.deepEqual(parseSchedule("Sa,Su 11:00-23:00")[0],[]);
+});

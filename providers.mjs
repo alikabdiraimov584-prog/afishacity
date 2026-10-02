@@ -4,7 +4,7 @@ import {createCache,withBreaker,breakerStatus} from "./cache.mjs";
 
 import {CATEGORIES,SERVICE_TAGS,categoryTags,queriesFor} from "./categories.mjs";
 import {structuralTags,placeTitle,tagTitle} from "./osm_tags.mjs";
-import {openSnapshot} from "./osm_snapshot.mjs";
+import {openSnapshot,foldName} from "./osm_snapshot.mjs";
 import {statSync,readFileSync} from "node:fs";
 import {DatabaseSync} from "node:sqlite";
 import {CITY,cityDate,cityNow,bboxString,L} from "./city.mjs";
@@ -354,7 +354,9 @@ const ACTIVITY_QUERY={balloon:"hot air balloon ride",skydiving:"skydiving",skydi
 const EVENT_RULES_EN=[
   {re:/\bstand ?up(?! paddle)\b|\bcomed(?:y|ian|ians)\b|\bcomic\b/,q:"comedy show",tags:["comedy"]},
   {re:/\bconcerts?\b|\bgigs?\b|\blive (?:music|band|bands)\b|\bjazz\b|\bmusic (?:festival|event|night|show)s?\b|\borchestra\b|\bsymphony\b|\brecital\b/,q:"concert",tags:["concert"]},
-  {re:/\btheat(?:re|er)\b|\bmusicals?\b|\bplays?\b(?! ?(?:area|ground|zone|date|room|centre|center))|\bopera\b|\bballet\b|\bperformances?\b|\bshows?\b(?! ?rooms?)/,q:"theatre show",tags:["theatre"]},
+  {re:/\btheat(?:re|er)\b|\bmusicals?\b|\bplays?\b(?! ?(?:area|ground|zone|date|room|centre|center))|\bopera\b|\bballet\b/,q:"theatre show",tags:["theatre"]},
+  // «Шоу» — это и спектакль, и стендап, и концерт; ярмарка или рынок — нет.
+  {re:/\bperformances?\b|\bshows?\b(?! ?rooms?)/,q:"show",tags:["theatre","comedy","concert"]},
   {re:/\bexhibitions?\b|\bexpos?\b|\bart (?:show|fair|event)s?\b|\binstallations?\b/,q:"exhibition",tags:["exhibition"]},
   {re:/\bfestivals?\b|\bcarnival\b|\bnight market\b|\bfair\b/,q:"festival",tags:["festival"]},
   {re:/\bclub nights?\b|\bdj (?:set|night)s?\b|\bline ?ups?\b|\braves?\b|\bparty\b|\bparties\b/,q:"club night",tags:["club"]},
@@ -575,11 +577,30 @@ function buildSearchPlanCore(args={}){
   if(CITY.lang==="en"){
     // Названия, которые складываются из слов-рубрик («Dubai Parks and Resorts»,
     // «Dubai Aquarium», «Dubai Opera»): это имя места, а не «парки и отели».
-    const forced=qn.match(/\b(dubai parks(?: and resorts)?|dubai aquarium|dubai opera|dubai mall|the dubai mall|dubai fountain|dubai frame|dubai marina mall|dubai hills mall|dubai festival city mall|mall of the emirates|ibn battuta(?: mall)?|city centre deira|deira city centre|riverland|bollywood parks|real madrid world|the beach jbr|souk madinat(?: jumeirah)?|box ?park|dubai safari park|dubai miracle garden|miracle garden|dubai butterfly garden|dubai garden glow|dubai dolphinarium|dubai ice rink|ski dubai|wild wadi|aquaventure|img worlds(?: of adventure)?|museum of the future|etihad museum|al shindagha museum|coca.?cola arena|dubai world trade centre)\b/);
+    const forced=qn.match(/\b(dubai parks(?: and resorts)?|dubai aquarium|dubai opera|dubai mall|the dubai mall|dubai fountain|dubai frame|dubai marina mall|dubai hills mall|dubai festival city mall|mall of the emirates|ibn battuta(?: mall)?|city centre deira|deira city centre|riverland|bollywood parks|real madrid world|the beach jbr|souk madinat(?: jumeirah)?|box ?park|dubai safari park|dubai miracle garden|miracle garden|dubai butterfly garden|dubai garden glow|dubai dolphinarium|dubai ice rink|ski dubai|wild wadi|aquaventure|img worlds(?: of adventure)?|museum of the future|etihad museum|al shindagha museum|coca.?cola arena|dubai world trade centre|(?:deira )?gold souk|gold souq|spice souk|textile souk|perfume souk|souk al bahar|dubai marina walk|marina walk|the walk(?: at)? jbr|jbr the walk|city walk|la mer|kite beach|alserkal avenue|al fahidi(?: historical neighbourhood| historical district)?|al seef|bluewaters(?: island)?|the pointe|dubai creek harbour|global village|dubai canal)\b/);
     if(forced){
       plan.forcedName=forced[1];
       plan.phrase=forced[1].split(" ").filter(w=>w&&!NAME_STOP.has(w));
       plan.cats=[];
+    }else{
+      // Запрос — точное название места из карты («CÉ LA VI», «Il Borro», «book a
+      // table at Pierchic»): ищем это место, а не рубрики по отдельным словам.
+      // Только если в запросе есть слово, не являющееся рубрикой: «Rooftop Bar»
+      // и «Beach Club» — это просьба о рубрике, даже если так называется кафе.
+      const strip=(v)=>v.replace(/^(?:please\s+)?(?:book|reserve)(?:\s+(?:a|me a))?(?:\s+table)?(?:\s+for\s+\w+)?\s+(?:at|in)\s+|^(?:directions|route|how (?:do i|to) get)\s+to\s+|^(?:call|ring)\s+/,"")
+        .replace(/\s+(?:tonight|today|tomorrow|now|this (?:evening|weekend)|near me|nearby|please)$/,"").trim();
+      const bare=strip(qn),folded=strip(foldName(text(args._orig||args.query||"")));
+      const ws=bare.split(" ").filter(Boolean);
+      const leftover=ws.filter(w=>!NAME_STOP.has(w)&&!PLACE_RULES.some(r=>r.re.test(w)));
+      if(ws.length&&ws.length<=5&&leftover.length){
+        let hit=null;try{const sn=getSnapshot();hit=sn?.exactName?.(folded)||sn?.exactName?.(bare)||null}catch{hit=null}
+        if(hit){
+          plan.forcedName=norm(hit);
+          plan.phrase=norm(hit).split(" ").filter(w=>w&&!NAME_STOP.has(w));
+          if(!plan.phrase.length)plan.phrase=norm(hit).split(" ").filter(Boolean);
+          plan.cats=[];
+        }
+      }
     }
     const out=qn.match(/\b(hatta|abu dhabi|abudhabi|ferrari world|yas island|yas waterworld|warner bros|louvre abu dhabi|sheikh zayed grand mosque|ras al khaimah|jebel jais|fujairah|al ain|khor fakkan|musandam|oman)\b/);
     if(out)plan.outOfArea=out[1];
