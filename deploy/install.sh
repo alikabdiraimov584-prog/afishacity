@@ -203,6 +203,36 @@ else
   systemctl start --no-block free-snapshot.service || true
 fi
 
+say "Афиша Дубая: таймер обновления"
+cp "$DIR/deploy/free-events.service" /etc/systemd/system/free-events.service
+cp "$DIR/deploy/free-events.timer" /etc/systemd/system/free-events.timer
+systemctl daemon-reload
+if [ "$CITY_ID" = "dubai" ]; then
+  systemctl enable -q free-events.timer
+  systemctl start free-events.timer
+  EVENTS="$DIR/data/events_dubai.json"
+  mkdir -p "$DIR/data"
+  # Готовая афиша из ветки с данными: события видны сразу, не дожидаясь
+  # первой сборки. Свежую местную (моложе 12 часов) не затираем.
+  if [ ! -s "$EVENTS" ] || [ -n "$(find "$EVENTS" -mmin +720 2>/dev/null)" ]; then
+    if curl -fsSL --max-time 60 "$PREBUILT/events_dubai.json" -o "$EVENTS.part" 2>/dev/null \
+       && node -e 'const a=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));if(!Array.isArray(a)||!a.length)process.exit(1)' "$EVENTS.part"; then
+      mv -f "$EVENTS.part" "$EVENTS"
+      chown free:free "$EVENTS" 2>/dev/null || true
+      echo "   готовая афиша установлена: $(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).length)' "$EVENTS") событий"
+    else
+      rm -f "$EVENTS.part"
+      echo "   готовой афиши нет — соберу сам"
+    fi
+  fi
+  # Свежая сборка — фоном: минута-две, сервер уже отвечает.
+  systemctl start --no-block free-events.service || true
+  echo "   следить: journalctl -u free-events -f"
+else
+  systemctl disable -q --now free-events.timer 2>/dev/null || true
+  echo "   город $CITY_ID — афиша Дубая не нужна, таймер выключен"
+fi
+
 say "nginx для $DOMAIN"
 if ss -ltnp | grep -q ':80 .*apache2'; then systemctl disable -q --now apache2; fi
 # Шаблон ниже перезапишет конфиг вместе с блоком SSL, который дописал certbot.

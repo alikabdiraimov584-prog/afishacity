@@ -339,7 +339,11 @@ export function rankLive(items,args={},plan={}){
     if(named&&!/^osm:node:9\d{12}$/.test(String(x.id||"")))s+=25;
     // Обходить проверку рубрики может только точное название или запрос без
     // рубрики: «work» в «Automaint Work Shop» не делает автосервис кафе.
-    const bypass=core||(named&&!(plan.cats||[]).length);
+    // WS5: спросили афишу («what's on tonight», «concert this weekend») —
+    // событие в нужные даты уже отобрано источником (events_dubai.mjs) по
+    // рубрике и дате: оно и есть ответ, а не «бар без рубрики».
+    const evAsk=Boolean(plan.eventAsk)&&x.kind==="event";
+    const bypass=core||(named&&!(plan.cats||[]).length)||evAsk;
     if(hours&&hours.open_now){
       s+=7;reasons.push(args.after_time?L(`открыто в ${args.after_time}`,`open at ${args.after_time}`):L("открыто сейчас","open now"));
       if(hours.closes_in!==null&&hours.closes_in<=60){s-=24;reasons.push(L(`закрывается в ${hours.closes_at}`,`closes at ${hours.closes_at}`))}
@@ -424,6 +428,14 @@ export function rankLive(items,args={},plan={}){
     }
     if(!strong.size&&qwords.length===0)s+=18;
     if(args.target_date&&x.kind==="event"){s+=22;reasons.push(L("по дате","matches the date"))}
+    // WS5: событие из афиши на вопрос про афишу — выше мест (+80 вместе с «по
+    // дате»; без совпавшей рубрики — ещё как за рубрику: на «what's on tonight»
+    // бар набирает за бар, еду и кальян сразу). Ближе по дате — чуть выше.
+    if(evAsk){
+      const ahead=Math.max(0,Math.round((Date.parse(x.date_start||moscowDate())-Date.parse(moscowDate()))/864e5));
+      s+=(args.target_date?58:80)+([...strong].some(t=>ctags.has(t))?0:58)+Math.max(0,14-ahead);
+      if(!args.target_date)reasons.push(plan.eventAsk.fallback?L("ближайшая дата","next date"):plan.eventAsk.label&&plan.eventAsk.label!=="upcoming"?plan.eventAsk.label:L("скоро","upcoming"));
+    }
     if(args.after_time&&x.times?.length){s+=9;reasons.push(L("по времени","matches the time"))}
     if(args.max_price_rub!==undefined&&args.max_price_rub!==null&&x.price_min!==null&&x.price_min<=args.max_price_rub){s+=10;reasons.push(L("в бюджете","within budget"))}
     const ts=tasteScore(dna,taste);
@@ -513,8 +525,10 @@ export function rankLive(items,args={},plan={}){
     const wk=cores.find(x=>x.wikidata)||(cores.length?nm.find(x=>x.wikidata&&!x._core):null);
     const near=(x)=>{const a=coordsPair(x.coords),b=coordsPair(wk.coords);return a&&b&&hav(a,b)<=1.5};
     const coresOk=wk?[wk,...cores.filter(x=>x!==wk&&near(x))]:cores;
-    if(coresOk.length)scored.splice(0,scored.length,...coresOk);
-    else if(nm.length&&!(plan.cats||[]).length&&(!plan.district||plan.phraseWithDistrict))scored.splice(0,scored.length,...nm);
+    // WS5: «Dubai Opera tonight» — сама площадка и её события на эти даты.
+    const evKeep=plan.eventAsk?scored.filter(x=>x.kind==="event"&&!coresOk.includes(x)&&!nm.includes(x)):[];
+    if(coresOk.length)scored.splice(0,scored.length,...coresOk,...evKeep);
+    else if(nm.length&&!(plan.cats||[]).length&&(!plan.district||plan.phraseWithDistrict))scored.splice(0,scored.length,...nm,...evKeep);
   }
   // Абсолютный порог выбрасывал ВСЮ выдачу, когда ни одно слово запроса не нашлось
   // в текстах: на «посоветуй что-нибудь» человек получал пустой ответ при живых
