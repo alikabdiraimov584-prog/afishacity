@@ -63,8 +63,34 @@ test("t() подставляет переменные и город", () => {
   assert.equal(ctx.__t("nope.key"),"nope.key");
   assert.equal(ctx.__setCity({id:"dubai",name:"Dubai",nameEn:"Dubai",lang:"en",currencySymbol:"AED",agent:{lang:"en-US"}}),true);
   assert.equal(ctx.__lang(),"en");
-  assert.equal(ctx.__t("status.fallback"),"Fallback mode · Dubai");
+  // Без технических слов в строке статуса: не «Fallback mode», а «Quick search».
+  assert.equal(ctx.__t("status.fallback"),"Quick search · Dubai");
   assert.equal(ctx.__t("detail.openTill",{t:"1:00"}),"Open · till 1:00");
   assert.equal(ctx.__t("agent.role"),"your Dubai concierge");
   assert.equal(ctx.document.documentElement.lang,"en");
+});
+
+// Первый кадр в Дубае — сразу по-английски. Город фиксируется при импорте
+// city.mjs, поэтому страницу запрашиваем у сервера в отдельном процессе с CITY=dubai.
+test("сервер отдаёт главную на языке города: lang, FREE_CITY и стартовые строки", async () => {
+  const {execFileSync}=await import("node:child_process");
+  const {fileURLToPath}=await import("node:url");
+  const script=`
+const {server}=await import(${JSON.stringify(new URL("../server.mjs",import.meta.url).href)});
+await new Promise(r=>server.listen(0,"127.0.0.1",r));
+const html=await (await fetch("http://127.0.0.1:"+server.address().port+"/")).text();
+server.close();process.stdout.write(JSON.stringify({html}));process.exit(0);`;
+  const out=execFileSync(process.execPath,["--no-warnings","--input-type=module","-e",script],
+    {cwd:fileURLToPath(new URL("..",import.meta.url)),env:{...process.env,CITY:"dubai",NODE_ENV:"test"},encoding:"utf8",maxBuffer:32*1024*1024});
+  const {html}=JSON.parse(out);
+  assert.match(html,/<html lang="en"/);
+  const boot=JSON.parse(html.match(/window\.FREE_CITY=(\{.*?\});<\/script>/)[1]);
+  assert.equal(boot.id,"dubai");assert.equal(boot.lang,"en");assert.deepEqual(boot.taxi,["uber","careem"]);
+  const markup=html.slice(html.indexOf("<body"),html.indexOf("<script",html.indexOf("<body")));
+  assert.ok(!/[а-яё]/i.test(markup),"в разметке Дубая не должно остаться русских строк: "+(markup.match(/[^<>"]*[а-яё][^<>"]*/i)||[""])[0]);
+  assert.match(markup,/data-i18n="intro\.h1">What are you in the mood for\?</);
+  assert.match(markup,/data-i18n="composer\.send">Send</);
+  assert.match(markup,/data-i18n="status\.connecting">Connecting… · Dubai</);
+  // Скрипты страницы не тронуты: словарь целиком на месте.
+  assert.ok(html.includes('"intro.h1":"Чего хочется?"'));
 });

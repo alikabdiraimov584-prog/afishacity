@@ -27,7 +27,7 @@ function sse(events){
   return {getReader:()=>({read:async()=>sent?{done:true}:(sent=true,{value:bytes,done:false})})};
 }
 
-function screen({events,tts=true}={}){
+function screen({events,tts=true,route=null,extra={}}={}){
   const nodes={};
   for(const id of ["#voiceScreen","#voiceHint","#voiceHeard","#voiceSaid","#voiceCards"])nodes[id]=node();
   const spoken=[];
@@ -45,16 +45,18 @@ function screen({events,tts=true}={}){
   vm.runInContext(SRC,sandbox);
   const cards=[];
   sandbox.FreeVoice.init({
-    apiFetch:async(path)=>{
+    apiFetch:async(path,opts)=>{
       if(path.startsWith("/api/voice/tts")){
         if(!tts)return {ok:false,status:502,json:async()=>({})};
         spoken.push(true);
         return {ok:true,status:200,blob:async()=>({})};
       }
+      if(route){const r=await route(path,opts);if(r)return r}
       return {ok:true,status:200,body:sse(events),json:async()=>({})};
     },
     context:()=>({}),
     renderCards:(list)=>cards.push(...list),
+    ...extra,
   });
   return {api:sandbox.FreeVoice,nodes,cards,spoken};
 }
@@ -93,4 +95,31 @@ test("молчащий синтез не подвешивает экран", asy
   ]});
   await s.api._ask("бар");
   assert.equal(s.api.phase,"idle");
+});
+
+test("голос и переписка — один разговор", async () => {
+  // Раньше у голоса была своя нить: переключился из чата — агент забыл, о чём речь.
+  let sent=null,stored=null;
+  const s=screen({
+    events:[["delta",{text:"Да, рядом",interim:false}],["done",{response_id:"r2",results:[]}]],
+    route:async(path,opts)=>{if(path==="/api/dialogue/stream")sent=JSON.parse(opts.body);return null},
+    extra:{getConversation:()=>"chat-1",setConversation:(id)=>{stored=id}}});
+  await s.api._ask("а рядом есть?");
+  assert.equal(sent.previous_response_id,"chat-1","ход голосом продолжает разговор из переписки");
+  assert.equal(stored,"r2","новый идентификатор возвращается странице");
+});
+
+test("консьерж недоступен — показываем места по фразе, а не текст ошибки", async () => {
+  const calls=[];
+  const s=screen({events:[],route:async(path)=>{
+    calls.push(path);
+    if(path==="/api/dialogue/stream"||path==="/api/dialogue")return {ok:false,status:502,json:async()=>({message:"upstream"})};
+    if(path==="/api/recommend")return {ok:true,status:200,json:async()=>({results:[{id:"a",name:"Bar A"},{id:"b",name:"Bar B"}]})};
+    return null;
+  }});
+  await s.api._ask("bar nearby");
+  assert.deepEqual(calls,["/api/dialogue/stream","/api/dialogue","/api/recommend"],"поток, один повтор, затем прямой поиск");
+  assert.deepEqual(s.cards.map(c=>c.name),["Bar A","Bar B"]);
+  assert.equal(s.api.phase,"idle");
+  assert.doesNotMatch(s.nodes["#voiceSaid"].textContent,/upstream/,"текст исключения человеку не показываем");
 });

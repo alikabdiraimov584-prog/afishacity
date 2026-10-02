@@ -4,7 +4,24 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#f6f6f4">
+<meta name="color-scheme" content="light dark">
 <title>FREE — разговор, который приводит к плану</title>
+<script>
+/* Тема до первого кадра. В Telegram — его схема (она приходит в адресе как
+   tgWebAppThemeParams ещё до загрузки telegram-web-app.js), иначе — системная.
+   Ставим data-theme на <html> сразу, чтобы тёмный экран не мигал светлым. */
+(function(){
+  var d=document.documentElement,theme="";
+  try{
+    var h=decodeURIComponent((location.hash||"")+"&"+(location.search||""));
+    var m=h.match(/tgWebAppThemeParams=(\{[^}]*\})/);
+    if(m){var p=JSON.parse(m[1]),bg=String(p.bg_color||"").replace("#","");
+      if(/^[0-9a-f]{6}$/i.test(bg)){var n=parseInt(bg,16),l=.299*(n>>16)+.587*((n>>8)&255)+.114*(n&255);theme=l<128?"dark":"light";if(theme==="dark")d.style.setProperty("--tg-bg","#"+bg)}}
+  }catch(_){}
+  try{if(!theme&&window.matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches)theme="dark"}catch(_){}
+  d.setAttribute("data-theme",theme||"light");
+})();
+</script>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23111316'/%3E%3Ctext x='32' y='44' font-family='Arial,Helvetica,sans-serif' font-size='36' font-weight='700' fill='%23fff' text-anchor='middle'%3EF%3C/text%3E%3C/svg%3E">
 <style>
 :root{
@@ -133,7 +150,11 @@ html{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-we
 /* Пузырь с карточками шире обычного: на 390px карточка в 330px не влезала в пузырь
    на 90% ширины и обрезалась справа вместе с кнопками «В план» и «Сохранить». */
 .msg.cards,.msg:has(.inlineCards){max-width:100%;width:100%;box-sizing:border-box}
-.msg .placeCard{min-width:min(330px,calc(100vw - 62px));max-width:min(330px,calc(100vw - 62px))}
+/* Следующая карточка выглядывает справа, а точки под лентой показывают, сколько
+   вариантов: раньше была видна ровно одна карточка, и о второй и третьей никто не знал. */
+.msg .placeCard{min-width:min(316px,calc(100vw - 96px));max-width:min(316px,calc(100vw - 96px))}
+.msg .inlineCards:has(.placeCard:only-child) .placeCard{min-width:min(330px,calc(100vw - 62px));max-width:min(330px,calc(100vw - 62px))}
+.cardDots{display:flex;justify-content:center;gap:6px;padding:8px 0 0}.cardDots i{width:6px;height:6px;border-radius:50%;background:rgba(20,24,28,.18);transition:background .2s,width .2s}.cardDots i.on{background:var(--ink);width:16px;border-radius:3px}
 .placeCard{min-width:min(330px,85vw);max-width:330px;scroll-snap-align:start;border-radius:23px;background:#fff;border:1px solid rgba(255,255,255,.95);padding:16px;box-shadow:var(--shadow)}
 .placeCard.best{border-color:rgba(17,19,22,.18)}
 .rating{display:flex;align-items:baseline;gap:6px;margin:5px 0 2px}
@@ -141,7 +162,13 @@ html{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-we
 .rating b{font-size:13px;letter-spacing:-.02em}
 .rating .small{font-size:11px;color:#8a9098}
 .placeCard .tag{font-size:9px;text-transform:uppercase;letter-spacing:.11em;color:#858b93}.placeCard h3{font-size:20px;letter-spacing:-.035em;margin:6px 0 5px}.reason{font-size:12px;color:#626a74;line-height:1.4}.meta{font-size:11px;color:#8a9098;margin-top:7px}.score{float:right;font-size:20px;font-weight:780;letter-spacing:-.05em}.score small{font-size:8px;text-transform:uppercase;color:#91969d;letter-spacing:.08em;margin-left:3px}
-.cardBtns{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:13px}.cardBtn{border:1px solid var(--line);background:#fff;color:#313740;border-radius:12px;padding:9px;font-size:11px;font-weight:700}.cardBtn.primary{background:#111;color:#fff}.cardBtn.saved{background:#eaf7f0;color:#13724e}
+.placeCard .tag{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:2px}
+.placeCard .when{font-size:11px;margin-top:7px;font-weight:650;color:#4e555f}.placeCard .when.open{color:var(--green)}.placeCard .when.closed,.placeCard .when.note{color:#b3261e}
+/* Кнопки карточки: главное действие и «Маршрут», затем такси (в Дубае — Uber и Careem
+   отдельными кнопками), затем план, сохранение и подробности. */
+.cardBtns{display:grid;grid-template-columns:repeat(6,1fr);gap:7px;margin-top:13px}.cardBtns>*{grid-column:span 3}.cardBtns .s2{grid-column:span 2}.cardBtns .s6{grid-column:1/-1}
+.cardBtn{border:1px solid var(--line);background:#fff;color:#313740;border-radius:12px;padding:9px 6px;font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cardBtn.primary{background:#111;color:#fff}.cardBtn.saved{background:#eaf7f0;color:#13724e}
+.cardBtn.taxi,.dActions .taxi{background:#f3f4f6}
 .actionBox{margin-top:12px;padding:14px;border-radius:18px;background:#111;color:#fff}.actionBox h4{margin:0 0 5px;font-size:15px}.actionBox p{margin:0;color:#adb3bb;font-size:11px;line-height:1.45}.actionBtns{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.actionBtns button,.actionBtns a{border:0;background:#fff;color:#111;border-radius:11px;padding:9px 11px;font-size:11px;font-weight:720;text-decoration:none}.actionBtns .ghost{background:#22262c;color:#fff}
 .composerWrap{
       position:fixed;
@@ -157,13 +184,16 @@ html{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-we
     .composerWrap .composer,.composerWrap .hint{pointer-events:auto}
     .msg:last-child,.inlineCards:last-child{scroll-margin-bottom:210px}
 .composer{display:flex;gap:7px;align-items:center;background:rgba(255,255,255,.78);border:1px solid rgba(255,255,255,.95);box-shadow:0 12px 35px rgba(31,36,46,.09);border-radius:20px;padding:7px;backdrop-filter:blur(20px)}
-.voice{flex:0 0 44px;width:44px;height:44px;border-radius:50%;border:1px solid var(--line);background:#fff}.voice.live{box-shadow:0 0 0 8px rgba(49,95,255,.08);background:#eef3ff}.composer input{flex:1;min-width:0;border:0;background:transparent;outline:0;padding:11px 9px}.send{flex:0 0 auto;height:44px;border:0;background:#111;color:#fff;border-radius:14px;padding:0 15px;font-weight:750}
+.voice{flex:0 0 44px;width:44px;height:44px;border-radius:50%;border:1px solid var(--line);background:#fff;color:#111;display:grid;place-items:center;padding:0}.voice svg,.vMic svg{display:block}.voice.live{box-shadow:0 0 0 8px rgba(49,95,255,.08);background:#eef3ff}.composer input{flex:1;min-width:0;border:0;background:transparent;outline:0;padding:11px 9px}.send{flex:0 0 auto;height:44px;border:0;background:#111;color:#fff;border-radius:14px;padding:0 15px;font-weight:750}
 .hint{font-size:10px;color:#888d95;text-align:center;margin-top:7px}
 .bottom{position:fixed;left:50%;bottom:calc(12px + max(env(safe-area-inset-bottom,0px),var(--sab,0px)));transform:translateX(-50%);width:min(520px,calc(100% - 20px));z-index:60;background:rgba(246,247,248,.86);border:1px solid rgba(255,255,255,.92);box-shadow:0 10px 36px rgba(31,36,46,.12);backdrop-filter:blur(24px);border-radius:22px;padding:7px;display:grid;grid-template-columns:repeat(4,1fr)}
 .nav{border:0;background:transparent;border-radius:15px;padding:8px 4px;color:#777d86;font-size:10px}.nav b{display:block;font-size:17px}.nav.on{background:#111;color:#fff}
 .overlay{display:none;position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;z-index:9999;background:rgba(228,232,237,.72);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);padding:18px;align-items:center;justify-content:center;transform:translateZ(0);-webkit-overflow-scrolling:touch}.overlay.on{display:flex}
 .sheet{width:min(590px,100%);max-height:90vh;overflow:auto;background:rgba(250,251,252,.94);border:1px solid #fff;border-radius:28px;padding:23px;box-shadow:0 30px 90px rgba(31,36,46,.18)}.close{float:right;width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#fff}.sheet h2{font-size:30px;letter-spacing:-.04em;margin:8px 0}.sheet p{color:#737983;font-size:12px;line-height:1.5}.detailGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0}.detail{background:#fff;border:1px solid var(--line);border-radius:14px;padding:11px;font-size:11px}.sheetActions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.sheetActions button,.sheetActions a{border:1px solid var(--line);background:#fff;color:#222;border-radius:13px;padding:11px;text-align:center;text-decoration:none;font-size:11px;font-weight:700}.sheetActions .primary{background:#111;color:#fff}
-.routeStatus{display:none;position:fixed;left:50%;bottom:104px;transform:translateX(-50%);z-index:170;background:#111;color:#fff;border-radius:14px;padding:11px 14px;font-size:12px}.routeStatus.on{display:block}
+/* Уведомление над полем ввода, а не поверх него: раньше оно закрывало строку и кнопку «Отправить». */
+.routeStatus{display:none;position:fixed;left:50%;bottom:calc(182px + max(env(safe-area-inset-bottom,0px),var(--sab,0px)));transform:translateX(-50%);z-index:400;background:#111;color:#fff;border-radius:14px;padding:11px 14px;font-size:12px;line-height:1.35;max-width:calc(100% - 32px);width:max-content;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,.18)}.routeStatus.on{display:block;animation:fade .18s ease}
+/* Над открытой страницей места — выше её нижних кнопок, иначе подтверждение не видно. */
+.overlay.on~.routeStatus{z-index:10001;bottom:calc(200px + env(safe-area-inset-bottom,0px))}
 .panel{display:none}.panel.on{display:block;padding-bottom:calc(110px + env(safe-area-inset-bottom,0px))}.panelHeader{padding:30px 0 14px}.panelHeader h2{font-size:36px;letter-spacing:-.05em;margin:6px 0}.list{display:flex;flex-direction:column;gap:9px}.row{background:#fff;border:1px solid var(--line);border-radius:19px;padding:14px;display:flex;justify-content:space-between;gap:12px;align-items:center}.row h3{margin:0 0 4px;font-size:17px}.row p{margin:0;color:#7b8189;font-size:11px}.row button{border:0;background:#111;color:#fff;border-radius:10px;padding:8px 10px;font-size:10px}
 .tasteGrid{display:grid;grid-template-columns:repeat(2,1fr);gap:9px}.taste{background:#fff;border:1px solid var(--line);border-radius:16px;padding:12px}.tasteHead{display:flex;justify-content:space-between;font-size:11px;margin-bottom:7px}.bar{height:6px;background:#eceef0;border-radius:99px;overflow:hidden}.bar i{display:block;height:100%;background:#111}
 @media(max-width:650px){
@@ -181,7 +211,12 @@ html{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-we
 .placeMedia.noimg.c-bar{background:linear-gradient(135deg,#f3e7d3,#e6c9a8)}.placeMedia.noimg.c-food{background:linear-gradient(135deg,#f6e3dc,#eebfb0)}.placeMedia.noimg.c-hookah{background:linear-gradient(135deg,#e2e4ef,#c5c9de)}
 .placeMedia.noimg.c-club{background:linear-gradient(135deg,#e9dcf3,#cbb6e4)}.placeMedia.noimg.c-culture{background:linear-gradient(135deg,#dfeee6,#b9d9c8)}.placeMedia.noimg.c-event{background:linear-gradient(135deg,#dde9f6,#b7cfea)}
 .placeMedia.noimg.c-coffee{background:linear-gradient(135deg,#efe6dc,#d9c4ad)}.placeMedia.noimg.c-active{background:linear-gradient(135deg,#e2f0ea,#bcdccb)}.placeMedia.noimg.c-karaoke{background:linear-gradient(135deg,#f6e2ee,#ebbcd6)}
-.placeMedia .photoSource{position:absolute;right:8px;bottom:8px;padding:5px 7px;border-radius:999px;background:rgba(0,0,0,.52);color:#fff;font-size:8px;backdrop-filter:blur(8px)}
+/* Подпись автора фото: ссылка была синей (rgb(0,0,238)) на тёмной плашке и не читалась,
+   а длинное имя вылезало за край. Белый полупрозрачный текст и многоточие. */
+.placeMedia .photoSource{position:absolute;right:8px;bottom:8px;max-width:calc(100% - 16px);padding:4px 8px;border-radius:999px;background:rgba(0,0,0,.45);color:rgba(255,255,255,.9);font-size:9px;line-height:1.3;backdrop-filter:blur(8px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.placeMedia .photoSource a{color:inherit;text-decoration:none}
+/* Значок Мишлен и пометка «временно закрыто» поверх фото. */
+.placeMedia .mBadge{position:absolute;left:10px;top:10px;padding:5px 9px;border-radius:999px;background:#b3261e;color:#fff;font-size:10px;font-weight:800;letter-spacing:.02em;box-shadow:0 4px 12px rgba(0,0,0,.18)}
 .bookingBtn{background:#111!important;color:#fff!important}
 .newRequestDivider{align-self:center;font-size:9px;text-transform:uppercase;letter-spacing:.13em;color:#9a9fa6;padding:7px 0}
 .bookingSummary{margin-top:9px;padding:9px 10px;background:rgba(255,255,255,.08);border-radius:11px;font-size:11px;color:#d4d8dd;line-height:1.45}
@@ -196,6 +231,7 @@ html{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-we
 .planStop .stopBtns{display:flex;gap:6px;margin-top:8px}.planStop .stopBtns button{border:1px solid var(--line);background:#fff;border-radius:10px;padding:6px 9px;font-size:11px;cursor:pointer}
 .planBtns{display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-top:12px}.planBtns button{border:1px solid var(--line);background:#fff;color:#111;border-radius:12px;padding:10px 8px;font-size:12px;font-weight:600;cursor:pointer}.planBtns button.primary{background:#111316;color:#fff;border-color:#111316}
 @media (max-width:480px){.planStop{grid-template-columns:72px 1fr}.planTravel{padding-left:82px}.planBtns{grid-template-columns:1fr 1fr}.planBtns button:first-child{grid-column:1/-1}}
+.planBtns.two{grid-template-columns:1fr 1fr}.planBtns.two button:first-child{grid-column:auto}
 .aiStatus{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:var(--muted)}.aiStatus i{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 1.1s ease-in-out infinite}@keyframes pulse{0%,100%{opacity:.35;transform:scale(.85)}50%{opacity:1;transform:scale(1)}}
 
 /* Страница заведения: снизу, на всю ширину, с большим фото. */
@@ -206,7 +242,8 @@ html{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-we
 .dHero img{width:100%;height:100%;object-fit:cover;display:block}
 .dHero .close{position:absolute;top:12px;right:12px;float:none;width:36px;height:36px;border-radius:50%;border:0;background:rgba(255,255,255,.92);font-size:20px;line-height:36px;box-shadow:0 4px 14px rgba(0,0,0,.15)}
 .dStatus{position:absolute;left:14px;bottom:12px;padding:6px 11px;border-radius:999px;font-size:12px;font-weight:700;background:rgba(255,255,255,.95)}
-.dStatus.open{color:#14865a}.dStatus.closed{color:#b3261e}
+.dStatus.open{color:#14865a}.dStatus.closed,.dStatus.note{color:#b3261e}
+.dChip.michelin{background:#b3261e;color:#fff}
 .dBody{padding:16px 18px 8px}
 .dChips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}.dChip{font-size:11px;font-weight:700;padding:5px 10px;border-radius:999px;background:#f1f2f4;color:#555b64}
 .sheet.v2 h2{font-size:28px;letter-spacing:-.03em;margin:0 0 4px;line-height:1.1}
@@ -220,7 +257,79 @@ html{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-we
 .dActions{position:sticky;bottom:0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;padding:12px 18px calc(14px + env(safe-area-inset-bottom,0px));background:rgba(255,255,255,.96);backdrop-filter:blur(10px);border-top:1px solid var(--line)}
 .dActions button{border:1px solid var(--line);background:#fff;color:#222;border-radius:14px;padding:13px 6px;font-size:13px;font-weight:700;min-height:46px}
 .dActions .primary{background:#111;color:#fff;border-color:#111;grid-column:1/-1}
+.dActions button{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media(min-width:651px){.overlay{align-items:center;padding:18px}.sheet.v2{border-radius:26px}}
+/* Сводка заявки в обычном пузыре: стиль был рассчитан на тёмную плашку и в белом пузыре не читался. */
+.msg.ai .bookingSummary{background:#f3f4f6;color:#4e555f}
+.lnk{color:var(--blue);font-weight:600;text-decoration:none}
+.retryBox{display:flex;gap:8px;margin-top:10px}
+
+/* ---- Тёмная тема ----
+   Включается атрибутом data-theme="dark" на <html>: его ставит скрипт в <head>
+   по схеме Telegram (themeParams) или по системной настройке. Светлая тема не
+   тронута — все правила ниже только под этим атрибутом. В Telegram фон берём
+   из его темы (--tg-bg), чтобы окно не отличалось от остального клиента. */
+:root[data-theme="dark"]{color-scheme:dark;
+  --bg:var(--tg-bg,#0f1013);--ink:#eceef0;--muted:#9aa0a8;--card:#1c1d21;--line:rgba(255,255,255,.09);
+  --dark:#eceef0;--green:#3ccf8e;--blue:#8aa8ff;--shadow:0 16px 46px rgba(0,0,0,.38);
+  --s1:#1c1d21;--s2:#26272c;--s3:#2f3036;--inv:#f2f2f2;--onInv:#111214}
+:root[data-theme="dark"] body{background:radial-gradient(900px 520px at 50% -10%,#1d1e24,transparent 72%),var(--bg)}
+:root[data-theme="dark"] .top{background:linear-gradient(var(--bg) 78%,transparent)}
+:root[data-theme="dark"] .topbar,:root[data-theme="dark"] .vTop{background:rgba(30,31,36,.82);border-color:rgba(255,255,255,.06);box-shadow:0 8px 26px rgba(0,0,0,.3)}
+:root[data-theme="dark"] .sub,:root[data-theme="dark"] .vWho span,:root[data-theme="dark"] .eyebrow{color:#9aa0a8}
+:root[data-theme="dark"] .avatar{background:var(--inv);color:var(--onInv)}
+:root[data-theme="dark"] .intro p{color:var(--muted)}
+:root[data-theme="dark"] .msg.ai{background:var(--s1);border-color:rgba(255,255,255,.06);box-shadow:none}
+:root[data-theme="dark"] .msg.user{background:var(--inv);color:var(--onInv)}
+:root[data-theme="dark"] .msg.user .small{color:#5b616a}
+:root[data-theme="dark"] .msg.ai .bookingSummary{background:var(--s2);color:#c9cdd3}
+:root[data-theme="dark"] .quick button{background:var(--s2);color:#d6d9de;border-color:rgba(255,255,255,.08)}
+:root[data-theme="dark"] .quick button.primary{background:var(--inv);color:var(--onInv)}
+:root[data-theme="dark"] .placeCard{background:var(--s1);border-color:rgba(255,255,255,.06);box-shadow:none}
+:root[data-theme="dark"] .placeCard.best{border-color:rgba(255,255,255,.16)}
+:root[data-theme="dark"] .reason{color:#b5bac1}
+:root[data-theme="dark"] .placeCard .when{color:#c9cdd3}:root[data-theme="dark"] .placeCard .when.open{color:var(--green)}:root[data-theme="dark"] .placeCard .when.closed,:root[data-theme="dark"] .placeCard .when.note{color:#ff8a80}
+:root[data-theme="dark"] .cardBtn{background:var(--s2);color:#e6e8eb;border-color:rgba(255,255,255,.07)}
+:root[data-theme="dark"] .cardBtn.taxi,:root[data-theme="dark"] .dActions .taxi{background:var(--s3)}
+:root[data-theme="dark"] .cardBtn.primary,:root[data-theme="dark"] .bookingBtn{background:var(--inv)!important;color:var(--onInv)!important}
+:root[data-theme="dark"] .cardBtn.saved{background:rgba(60,207,142,.16);color:var(--green)}
+:root[data-theme="dark"] .cardDots i{background:rgba(255,255,255,.22)}
+:root[data-theme="dark"] .actionBox{background:var(--s2)}:root[data-theme="dark"] .actionBtns .ghost{background:var(--s3)}
+:root[data-theme="dark"] .composerWrap{background:linear-gradient(to top,var(--bg) 0%,var(--bg) 64%,transparent 100%)}
+:root[data-theme="dark"] .composer{background:rgba(30,31,36,.92);border-color:rgba(255,255,255,.07);box-shadow:0 12px 35px rgba(0,0,0,.35)}
+:root[data-theme="dark"] .composer input{color:var(--ink)}:root[data-theme="dark"] .composer input::placeholder{color:#7d838c}
+:root[data-theme="dark"] .voice,:root[data-theme="dark"] .vRound,:root[data-theme="dark"] .vSide{background:var(--s2);color:var(--ink);border-color:rgba(255,255,255,.08)}
+:root[data-theme="dark"] .voice.live{background:#1f2a4a}
+:root[data-theme="dark"] .send,:root[data-theme="dark"] .vMic,:root[data-theme="dark"] .vSide.on{background:var(--inv);color:var(--onInv);border-color:var(--inv)}
+:root[data-theme="dark"] .voiceScreen{background:radial-gradient(900px 520px at 50% -10%,#1d1e24,transparent 72%),var(--bg)}
+:root[data-theme="dark"] .voiceScreen[data-phase="listening"] .vMic{background:var(--s2);color:var(--ink)}
+:root[data-theme="dark"] .vOrb{background:var(--s1);border-color:rgba(255,255,255,.06)}
+:root[data-theme="dark"] .vRing.two{border-color:rgba(255,255,255,.05)}
+:root[data-theme="dark"] .bottom{background:rgba(28,29,34,.9);border-color:rgba(255,255,255,.06);box-shadow:0 10px 36px rgba(0,0,0,.4)}
+:root[data-theme="dark"] .nav{color:#9aa0a8}:root[data-theme="dark"] .nav.on{background:var(--inv);color:var(--onInv)}
+:root[data-theme="dark"] .overlay{background:rgba(0,0,0,.55)}
+:root[data-theme="dark"] .sheet,:root[data-theme="dark"] .sheet.v2{background:#17181c;border-color:rgba(255,255,255,.06)}
+:root[data-theme="dark"] .close,:root[data-theme="dark"] .dHero .close{background:rgba(30,31,36,.92);color:var(--ink);border-color:rgba(255,255,255,.08)}
+:root[data-theme="dark"] .dStatus{background:rgba(23,24,28,.92)}:root[data-theme="dark"] .dStatus.open{color:var(--green)}:root[data-theme="dark"] .dStatus.closed,:root[data-theme="dark"] .dStatus.note{color:#ff8a80}
+:root[data-theme="dark"] .dChip{background:var(--s2);color:#c9cdd3}:root[data-theme="dark"] .dChip.michelin{background:#b3261e;color:#fff}
+:root[data-theme="dark"] .dAddr{color:var(--muted)}:root[data-theme="dark"] .dDesc{color:#b5bac1}
+:root[data-theme="dark"] .dWhy span{background:rgba(60,207,142,.14);color:var(--green)}
+:root[data-theme="dark"] .dVal a{color:var(--blue)}
+:root[data-theme="dark"] .dActions{background:rgba(23,24,28,.96)}
+:root[data-theme="dark"] .dActions button,:root[data-theme="dark"] .sheetActions button,:root[data-theme="dark"] .sheetActions a{background:var(--s2);color:#eceef0;border-color:rgba(255,255,255,.07)}
+:root[data-theme="dark"] .dActions .primary,:root[data-theme="dark"] .sheetActions .primary{background:var(--inv);color:var(--onInv);border-color:var(--inv)}
+:root[data-theme="dark"] .row,:root[data-theme="dark"] .taste,:root[data-theme="dark"] .detail{background:var(--s1);border-color:rgba(255,255,255,.06)}
+:root[data-theme="dark"] .row p{color:#9aa0a8}:root[data-theme="dark"] .row button{background:var(--inv);color:var(--onInv)}
+:root[data-theme="dark"] .bar{background:var(--s3)}:root[data-theme="dark"] .bar i{background:var(--inv)}
+:root[data-theme="dark"] .planCard{background:var(--s1);box-shadow:none}
+:root[data-theme="dark"] .planAlt button,:root[data-theme="dark"] .planStop .stopBtns button,:root[data-theme="dark"] .planBtns button{background:var(--s2);color:#e6e8eb;border-color:rgba(255,255,255,.08)}
+:root[data-theme="dark"] .planBtns button.primary{background:var(--inv);color:var(--onInv);border-color:var(--inv)}
+:root[data-theme="dark"] .planStop.missing h5,:root[data-theme="dark"] .planStop.conflict .t{color:#f0b35a}
+:root[data-theme="dark"] .routeStatus{background:var(--inv);color:var(--onInv)}
+:root[data-theme="dark"] .obCard{background:var(--s1)}:root[data-theme="dark"] .obCard .art{opacity:.13}
+:root[data-theme="dark"] .obDots i{background:rgba(255,255,255,.16)}:root[data-theme="dark"] .obDots i.on{background:var(--inv)}
+:root[data-theme="dark"] .obCard .tick,:root[data-theme="dark"] .obNext{background:var(--inv);color:var(--onInv)}
+:root[data-theme="dark"] .placeMedia,:root[data-theme="dark"] .dHero{background:linear-gradient(135deg,#2a2c31,#1f2125)}
 </style>
 </head>
 <body>
@@ -228,7 +337,7 @@ html{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-we
   <div class="vTop">
     <button class="vRound" id="vClose" aria-label="Закрыть" data-i18n-aria="close">✕</button>
     <div class="vWho"><b id="vName" data-i18n="agent.name">Варя</b><span id="vRole" data-i18n="agent.role">консьерж по Москве</span></div>
-    <button class="vRound" id="vRoute" title="Вызвать такси" aria-label="Вызвать такси" data-i18n-title="taxi.call" data-i18n-aria="taxi.call">↗</button>
+    <button class="vRound" id="vRoute" title="Маршрут и такси" aria-label="Маршрут и такси" data-i18n-title="ride.options" data-i18n-aria="ride.options">↗</button>
   </div>
   <div class="vStage">
     <div class="vOrbWrap">
@@ -242,7 +351,7 @@ html{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-we
   </div>
   <div class="vBottom">
     <button class="vSide" id="vClear" title="Начать заново" aria-label="Начать заново" data-i18n-title="voice.restart" data-i18n-aria="voice.restart">⟲</button>
-    <button class="vMic" id="vMic" aria-label="Говорить" data-i18n-aria="voice.speak">🎙</button>
+    <button class="vMic" id="vMic" aria-label="Говорить" data-i18n-aria="voice.speak"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3.5"/></svg></button>
     <button class="vSide" id="vHands" aria-pressed="true" title="Разговор идёт сам" aria-label="Разговор без рук" data-i18n-title="voice.hands.on" data-i18n-aria="voice.hands">∞</button>
   </div>
 </div>
@@ -264,7 +373,7 @@ html{scrollbar-width:none}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-we
   <div id="chat" class="chat"></div>
   <div id="chatBottomSpacer" aria-hidden="true" style="height:1px"></div>
   <div class="composerWrap">
-    <div class="composer"><button id="voiceBtn" class="voice">⌁</button><input id="input" placeholder="Чего хочется?" data-i18n-placeholder="composer.placeholder"><button id="sendBtn" class="send" data-i18n="composer.send">Отправить</button></div>
+    <div class="composer"><button id="voiceBtn" class="voice" aria-label="Голосовой ввод" data-i18n-aria="voice.btn.input"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3.5"/></svg></button><input id="input" placeholder="Чего хочется?" data-i18n-placeholder="composer.placeholder"><button id="sendBtn" class="send" data-i18n="composer.send">Отправить</button></div>
     <div id="hint" class="hint" data-i18n="hint.default">Любой запрос по городу: куда пойти, где поесть, к кому записаться, что нужно рядом.</div>
   </div>
 </section>
@@ -300,7 +409,7 @@ const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const I18N={
 ru:{
   "title":"FREE — разговор, который приводит к плану",
-  "close":"Закрыть","agent.name":"Варя","agent.role":"консьерж по Москве","taxi.call":"Вызвать такси",
+  "close":"Закрыть","agent.name":"Варя","agent.role":"консьерж по Москве","taxi.call":"Вызвать такси","ride.options":"Маршрут и такси",
   "voice.idle":"Нажмите и говорите","voice.listening":"Слушаю…","voice.thinking":"Думаю…","voice.restart":"Начать заново","voice.speak":"Говорить",
   "voice.hands":"Разговор без рук","voice.hands.on":"Разговор идёт сам","voice.hands.title.on":"Разговор идёт сам — нажмите, чтобы отвечать по кнопке","voice.hands.title.off":"Включить разговор без рук",
   "voice.tooShort":"Слишком коротко — попробуйте ещё раз","voice.sttFail":"Не удалось распознать","voice.notHeard":"Не расслышал. Скажите ещё раз","voice.failed":"Не получилось: ",
@@ -311,22 +420,24 @@ ru:{
   "voice.err.network":"Распознавание речи недоступно в этой сети: Chrome отправляет звук на серверы Google. Напишите текстом.","voice.err.no-speech":"Не услышал речь. Нажмите и говорите сразу.",
   "voice.err.generic":"Голос недоступен: ","voice.err.device":"Распознавание речи недоступно на этом устройстве.","voice.err.perm":"Разрешите микрофон и распознавание речи: Настройки → FREE.",
   "voice.err.browser":"Голосовой ввод есть только в Chrome и Safari. Напишите текстом.","voice.err.https":"Голос работает только по HTTPS.","voice.err.start":"Не удалось включить микрофон: ",
+  "voice.fallbackFound":"Вот что нашёл.","voice.retryLater":"Сейчас не могу ответить — попробуйте ещё раз через минуту.","voice.ack":["Секунду, смотрю…","Сейчас посмотрю…","Так, ищу…"],
   "ob.skip":"Пропустить","ob.next":"Дальше","ob.done":"Готово","ob.multi":"Выберите всё, что подходит","ob.single":"Выберите один вариант","ob.thanks":"Учёл ваши предпочтения — подборки будут точнее",
   "ob.1.q":"Что вы ищете чаще всего?","ob.1.1":"Поесть","ob.1.1s":"ужин, завтрак, кафе","ob.1.2":"Выпить","ob.1.2s":"бар, вино, коктейли","ob.1.3":"Культура","ob.1.3s":"выставки, театр, музеи",
   "ob.1.4":"Музыка","ob.1.4s":"концерты, джаз, клубы","ob.1.5":"Активности","ob.1.5s":"спорт, квесты, боулинг","ob.1.6":"Кофе и работа","ob.1.6s":"ноутбук, встречи",
   "ob.2.q":"Какая атмосфера ближе?","ob.2.1":"Тихо и камерно","ob.2.1s":"можно разговаривать","ob.2.2":"Модно и заметно","ob.2.2s":"новые места, дизайн","ob.2.3":"Дорого и с видом","ob.2.3s":"панорама, высокий чек","ob.2.4":"Не туристическое","ob.2.4s":"свои места, находки",
   "ob.3.q":"С кем обычно выбираетесь?","ob.3.1":"Вдвоём","ob.3.1s":"свидания, спокойно","ob.3.2":"С друзьями","ob.3.2s":"компанией, весело","ob.3.3":"С детьми","ob.3.3s":"семейные места","ob.3.4":"Один","ob.3.4s":"по делам или для себя",
   "ob.4.q":"Во сколько обычно выходите?","ob.4.1":"Днём","ob.4.1s":"до 18:00","ob.4.2":"Вечером","ob.4.2s":"18:00 — 22:00","ob.4.3":"Поздно","ob.4.3s":"после 22:00",
-  "status.connecting":"Подключаю нейросеть · {city}","status.fallback":"Резервный режим · {city}","status.preview":"Preview fallback · {city}","status.demo":"Claude · демо","status.agent":"Консьерж",
+  "status.connecting":"Подключаюсь · {city}","status.fallback":"Резервный режим · {city}","status.preview":"Нет связи · {city}","status.demo":"Claude · демо","status.agent":"Консьерж","status.ready":"{agent} · {city}",
   "intro.eyebrow":"НЕ ИЩИТЕ. РАЗГОВАРИВАЙТЕ.","intro.h1":"Чего хочется?","intro.p":"FREE сначала понимает контекст, потом предлагает несколько вариантов и ведёт к следующему действию.",
   "composer.placeholder":"Чего хочется?","composer.send":"Отправить","composer.busy":"Ищу…",
   "hint.default":"Любой запрос по городу: куда пойти, где поесть, к кому записаться, что нужно рядом.",
-  "hint.neural":"Свободный нейросетевой диалог: FREE сам решает, что уточнить и когда искать.","hint.scripted":"Нейросеть не подключена — работает резервный сценарий.",
-  "hint.neuralModel":"Нейросеть ведёт диалог · {model} · поиск вызывается только когда он нужен","hint.aiDown":"Claude API сейчас недоступен — включён локальный fallback.",
+  "hint.neural":"Говорите как есть — уточню только важное и найду подходящие места.","hint.scripted":"Опишите в паре слов, что нужно, — покажу варианты.",
+  "hint.neuralModel":"Спрашивайте своими словами — уточню, только если это поможет.","hint.aiDown":"Консьерж на минуту недоступен — показываю быстрые результаты.",
   "hint.demo":"Диалог ведёт Claude прямо на этой странице. Поиск идёт по демо-набору из ~30 мест; полная версия ищет в живых источниках.","hint.demoDown":"Claude на этой странице недоступен — работает резервный сценарий.",
   "hint.denied":" · сейчас показываются демо-места, а не живой поиск",
-  "toast.aiDown":"Нейросеть недоступна, включаю резервный режим.","toast.demoDown":"Claude недоступен, включаю резервный сценарий.","toast.demoFail":"Не удалось получить ответ Claude.",
-  "err.aiDown":"AI недоступен","err.stream":"поток оборвался","err.denied":"Сервер не принимает запросы: откройте FREE через Telegram-бота",
+  "toast.aiDown":"Связь с консьержем прервалась — показываю быстрые результаты.","toast.demoDown":"Claude недоступен, включаю резервный сценарий.","toast.demoFail":"Не удалось получить ответ Claude.",
+  "err.aiDown":"Консьерж недоступен",
+  "search.failed":"Не получилось загрузить места — подвела связь. Попробуем ещё раз?","search.retry":"Повторить","plan.loadFail":"Не получилось собрать вечер — нет связи с сервером. Попробуем ещё раз?","err.stream":"поток оборвался","err.denied":"Сервер не принимает запросы: откройте FREE через Telegram-бота",
   "demo.rate_limited":"Слишком много запросов к Claude, подождите минуту.","demo.session_expired":"Сессия claude.ai истекла — войдите заново.","demo.refused":"Claude отказался отвечать на этот запрос. Попробуйте сформулировать иначе.",
   "demo.empty_completion":"Claude ничего не ответил. Попробуйте переформулировать.","demo.upstream_error":"Связь с Claude прервалась. Попробуйте ещё раз.","demo.prompt_too_large":"Диалог стал слишком длинным — начинаю новый.",
   "nav.saved":"Сохранённое","nav.plan":"План","nav.profile":"Профиль",
@@ -354,7 +465,10 @@ ru:{
   "date.always":"постоянно","date.today":"сегодня","date.tomorrow":"завтра","date.weekend":"в выходные",
   "reason.talk":"можно разговаривать","reason.couple":"подходит вдвоём","reason.late":"работает поздно","reason.default":"лучшее совпадение с вашим контекстом",
   "book.tickets":"Билеты","book.telegram":"Бронь в Telegram","book.whatsapp":"Бронь в WhatsApp","book.phone":"Позвонить","book.default":"Бронировать","book.ticketsReg":"Билеты / регистрация",
+  "book.on":"Бронь в {provider}","book.site":"Бронь на сайте","book.waOpening":"Открываю WhatsApp — заявка уже в сообщении","book.calling":"Звоню: {name}",
   "card.best":"ЛУЧШЕЕ СОВПАДЕНИЕ","card.match":"совпадение","card.why":"Почему вам: ","card.plan":"В план","card.taxi":"Такси","card.saved":"Сохранено","card.save":"Сохранить","card.details":"Подробнее","card.remove":"Убрать",
+  "card.directions":"Маршрут","card.share":"Поделиться","price.from":"от {n}","michelin":"Мишлен","hours.always":"круглосуточно","hours.closed":"выходной",
+  "taxi.copied":"Адрес скопирован — вставьте его в {app}","share.placeCopied":"Ссылка на место скопирована",
   "metro.prefix":"м. ",
   "chips.intents":["Хочу выпить","Хочу поесть","Куда сходить","Хочу постричься","Нужна аптека"],
   "msg.unclear":"Не совсем понял запрос. Скажите своими словами — я ищу и места для отдыха, и услуги: барбершоп, маникюр, аптеку, автосервис, коворкинг, врача.<br>",
@@ -368,7 +482,7 @@ ru:{
   "msg.planFail":"Не смог собрать такой вечер из того, что вижу. Попробуйте описать точки иначе, например «ужин, потом коктейльный бар».",
   "msg.planPartial":"Собрал вечер, но одну из точек не нашёл — её можно заменить.","msg.planOk":"Собрал вечер по порядку. Время примерное, переходы посчитаны от точки к точке.",
   "msg.greeting":"Расскажите как есть — куда пойти, где поесть, куда записаться или что нужно рядом. Одной фразой, я пойму.",
-  "book.text.hello":"Здравствуйте! Хочу забронировать {name}.","book.text.today":"Дата: сегодня.","book.text.tomorrow":"Дата: завтра.","book.text.time":"Время: после {t}.","book.text.guests":"Гостей: {n}.","book.text.via":"Запрос сформирован через FREE.",
+  "book.text.hello":"Здравствуйте! Хочу забронировать {name}.","book.text.date":"Дата: {d}.","book.text.time":"Время: {t}.","book.text.guests":"Гостей: {n}.","book.text.via":"Запрос сформирован через FREE.",
   "book.noChannel":"У <b>{name}</b> я пока не вижу отдельного канала бронирования. Открываю страницу места.","book.byPhone":"Для <b>{name}</b> подтверждённый канал бронирования — телефон.",
   "book.tickets.msg":"Открываю страницу билетов / регистрации для <b>{name}</b>. После оформления можно вернуться сюда — я построю маршрут или продолжу вечер.","book.whatsapp.msg":"Передаю заявку в WhatsApp для <b>{name}</b>.",
   "book.openWhatsapp":"Открыть WhatsApp","book.telegram.msg":"Открываю {provider} для <b>{name}</b>. ","book.copied":"Текст заявки скопирован — останется вставить и отправить.","book.paste":"Вставьте данные брони в чат.","book.openTelegram":"Открыть Telegram",
@@ -384,16 +498,16 @@ ru:{
   "sel.venue":"Можно забронировать через реальный канал заведения, построить маршрут или добавить следующую точку.","sel.route":"Маршрут","sel.continue":"Продолжить вечер",
   "route.noGeo":"Маршрут без вашей геопозиции — задайте точку старта в картах.","taxi.first":"Такси до первой точки: ","save.removed":"Удалено из сохранённого","save.done":"Сохранено",
   "detail.openFail":"Не удалось открыть карточку: ","detail.notFound":"Карточка не найдена, повторите поиск",
-  "detail.openTill":"Открыто · до {t}","detail.openNow":"Открыто сейчас","detail.closed":"Сейчас закрыто","detail.m":"{n} м","detail.km":"{n} км","detail.away":"{d} от вас",
+  "detail.openTill":"Открыто · до {t}","detail.openNow":"Открыто сейчас","detail.closed":"Сейчас закрыто","detail.opensAt":"Закрыто · откроется в {t}","detail.m":"{n} м","detail.km":"{n} км","detail.away":"{d} от вас","detail.menu":"Меню",
   "detail.hours":"Часы","detail.phone":"Телефон","detail.site":"Сайт","detail.price":"Цена","detail.rating":"Рейтинг","detail.reviews":"отзывов","detail.when":"Когда","detail.source":"Источник","detail.sourcePage":"страница места",
   "detail.photo":"фото: ","detail.cover":"обложка нарисована FREE","detail.event":"событие","detail.data":"Данные: ","detail.open":"открытые источники",
   "saved.empty":"Пока пусто","saved.emptySub":"Сохраняйте понравившиеся места прямо из чата.","open":"Открыть","bySchedule":"по расписанию",
   "plan.routeAll":"Маршрут всего плана","plan.routeAllSub":"От текущей геопозиции через все выбранные точки.","plan.empty":"Отдельных точек пока нет","plan.emptySub":"Выберите место в чате или нажмите «В мой план» на карточке вечера.",
-  "plan.past":"ПРОШЛЫЕ ВЕЧЕРА","delete":"Удалить"
+  "plan.past":"ПРОШЛЫЕ ВЕЧЕРА","plan.picks":"ОТДЕЛЬНЫЕ ТОЧКИ","delete":"Удалить"
 },
 en:{
   "title":"FREE — a conversation that ends in a plan",
-  "close":"Close","agent.name":"Noor","agent.role":"your {city} concierge","taxi.call":"Call a taxi",
+  "close":"Close","agent.name":"Noor","agent.role":"your {city} concierge","taxi.call":"Call a taxi","ride.options":"Directions & taxi",
   "voice.idle":"Tap and speak","voice.listening":"Listening…","voice.thinking":"Thinking…","voice.restart":"Start over","voice.speak":"Speak",
   "voice.hands":"Hands-free","voice.hands.on":"Hands-free conversation","voice.hands.title.on":"Hands-free is on — tap to answer by button","voice.hands.title.off":"Turn on hands-free",
   "voice.tooShort":"Too short — try again","voice.sttFail":"Couldn't recognise that","voice.notHeard":"Didn't catch that. Say it again","voice.failed":"Didn't work: ",
@@ -404,22 +518,24 @@ en:{
   "voice.err.network":"Speech recognition isn't available on this network: Chrome sends audio to Google's servers. Type instead.","voice.err.no-speech":"Didn't hear anything. Tap and speak right away.",
   "voice.err.generic":"Voice unavailable: ","voice.err.device":"Speech recognition isn't available on this device.","voice.err.perm":"Allow the microphone and speech recognition: Settings → FREE.",
   "voice.err.browser":"Voice input works only in Chrome and Safari. Type instead.","voice.err.https":"Voice works over HTTPS only.","voice.err.start":"Couldn't start the microphone: ",
+  "voice.fallbackFound":"Here's what I found.","voice.retryLater":"I can't answer right now — please try again in a minute.","voice.ack":["One sec, looking…","Let me check…","Okay, searching…"],
   "ob.skip":"Skip","ob.next":"Next","ob.done":"Done","ob.multi":"Pick everything that fits","ob.single":"Pick one","ob.thanks":"Got your preferences — picks will be sharper",
   "ob.1.q":"What do you look for most often?","ob.1.1":"Food","ob.1.1s":"dinner, breakfast, cafes","ob.1.2":"Drinks","ob.1.2s":"bars, wine, cocktails","ob.1.3":"Culture","ob.1.3s":"exhibitions, theatre, museums",
   "ob.1.4":"Music","ob.1.4s":"concerts, jazz, clubs","ob.1.5":"Activities","ob.1.5s":"sport, escape rooms, bowling","ob.1.6":"Coffee & work","ob.1.6s":"laptop, meetings",
   "ob.2.q":"What vibe suits you?","ob.2.1":"Quiet and intimate","ob.2.1s":"you can talk","ob.2.2":"Trendy and buzzing","ob.2.2s":"new places, design","ob.2.3":"Upscale with a view","ob.2.3s":"skyline, high bill","ob.2.4":"Off the tourist track","ob.2.4s":"local spots, finds",
   "ob.3.q":"Who do you usually go out with?","ob.3.1":"As a couple","ob.3.1s":"dates, relaxed","ob.3.2":"With friends","ob.3.2s":"a group, lively","ob.3.3":"With kids","ob.3.3s":"family places","ob.3.4":"Solo","ob.3.4s":"errands or me-time",
   "ob.4.q":"When do you usually go out?","ob.4.1":"Daytime","ob.4.1s":"before 6 PM","ob.4.2":"Evening","ob.4.2s":"6 PM — 10 PM","ob.4.3":"Late","ob.4.3s":"after 10 PM",
-  "status.connecting":"Connecting AI · {city}","status.fallback":"Fallback mode · {city}","status.preview":"Preview fallback · {city}","status.demo":"Claude · demo","status.agent":"Concierge",
+  "status.connecting":"Connecting… · {city}","status.fallback":"Quick search · {city}","status.preview":"Offline · {city}","status.demo":"Claude · demo","status.agent":"Concierge","status.ready":"{agent} · {city} concierge",
   "intro.eyebrow":"DON'T SEARCH. JUST ASK.","intro.h1":"What are you in the mood for?","intro.p":"FREE gets the context first, then offers a few options and leads you to the next step.",
-  "composer.placeholder":"What are you in the mood for?","composer.send":"Send","composer.busy":"Searching…",
+  "composer.placeholder":"What do you feel like?","composer.send":"Send","composer.busy":"Searching…",
   "hint.default":"Anything in the city: where to go, where to eat, who to book, what you need nearby.",
-  "hint.neural":"Free-form AI conversation: FREE decides what to clarify and when to search.","hint.scripted":"AI is not connected — running the scripted fallback.",
-  "hint.neuralModel":"AI runs the conversation · {model} · search is called only when needed","hint.aiDown":"Claude API is unavailable right now — local fallback is on.",
+  "hint.neural":"Just talk — I'll ask only what matters and find the right places.","hint.scripted":"Tell me in a few words what you need — I'll show options.",
+  "hint.neuralModel":"Ask in your own words — I'll clarify only when it helps.","hint.aiDown":"Connection hiccup — showing quick results for now.",
   "hint.demo":"Claude runs the conversation right on this page. Search uses a demo set of ~30 places; the full version searches live sources.","hint.demoDown":"Claude isn't available on this page — running the scripted fallback.",
   "hint.denied":" · showing demo places, not live search",
-  "toast.aiDown":"AI is unavailable, switching to fallback mode.","toast.demoDown":"Claude is unavailable, switching to the scripted fallback.","toast.demoFail":"Couldn't get a reply from Claude.",
-  "err.aiDown":"AI unavailable","err.stream":"stream interrupted","err.denied":"The server is not accepting requests: open FREE via the Telegram bot",
+  "toast.aiDown":"Connection hiccup — showing quick results.","toast.demoDown":"Claude is unavailable, switching to the scripted fallback.","toast.demoFail":"Couldn't get a reply from Claude.",
+  "err.aiDown":"Concierge unavailable",
+  "search.failed":"Couldn't load places right now — looks like a connection hiccup. Try again?","search.retry":"Try again","plan.loadFail":"Couldn't build the evening — no connection right now. Try again?","err.stream":"stream interrupted","err.denied":"The server is not accepting requests: open FREE via the Telegram bot",
   "demo.rate_limited":"Too many requests to Claude, wait a minute.","demo.session_expired":"Your claude.ai session expired — sign in again.","demo.refused":"Claude declined to answer this. Try rephrasing.",
   "demo.empty_completion":"Claude returned nothing. Try rephrasing.","demo.upstream_error":"Connection to Claude was lost. Try again.","demo.prompt_too_large":"The conversation got too long — starting a new one.",
   "nav.saved":"Saved","nav.plan":"Plan","nav.profile":"Profile",
@@ -447,7 +563,10 @@ en:{
   "date.always":"ongoing","date.today":"today","date.tomorrow":"tomorrow","date.weekend":"this weekend",
   "reason.talk":"easy to talk","reason.couple":"good for two","reason.late":"open late","reason.default":"best match for your context",
   "book.tickets":"Tickets","book.telegram":"Book via Telegram","book.whatsapp":"Book via WhatsApp","book.phone":"Call","book.default":"Book","book.ticketsReg":"Tickets / registration",
+  "book.on":"Book on {provider}","book.site":"Website","book.waOpening":"Opening WhatsApp — your request is in the message","book.calling":"Calling {name}",
   "card.best":"BEST MATCH","card.match":"match","card.why":"Why you: ","card.plan":"Add to plan","card.taxi":"Taxi","card.saved":"Saved","card.save":"Save","card.details":"Details","card.remove":"Remove",
+  "card.directions":"Directions","card.share":"Share","price.from":"from {n}","michelin":"Michelin","hours.always":"Open 24 hours","hours.closed":"closed",
+  "taxi.copied":"Address copied — paste it in {app}","share.placeCopied":"Place link copied",
   "metro.prefix":"",
   "chips.intents":["I want a drink","I want to eat","Where to go","I need a haircut","Find a pharmacy"],
   "msg.unclear":"I didn't quite get that. Say it in your own words — I find both places to go out and services: barbershop, nails, pharmacy, car repair, coworking, doctor.<br>",
@@ -461,7 +580,7 @@ en:{
   "msg.planFail":"Couldn't build that evening from what I see. Try describing the stops differently, e.g. \"dinner, then a cocktail bar\".",
   "msg.planPartial":"Built the evening, but one stop wasn't found — you can replace it.","msg.planOk":"Built the evening in order. Times are approximate, transfers are counted stop to stop.",
   "msg.greeting":"Just say it — where to go, where to eat, what to book or what you need nearby. One phrase is enough.",
-  "book.text.hello":"Hello! I'd like to book {name}.","book.text.today":"Date: today.","book.text.tomorrow":"Date: tomorrow.","book.text.time":"Time: after {t}.","book.text.guests":"Guests: {n}.","book.text.via":"Request sent via FREE.",
+  "book.text.hello":"Hello! I'd like to book a table at {name}.","book.text.date":"Date: {d}.","book.text.time":"Time: {t}.","book.text.guests":"Guests: {n}.","book.text.via":"Request sent via FREE.",
   "book.noChannel":"I don't see a separate booking channel for <b>{name}</b> yet. Opening the venue page.","book.byPhone":"For <b>{name}</b> the confirmed booking channel is phone.",
   "book.tickets.msg":"Opening the tickets / registration page for <b>{name}</b>. Come back here afterwards — I'll build a route or continue the evening.","book.whatsapp.msg":"Sending the request to WhatsApp for <b>{name}</b>.",
   "book.openWhatsapp":"Open WhatsApp","book.telegram.msg":"Opening {provider} for <b>{name}</b>. ","book.copied":"Request text copied — just paste and send.","book.paste":"Paste the booking details into the chat.","book.openTelegram":"Open Telegram",
@@ -474,22 +593,40 @@ en:{
   "share.copied":"Copied the plan text.","share.select":"Here's the plan — select the text to copy.","share.cardAlt":"Plan card","share.hold":"Press and hold the image to save it.","share.open":"Open the plan page ↗",
   "share.toastCopied":"Plan text copied","share.toastShown":"Plan shown in chat — select and copy",
   "sel.added":"Added <b>{name}</b> to the plan. What next?","sel.next":"Next step","sel.event":"You can go to tickets / registration, build a route or continue the evening.",
-  "sel.venue":"You can book through the venue's real channel, build a route or add the next stop.","sel.route":"Route","sel.continue":"Continue the evening",
+  "sel.venue":"You can book through the venue's real channel, get directions or add the next stop.","sel.route":"Directions","sel.continue":"Continue the evening",
   "route.noGeo":"Route without your location — set the starting point in the map.","taxi.first":"Taxi to the first stop: ","save.removed":"Removed from saved","save.done":"Saved",
   "detail.openFail":"Couldn't open the card: ","detail.notFound":"Card not found, search again",
-  "detail.openTill":"Open · till {t}","detail.openNow":"Open now","detail.closed":"Closed now","detail.m":"{n} m","detail.km":"{n} km","detail.away":"{d} away",
+  "detail.openTill":"Open · till {t}","detail.openNow":"Open now","detail.closed":"Closed now","detail.opensAt":"Closed · opens {t}","detail.m":"{n} m","detail.km":"{n} km","detail.away":"{d} away","detail.menu":"Menu",
   "detail.hours":"Hours","detail.phone":"Phone","detail.site":"Website","detail.price":"Price","detail.rating":"Rating","detail.reviews":"reviews","detail.when":"When","detail.source":"Source","detail.sourcePage":"venue page",
   "detail.photo":"photo: ","detail.cover":"cover drawn by FREE","detail.event":"event","detail.data":"Data: ","detail.open":"open sources",
   "saved.empty":"Nothing yet","saved.emptySub":"Save places you like right from the chat.","open":"Open","bySchedule":"by schedule",
   "plan.routeAll":"Route for the whole plan","plan.routeAllSub":"From your current location through all chosen stops.","plan.empty":"No stops yet","plan.emptySub":"Pick a place in the chat or tap \"Add to my plan\" on an evening card.",
-  "plan.past":"PAST EVENINGS","delete":"Delete"
+  "plan.past":"PAST EVENINGS","plan.picks":"YOUR PICKS","delete":"Delete"
 }};
+// Город, который сервер вписал в страницу (window.FREE_CITY) — главный источник:
+// с ним первый кадр сразу на языке города, без ожидания /api/health. Без него
+// (сборка приложения, старый сервер) — запомненный язык или <html lang>.
+const BOOT_CITY=(typeof window!=="undefined"&&window.FREE_CITY&&typeof window.FREE_CITY==="object")?window.FREE_CITY:null;
 let LANG="ru";
-try{LANG=localStorage.getItem("free_lang")||""}catch(_){}
-if(!LANG)LANG=(document.documentElement.lang||"ru").slice(0,2);
+if(BOOT_CITY&&I18N[String(BOOT_CITY.lang||"").slice(0,2)])LANG=String(BOOT_CITY.lang).slice(0,2);
+else{
+  try{LANG=localStorage.getItem("free_lang")||""}catch(_){}
+  if(!LANG)LANG=(document.documentElement.lang||"ru").slice(0,2);
+}
 if(!I18N[LANG])LANG="ru";
-// Город в интерфейсе: имя, валюта, язык речи. Приходит из /api/health (d.city).
-let CITY_UI=LANG==="en"?{id:"dubai",name:"Dubai",lang:"en-US",locale:"en-AE",tz:"Asia/Dubai",currency:"AED"}:{id:"moscow",name:"Москва",lang:"ru-RU",locale:"ru-RU",tz:"Europe/Moscow",currency:"₽"};
+// Город в интерфейсе: имя, валюта, язык речи. Приходит из страницы (FREE_CITY) и /api/health (d.city).
+let CITY_UI=LANG==="en"?{id:"dubai",name:"Dubai",lang:"en-US",locale:"en-AE",tz:"Asia/Dubai",currency:"AED",center:{lat:25.2048,lon:55.2708}}:{id:"moscow",name:"Москва",lang:"ru-RU",locale:"ru-RU",tz:"Europe/Moscow",currency:"₽",center:{lat:55.7558,lon:37.6173}};
+const CURRENCY_SIGN={RUB:"₽",AED:"AED",USD:"$",EUR:"€"};
+function cityUiFrom(city,lang){
+  return {...CITY_UI,...(city.id?{id:city.id}:{}),name:(lang==="en"?city.nameEn:city.name)||city.name||CITY_UI.name,
+    lang:(city.agent&&city.agent.lang)||city.speechLang||(lang==="en"?"en-US":"ru-RU"),
+    // Без locale в ответе берём локаль языка, а не прежнюю: иначе в Дубае
+    // числа печатались по-русски («1 000»), если страница стартовала на ru.
+    locale:city.locale||({en:"en-AE",ru:"ru-RU"}[lang])||CITY_UI.locale,tz:city.tz||CITY_UI.tz,
+    currency:city.currencySymbol||CURRENCY_SIGN[city.currency]||city.currency||CITY_UI.currency,
+    center:city.center||CITY_UI.center};
+}
+if(BOOT_CITY)CITY_UI=cityUiFrom(BOOT_CITY,LANG);
 function t(key,vars){
   let s=(I18N[LANG]&&I18N[LANG][key]);
   if(s===undefined)s=I18N.ru[key];
@@ -505,15 +642,13 @@ function applyI18n(){
   for(const el of document.querySelectorAll("[data-i18n-placeholder]"))el.placeholder=t(el.getAttribute("data-i18n-placeholder"));
   for(const el of document.querySelectorAll("[data-i18n-title]"))el.title=t(el.getAttribute("data-i18n-title"));
   for(const el of document.querySelectorAll("[data-i18n-aria]"))el.setAttribute("aria-label",t(el.getAttribute("data-i18n-aria")));
-  window.FREE_LANG=LANG;window.FREE_CITY_NAME=CITY_UI.name;window.FREE_CITY_ID=CITY_UI.id;
+  window.FREE_LANG=LANG;window.FREE_CITY_NAME=CITY_UI.name;window.FREE_CITY_ID=CITY_UI.id;window.FREE_CITY_CENTER=CITY_UI.center||null;
 }
 // Язык и город из ответа сервера. Возвращает true, если язык сменился.
 function setCity(city){
   if(!city||typeof city!=="object")return false;
   const lang=String(city.lang||"").slice(0,2);
-  CITY_UI={...CITY_UI,...(city.id?{id:city.id}:{}),name:(lang==="en"?city.nameEn:city.name)||city.name||CITY_UI.name,
-    lang:(city.agent&&city.agent.lang)||city.speechLang||(lang==="en"?"en-US":"ru-RU"),locale:city.locale||CITY_UI.locale,tz:city.tz||CITY_UI.tz,
-    currency:city.currencySymbol||({RUB:"₽",AED:"AED",USD:"$",EUR:"€"}[city.currency]||city.currency)||CITY_UI.currency};
+  CITY_UI=cityUiFrom(city,lang);
   const changed=Boolean(I18N[lang])&&lang!==LANG;
   if(I18N[lang])LANG=lang;
   try{localStorage.setItem("free_lang",LANG)}catch(_){}
@@ -576,7 +711,10 @@ async function initTelegram(){
   const w=window.Telegram&&window.Telegram.WebApp;
   if(!w||!w.initData)return;
   TG=w;
-  try{TG.ready();TG.expand();TG.setHeaderColor("#f6f6f4");TG.setBackgroundColor("#f6f6f4");if(TG.disableVerticalSwipes)TG.disableVerticalSwipes()}catch(_){}
+  try{TG.ready();TG.expand();if(TG.disableVerticalSwipes)TG.disableVerticalSwipes()}catch(_){}
+  // Тема — как у Telegram: в тёмном клиенте светлое окно слепит и выглядит чужим.
+  applyTgTheme();
+  try{TG.onEvent("themeChanged",applyTgTheme)}catch(_){}
   applyTgInsets();
   // Клиент сообщает зоны не сразу и меняет их при разворачивании окна.
   for(const e of ["safeAreaChanged","contentSafeAreaChanged","viewportChanged"]){
@@ -587,6 +725,34 @@ async function initTelegram(){
 // Кнопки «Закрыть» и «···» Telegram лежат поверх страницы, а не над ней.
 // safeAreaInset — вырез устройства, contentSafeAreaInset — полоса самого Telegram;
 // отступ равен их сумме. CSS берёт max(env(), --sat), поэтому здесь нужен итог.
+// ---- Тема: светлая или тёмная ----
+// data-theme ставит ещё скрипт в <head>; здесь — смена на лету и цвет рамки
+// вокруг страницы (шапка Telegram, theme-color браузера, статус-бар iOS).
+function setTheme(theme){
+  const d=document.documentElement,dark=theme==="dark";
+  d.setAttribute("data-theme",dark?"dark":"light");
+  const bg=dark?(d.style.getPropertyValue("--tg-bg").trim()||"#0f1013"):"#f6f6f4";
+  const m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute("content",bg);
+  if(TG){try{TG.setHeaderColor(bg);TG.setBackgroundColor(bg)}catch(_){}}
+  // У Capacitor «DARK» — светлый текст статус-бара для тёмного фона.
+  if(NATIVE&&NATIVE.StatusBar){try{NATIVE.StatusBar.setStyle({style:dark?"DARK":"LIGHT"})}catch(_){}}
+}
+function applyTgTheme(){
+  if(!TG)return;
+  const p=TG.themeParams||{},bg=String(p.bg_color||"");
+  if(TG.colorScheme==="dark"&&/^#[0-9a-f]{6}$/i.test(bg))document.documentElement.style.setProperty("--tg-bg",bg);
+  else document.documentElement.style.removeProperty("--tg-bg");
+  setTheme(TG.colorScheme==="dark"?"dark":"light");
+}
+function watchSystemTheme(){
+  if(IN_TELEGRAM||!window.matchMedia)return;
+  try{
+    const mq=matchMedia("(prefers-color-scheme: dark)");
+    setTheme(mq.matches?"dark":"light");
+    const on=e=>{if(!TG)setTheme(e.matches?"dark":"light")};
+    if(mq.addEventListener)mq.addEventListener("change",on);else if(mq.addListener)mq.addListener(on);
+  }catch(_){}
+}
 function applyTgInsets(){
   if(!TG)return;
   const sa=TG.safeAreaInset||{},ca=TG.contentSafeAreaInset||{};
@@ -609,17 +775,22 @@ function safeUrl(raw){
   if(/^(https?:|mailto:|tel:)/i.test(v)){try{new URL(v);return v}catch(_){return ""}}
   return "";
 }
-function openExternal(raw){
+// app=true — ссылка, которая должна открыть приложение (такси, карты). В
+// нативной оболочке её нельзя отдавать встроенному браузеру: из него
+// универсальные ссылки iOS приложение не открывают. Переход самой страницы
+// Capacitor передаёт системе (UIApplication.open), и тогда открывается Uber,
+// Careem или Google Maps, а без приложения — Safari.
+function openExternal(raw,{app=false}={}){
   const url=safeUrl(raw);
   if(!url){if(raw)toast(t("toast.unsafeLink"));return}
-  if(NATIVE){if(/^https?:/i.test(url)&&NATIVE.Browser){NATIVE.Browser.open({url,presentationStyle:"popover"}).catch(()=>{window.location.href=url});return}window.location.href=url;return}
+  if(NATIVE){if(!app&&/^https?:/i.test(url)&&NATIVE.Browser){NATIVE.Browser.open({url,presentationStyle:"popover"}).catch(()=>{window.location.href=url});return}window.location.href=url;return}
   if(TG){try{if(/^https?:\/\/t\.me\//i.test(url))TG.openTelegramLink(url);else if(/^https?:/i.test(url))TG.openLink(url);else window.location.href=url;return}catch(_){}}
   const w=window.open(url,"_blank","noopener");
   if(!w)window.location.href=url; // всплывающее окно заблокировано — открываем в этой вкладке
 }
 // Окно надо открыть синхронно в обработчике клика, иначе после await браузер сочтёт его всплывающим и заблокирует.
-function deferredOpen(){
-  if(NATIVE||TG)return {go:openExternal,cancel(){}}; // нативный и телеграм-браузер открываются и после await
+function deferredOpen(opts={}){
+  if(NATIVE||TG)return {go:(u)=>openExternal(u,opts),cancel(){}}; // нативный и телеграм-браузер открываются и после await
   let w=null;try{w=window.open("about:blank","_blank")}catch(_){}
   if(w){try{w.opener=null}catch(_){}}
   return {
@@ -627,7 +798,7 @@ function deferredOpen(){
     cancel(){if(w&&!w.closed){try{w.close()}catch(_){}}}
   };
 }
-function linkFallback(url,label=t("link.manual")){return url?`<div class="small" style="margin-top:8px"><a href="${esc(url)}" target="_blank" rel="noopener" style="color:#315fff;font-weight:600">${esc(label)} ↗</a></div>`:""}
+function linkFallback(url,label=t("link.manual")){return url?`<div class="small" style="margin-top:8px"><a class="lnk" href="${esc(url)}" target="_blank" rel="noopener">${esc(label)} ↗</a></div>`:""}
 function esc(s=""){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 function norm(s=""){return String(s).toLowerCase().replace(/ё/g,"е").replace(/<[^>]*>/g," ").replace(/[^a-zа-я0-9+\-\s]/gi," ").replace(/\s+/g," ").trim()}
 // В приватном окне и при переполнении квоты setItem бросает исключение.
@@ -802,7 +973,21 @@ function quick(opts){return '<div class="quick">'+opts.map((x,i)=>`<button class
  * так что отметка не нужна вовсе. Признак живого поведения в разметке — сама
  * по себе ловушка: разметку можно сохранить и восстановить, поведение нет.
  */
-function bindQuick(){$$("[data-quick]").forEach(b=>{b.onclick=()=>submitUser(b.dataset.quick)})}
+function bindQuick(){$$("[data-quick]").forEach(b=>{b.onclick=()=>submitUser(b.dataset.quick)});$$("[data-retry]").forEach(b=>{b.onclick=()=>retryRequest(b)})}
+// «Повторить» после сбоя: тот же поиск или тот же вечер, без второй реплики человека.
+async function retryRequest(btn){
+  if(chatState.busy)return;
+  const text=String(btn.dataset.retry||"").trim();
+  const bubble=btn.closest(".msg");if(bubble)bubble.remove();
+  chatState.busy=true;setComposerBusy(true);
+  try{
+    if(chatState.pendingPlan){const st=chatState.pendingPlan;chatState.pendingPlan=null;await buildEveningScripted(st);return}
+    if(chatState.intent&&chatState.phase!=="idle"){await showMatches();return}
+    if(!text)return;
+    if(chatState.aiReady)await submitNeuralUser(text,true);
+    else await submitScriptedUser(text,true);
+  }finally{chatState.busy=false;setComposerBusy(false)}
+}
 // Сценарии со своим диалогом; всё остальное — прямой поиск по категории из общего справочника.
 const INTENT_BY_TAG={bar:"drink",hookah:"hookah",food:"food",bakery:"food",pastry:"food",club:"nightlife",karaoke:"nightlife",
   date:"date",family:"family",work:"work",coffee:"work",library:"work",spa:"wellness",massage:"wellness",yoga:"wellness",gym:"wellness",pool:"wellness"};
@@ -829,7 +1014,10 @@ function extractSlots(t){
   m=n.match(/(?:до|бюджет)\s*(\d{2,6})/);if(m)s.max_price_rub=+m[1];
   if(LANG==="en"){m=n.match(/(?:under|up to|budget|max)\s*(\d[\d ]{1,6})/);if(m)s.max_price_rub=+m[1].replace(/\s/g,"")}
   m=n.match(/(?:после|after)\s*(\d{1,2})(?::(\d{2}))?/);if(m)s.after_time=String(+m[1]).padStart(2,"0")+":"+String(+(m[2]||0)).padStart(2,"0");
-  if(/вечер|(?<![a-z])(?:evening|tonight)(?![a-z])/.test(n)&&!s.after_time)s.after_time="18:00";
+  // «at 8pm», «в 20:00» — время брони; без минут или am/pm число слишком часто значит другое.
+  if(!s.after_time){m=String(t||"").toLowerCase().match(/(?:^|\s)(?:в|к|at|around|for|by)\s*(\d{1,2})(?:[:.](\d{2}))?\s*(pm|am|p\.m\.|a\.m\.)?(?=[\s,.!?]|$)/);
+    if(m&&(m[2]||m[3])){let h=+m[1];const pm=/^p/.test(m[3]||""),am=/^a/.test(m[3]||"");if(pm&&h<12)h+=12;if(am&&h===12)h=0;if(h<24&&+(m[2]||0)<60)s.after_time=String(h).padStart(2,"0")+":"+String(+(m[2]||0)).padStart(2,"0")}}
+  if(/вечер|(?<![a-z])(?:evening|tonight)(?![a-z])/.test(n)&&!s.after_time)s.after_time=eveningStart();
   if(/сегодня|(?<![a-z])(?:today|tonight)(?![a-z])/.test(n))s.date_word="today";if(/(?<![а-я])завтра(?![а-я])|(?<![a-z])tomorrow(?![a-z])/.test(n))s.date_word="tomorrow";
   if(/коктейл|cocktail/.test(n))s.style="cocktail";if(/пиво|паб|(?<![a-z])(?:beer|pub)(?![a-z])/.test(n))s.style="pub";if(/вино|(?<![a-z])wine(?![a-z])/.test(n))s.style="wine";
   if(/спокой|тихо|разговар|(?<![a-z])(?:quiet|calm)(?![a-z])/.test(n))s.vibe="quiet";if(/шумно|весело|тусов|(?<![a-z])(?:loud|lively|party|buzz)(?![a-z])/.test(n))s.vibe="social";if(/красив|(?<![a-z])(?:nice|pretty|beautiful|fancy)(?![a-z])/.test(n))s.vibe="beautiful";
@@ -883,6 +1071,40 @@ function dateStr(word){
   if(word==="weekend"){const dow=d.getUTCDay();d.setUTCDate(d.getUTCDate()+(dow===0||dow===6?0:6-dow))}
   return d.toISOString().slice(0,10);
 }
+// Минуты от полуночи по часам города, а не телефона: турист в Дубае с московским временем.
+function cityNowMin(){
+  try{const p=new Intl.DateTimeFormat("en-GB",{timeZone:CITY_UI.tz,hour:"2-digit",minute:"2-digit",hour12:false}).format(new Date()).split(":").map(Number);
+    if(Number.isFinite(p[0])&&Number.isFinite(p[1]))return (p[0]%24)*60+p[1]}catch(_){}
+  const d=new Date();return d.getHours()*60+d.getMinutes();
+}
+function hhmmOf(min){min=Math.max(0,Math.min(1439,Math.round(min)));return String(Math.floor(min/60)).padStart(2,"0")+":"+String(min%60).padStart(2,"0")}
+// «Сегодня вечером» — не всегда 18:00: в 22:32 это уже 22:45. Ночью (до 5 утра)
+// «вечер» — это и есть сейчас, а не следующие 18:00.
+function eveningStart(){
+  const now=Math.ceil(cityNowMin()/15)*15;
+  return hhmmOf(now<300?now:Math.min(Math.max(now,18*60),23*60+45));
+}
+// Последняя известная позиция — для каждого запроса, без нового вопроса о разрешении.
+function freshGeo(maxAge=600000){return geoCache&&Date.now()-geoCache.at<maxAge?geoCache:null}
+function haversineKm(a,b){const R=6371,rad=v=>v*Math.PI/180,dl=rad(b.lat-a.lat),dn=rad(b.lon-a.lon);const z=Math.sin(dl/2)**2+Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(dn/2)**2;return 2*R*Math.asin(Math.sqrt(z))}
+// Расстояние до места: от сервера, а если он не посчитал — по координатам сами.
+// null — неизвестно: «0 м от вас» из Number(null) больше не показываем.
+function distanceKm(r){
+  if(!r)return null;
+  if(r.distance_km!==null&&r.distance_km!==undefined&&r.distance_km!==""){const v=Number(r.distance_km);if(Number.isFinite(v)&&v>=0)return v}
+  const g=freshGeo(),c=coords(r);
+  return g&&c?haversineKm(g,c):null;
+}
+function distanceText(km){return km===null||km===undefined?"":km<1?t("detail.m",{n:Math.max(10,Math.round(km*1000/10)*10)}):t("detail.km",{n:km<10?km.toFixed(1):Math.round(km)})}
+// Разрешение на геопозицию уже дано — берём её молча при старте: так она уйдёт
+// и в первый запрос. Если не дано — не спрашиваем: окно разрешения на пустом
+// экране пугает, спросим, когда человек сам попросит «рядом».
+async function warmGeo(){
+  try{
+    if(NATIVE&&NATIVE.Geolocation){const p=await NATIVE.Geolocation.checkPermissions();if(p&&(p.location==="granted"||p.coarseLocation==="granted"))await geo(true);return}
+    if(navigator.permissions&&navigator.permissions.query){const st=await navigator.permissions.query({name:"geolocation"});if(st&&st.state==="granted")await geo(true)}
+  }catch(_){}
+}
 async function geo(silent=false){
   if(geoCache&&Date.now()-geoCache.at<300000)return geoCache;
   if(NATIVE&&NATIVE.Geolocation){
@@ -914,7 +1136,11 @@ async function liveArgs(){
   if(s.max_price_rub&&s.max_price_rub<999999)args.max_price_rub=s.max_price_rub;if(s.party_size)args.party_size=s.party_size;if(s.after_time)args.after_time=s.after_time;
   if(["today","tomorrow","weekend"].includes(s.date_word))args.target_date=dateStr(s.date_word);
   if(s.area)args.area=s.area;
-  if(s.near){const g=await geo(false);if(g)args.user_location={lat:g.lat,lon:g.lon}}
+  // Позиция уходит с каждым запросом, если она уже известна: без неё сервер
+  // не знает расстояний, и на странице места было «0 м от вас». Спрашиваем
+  // разрешение только на «рядом».
+  const g=s.near?await geo(false):freshGeo();
+  if(g)args.user_location={lat:g.lat,lon:g.lon};
   return args;
 }
 function localDna(v){const t=norm([v.name,v.cat,v.keywords,v.desc,(v.tags||[]).join(" ")].join(" ")),h=r=>r.test(t),cl=x=>Math.max(0,Math.min(100,x));const night=h(/ноч|бар|клуб|караоке|кальян|до 0[1-6]|круглосуточ/);return {romantic:cl(30+(h(/панорам|вино|коктейл|джаз|ресторан/)?40:0)),quiet:cl(40+(h(/тих|спокой|уют|кофейн/)?35:0)-(night?20:0)),trendy:cl(35+(h(/дизайн|арт|коктейл|иммерсив/)?35:0)),luxury:cl(20+(h(/преми|панорам|отель|гастроном/)?40:0)),hidden:cl(30+(h(/переул|необыч|иммерсив/)?35:0)),late:cl(20+(night?60:0)),family:cl(18+(h(/дет|семейн|зоопарк|эксперимент/)?60:0)),work:cl(20+(h(/коворкинг|кофейн|ноутбук/)?55:0)),active:cl(25+(h(/квест|боулинг|vr|танц/)?55:0)),culture:cl(20+(h(/музей|искусств|выстав|театр/)?60:0)),music:cl(20+(h(/музык|концерт|джаз|рок/)?60:0)),nightlife:cl(18+(night?60:0))}}
@@ -929,7 +1155,12 @@ function fallbackCurrent(v,args){
   return true;
 }
 
+// Встроенный набор — три десятка московских мест. В другом городе он хуже
+// пустоты: в Дубае на отказ сервера показывались кальянные с Мясницкой.
+// Там вместо него — честное «не загрузилось, повторить».
+function fallbackAllowed(){return CITY_UI.id==="moscow"}
 function fallbackSearch(args){
+  if(!fallbackAllowed())return [];
   const q=norm(args.query),words=q.split(" ").filter(x=>x.length>=3),out=[];
   for(const v of FALLBACK){if(!fallbackCurrent(v,args))continue;const text=norm([v.name,v.cat,v.desc,v.keywords,(v.tags||[]).join(" ")].join(" "));let s=0;for(const w of words){const re=new RegExp("(?<![а-яa-z0-9])"+w.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"(?:[а-я]{0,2}|н[а-я]{1,3})(?![а-я])");if(re.test(text))s+=12}if(s<12)continue;const dna=localDna(v);for(const [k,w] of Object.entries(taste))s+=(w||0)*(dna[k]-50)/14;out.push({...v,dna,_s:s,match:90})}
   out.sort((a,b)=>b._s-a._s);return out.slice(0,3).map((v,i)=>({id:v.id,name:v.name,organizer:v.organizer,category:v.cat,date:v.date_start||t("date.always"),time:v.times?.[0]||v.hours_label||"",price:v.price_label,availability:v.availability,area:v.area,metro:v.metro,source:v.source,point_source:v.point_source||v.source,official_source:v.official_source||null,coords:v.coords||null,provider:"Fallback",image_url:v.image_url||null,booking_url:v.booking_url||null,booking_kind:v.booking_kind||null,booking_provider:v.booking_provider||null,phone:v.phone||null,reasons:[],dna:v.dna,match:Math.max(76,94-i*5),kind:v.kind}))}
@@ -957,13 +1188,21 @@ async function noteAccessDenied(r){
 }
 async function recommend(){
   const args=await liveArgs();
-  chatState.lastNote=null;
+  chatState.lastNote=null;chatState.searchFailed=false;
   try{
     const r=await apiFetch("/api/recommend",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(args)});
     if(r.ok){const d=await r.json();chatState.lastNote=d.note||null;if(d.results?.length)return d.results.slice(0,3)}
-    else await noteAccessDenied(r);
-  }catch(_){}
+    else{await noteAccessDenied(r);chatState.searchFailed=true}
+  }catch(_){chatState.searchFailed=true}
   return fallbackSearch(args);
+}
+// Сервер не ответил, а подменять его нечем: говорим как есть и даём повторить.
+// Текст запроса — в разметке кнопки: после перезахода состояния поиска уже нет.
+function searchFailedMsg(key="search.failed"){
+  const last=[...chatState.history].reverse().find(x=>x.role==="user");
+  const text=last?last.html.replace(/<[^>]+>/g," ").replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&#39;/g,"'").trim():"";
+  addMsg("ai",`${t(key)}<div class="quick retryBox"><button class="primary" data-retry="${esc(text)}">${t("search.retry")}</button></div>`);
+  bindQuick();
 }
 function reason(r){const a=[...(r.reasons||[])],d=r.dna||{};if(d.quiet>=68)a.push(t("reason.talk"));if(d.romantic>=70)a.push(t("reason.couple"));if(d.late>=70)a.push(t("reason.late"));return [...new Set(a)].slice(0,3).join(" · ")||t("reason.default")}
 // Картинки идут через серверный прокси (защита от хотлинков и смешанного контента); в демо без сервера — напрямую.
@@ -992,11 +1231,13 @@ function noImg(el){
   box.classList.add("noimg");el.remove();
   // В шапке страницы заведения рядом с картинкой — кнопка закрытия и плашка
   // «Открыто»: стирать их вместе с картинкой нельзя, иначе страницу не закрыть.
-  if(!box.classList.contains("dHero"))box.textContent="";
+  // Значок Мишлен остаётся и на запасной обложке.
+  if(!box.classList.contains("dHero"))[...box.childNodes].forEach(n=>{if(!(n.classList&&n.classList.contains("mBadge")))n.remove()});
 }
-function imageBlock(r){
+function imageBlock(r,badge=""){
   const {cls,emoji}=placeEmoji(r);
   const photo=r.photo||{};
+  const mb=badge?`<span class="mBadge">${esc(badge)}</span>`:"";
   // Подпись — источник самой фотографии, а не тот, через кого нашлось место.
   // У собственной обложки подписи нет: показывать нечего и некого указывать.
   const credit=photo.credit&&photo.credit.text
@@ -1007,15 +1248,147 @@ function imageBlock(r){
   const cover=r.cover_url||(photo.origin==="generated"?photo.url:"");
   const url=r.image_url||photo.url;
   const cc=r.cover_credit&&r.cover_credit.text?` data-cover-credit="${esc(r.cover_credit.text)}"`:"";
-  if(url)return `<div class="placeMedia ${cls}" data-emoji="${emoji}"${cover?` data-cover="${esc(ownUrl(cover))}"`:""}${cc}><img src="${esc(mediaSrc(r))}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="noImg(this)">${credit}</div>`;
-  return `<div class="placeMedia noimg ${cls}" data-emoji="${emoji}"></div>`;
+  if(url)return `<div class="placeMedia ${cls}" data-emoji="${emoji}"${cover?` data-cover="${esc(ownUrl(cover))}"`:""}${cc}><img src="${esc(mediaSrc(r))}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="noImg(this)">${credit}${mb}</div>`;
+  return `<div class="placeMedia noimg ${cls}" data-emoji="${emoji}">${mb}</div>`;
+}
+// Сайт заведения — только настоящий адрес, не tel: и не страница OSM.
+function officialSite(r){const u=safeUrl(r&&r.official_source);return u&&/^https?:/i.test(u)?u:""}
+/* Канал главной кнопки — по booking_kind от сервера:
+   reserve → «Book on <сервис>», tickets → «Tickets», whatsapp, telegram,
+   tel/phone → «Call», site → «Website». Канала нет — звонок, сайт или
+   маршрут: «Бронировать», ведущее на страницу OpenStreetMap, только путало. */
+function bookingKind(r){
+  const k=String(r.booking_kind||"").toLowerCase();
+  if(r.booking_url||r.kind==="event"){
+    if(/^tel:/i.test(String(r.booking_url||"")))return "tel";
+    return k==="phone"?"tel":(k||(r.kind==="event"?"tickets":"site"));
+  }
+  if(r.phone)return "tel";
+  if(officialSite(r))return "site";
+  return "none";
 }
 function bookingLabel(r){
-  if(r.kind==="event")return t("book.tickets");
-  if(r.booking_kind==="telegram")return t("book.telegram");
-  if(r.booking_kind==="whatsapp")return t("book.whatsapp");
-  if(r.booking_kind==="phone")return t("book.phone");
+  const k=bookingKind(r);
+  if(k==="reserve")return r.booking_provider?t("book.on",{provider:r.booking_provider}):t("book.default");
+  if(r.kind==="event"||k==="tickets")return t("book.tickets");
+  if(k==="telegram")return t("book.telegram");
+  if(k==="whatsapp")return t("book.whatsapp");
+  if(k==="tel")return t("book.phone");
+  if(k==="site")return t("book.site");
+  if(k==="none")return t("card.directions");
   return t("book.default");
+}
+/* Телефон в ссылке — в международном виде. «04 814 5599» из OSM в tel: уходил
+   как есть, и с роуминговой SIM-картой такой звонок не проходил. */
+function telHref(phone){
+  const p=String(phone||"").replace(/^tel:/i,"").split(/[;,/]/)[0];
+  let d=p.replace(/[^\d+]/g,"");
+  if(!d)return "";
+  if(d.startsWith("00"))d="+"+d.slice(2);
+  if(d.startsWith("+"))return d;
+  if(CITY_UI.id==="dubai"){
+    if(d.startsWith("971"))return "+"+d;
+    if(d.startsWith("0"))return "+971"+d.slice(1);
+    if(/^5\d{8}$/.test(d)||/^[2-9]\d{7}$/.test(d))return "+971"+d;
+  }
+  if(CITY_UI.id==="moscow"){
+    if(/^8\d{10}$/.test(d))return "+7"+d.slice(1);
+    if(/^7\d{10}$/.test(d))return "+"+d;
+    if(/^9\d{9}$/.test(d)||/^4\d{9}$/.test(d))return "+7"+d;
+  }
+  return d;
+}
+// Длинную подпись режем по границе слова: «…SHANGRI-LA HOTEL DUBAI - SHEI» читалось как опечатка.
+function clipWords(s,max){
+  s=String(s||"").replace(/\s+/g," ").trim();
+  if(s.length<=max)return s;
+  const cut=s.slice(0,max+1),at=cut.lastIndexOf(" ");
+  return (at>max*.5?cut.slice(0,at):s.slice(0,max)).replace(/[\s,·\-–—:;]+$/,"")+"…";
+}
+// ---- Часы, статус, цена и награды: показываем то, что прислал сервер ----
+// Сырой синтаксис OSM («Su-We 08:00-24:00») на карточке не показываем: на
+// странице места он переводится в человеческий вид, на карточке — только статус.
+const RAW_HOURS_RE=/\b(?:Mo|Tu|We|Th|Fr|Sa|Su|PH)\b|\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}|24\/7/;
+function isRawHours(s){return RAW_HOURS_RE.test(String(s||""))}
+const DAY_NAMES={en:{Mo:"Mon",Tu:"Tue",We:"Wed",Th:"Thu",Fr:"Fri",Sa:"Sat",Su:"Sun",PH:"holidays"},ru:{Mo:"пн",Tu:"вт",We:"ср",Th:"чт",Fr:"пт",Sa:"сб",Su:"вс",PH:"праздники"}};
+function humanHours(raw){
+  const s=String(raw||"").trim().replace(/^"|"$/g,"");
+  if(!s)return [];
+  if(/^(?:24\/7|(?:Mo-Su\s+)?00:00\s*-\s*(?:24:00|00:00))$/i.test(s))return [t("hours.always")];
+  const D=DAY_NAMES[LANG]||DAY_NAMES.en;
+  return s.split(/\s*;\s*/).filter(Boolean).slice(0,7).map(rule=>rule
+    .replace(/\b(Mo|Tu|We|Th|Fr|Sa|Su|PH)\b/g,m=>D[m])
+    .replace(/(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/g,"$1–$2")
+    .replace(/([A-Za-zА-Яа-я]+)-([A-Za-zА-Яа-я]+)/g,"$1–$2")
+    .replace(/\b(?:off|closed)\b/gi,t("hours.closed"))
+    .replace(/,(?=\S)/g,", "));
+}
+// Строки часов для страницы места: человеческая подпись сервера или перевод сырых.
+function hoursLines(r){
+  const label=String(r.hours_label||"").trim(),raw=String(r.hours_raw||"").trim();
+  if(label&&!isRawHours(label))return label.split(/;\s*/).map(x=>x.trim()).filter(Boolean);
+  if(label||raw)return humanHours(label||raw);
+  if(r.kind!=="event"&&r.time&&!isRawHours(r.time))return [String(r.time)];
+  return [];
+}
+// Статус для карточки и шапки: пометка сервера («Temporarily closed»,
+// «Opens 14 Oct») важнее расчёта «открыто сейчас».
+function openStatus(r){
+  if(r.kind==="event")return null;
+  if(r.status_note)return {cls:"note",text:String(r.status_note)};
+  if(r.open_now===true)return {cls:"open",text:r.closes_at?t("detail.openTill",{t:r.closes_at}):t("detail.openNow")};
+  if(r.open_now===false)return {cls:"closed",text:r.opens_at?t("detail.opensAt",{t:r.opens_at}):t("detail.closed")};
+  return null;
+}
+function fmtDay(iso){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(String(iso||"")))return String(iso||"");
+  try{return new Date(iso+"T12:00:00Z").toLocaleDateString(CITY_UI.locale,{weekday:"short",day:"numeric",month:"short",timeZone:"UTC"})}catch(_){return iso}
+}
+// Событие: дата, время, площадка. «ongoing»/«постоянно» датой не считаем.
+function eventWhen(r){
+  if(r.kind!=="event")return "";
+  const d=/^\d{4}-\d{2}-\d{2}$/.test(String(r.date||""))?fmtDay(r.date):"";
+  const end=/^\d{4}-\d{2}-\d{2}$/.test(String(r.date_end||""))&&r.date_end!==r.date?fmtDay(r.date_end):"";
+  const time=(Array.isArray(r.times)&&r.times[0])||(!isRawHours(r.time)?r.time:"")||"";
+  return [d&&end?`${d} – ${end}`:d,time].filter(Boolean).join(" · ");
+}
+function money(n){return `${Number(n).toLocaleString(CITY_UI.locale)} ${CITY_UI.currency}`}
+// Цена: подпись сервера («$$ · moderate», «from 150 AED»), иначе — «от» по минимальной.
+function priceText(r){
+  const p=String(r.price||"").trim();
+  if(p)return p;
+  const n=Number(r.price_min);
+  return Number.isFinite(n)&&n>0?t("price.from",{n:money(n)}):"";
+}
+// Мишлен: строка («1 Star», «Bib Gourmand»), число звёзд или объект — что пришло.
+function michelinText(r){
+  const m=r.michelin;if(!m)return "";
+  const stars=n=>"★".repeat(Math.max(1,Math.min(3,Math.round(n))));
+  if(typeof m==="number")return `${t("michelin")} ${stars(m)}`;
+  if(typeof m==="string")return /michelin|мишлен/i.test(m)?m:`${t("michelin")} · ${m}`;
+  if(typeof m==="object"){
+    if(m.label)return String(m.label);
+    if(Number(m.stars)>0)return `${t("michelin")} ${stars(m.stars)}`;
+    if(m.award||m.distinction)return `${t("michelin")} · ${m.award||m.distinction}`;
+    return t("michelin");
+  }
+  return t("michelin");
+}
+/* Проценты совпадения не должны спорить с порядком: «ЛУЧШЕЕ СОВПАДЕНИЕ 86%», а
+   рядом 88%. Порядок — решение сервера (там учтено разнообразие), поэтому
+   выравниваем подписи: каждая следующая не выше предыдущей. Без оценки — без
+   процентов, а не выдуманные 94%. */
+function shownMatches(rs){
+  let prev=Infinity;
+  return rs.map(r=>{const m=Number(r.match);if(!Number.isFinite(m)||m<=0)return null;prev=Math.min(prev,Math.round(m));return prev});
+}
+// Такси: все провайдеры города — отдельными кнопками (в Дубае Uber и Careem).
+function taxiLinks(r){
+  const c=coords(r);
+  if(!c||!window.FreeTaxi)return [];
+  const area=r.area&&r.area!==r.name?String(r.area):"";
+  const address=area&&area.toLowerCase().includes(String(CITY_UI.name).toLowerCase())?area:[area,CITY_UI.name].filter(Boolean).join(", ");
+  return window.FreeTaxi.links(c,freshGeo(300000),{name:r.name,address});
 }
 /* Оценка людей — единственный такой сигнал в выдаче, и без неё непонятно,
    почему место первое. Показываем только с числом отзывов: «пять звёзд» от
@@ -1034,23 +1407,51 @@ function plural(n,one,few,many){
   if(b>1&&b<5)return few;
   return b===1?one:many;
 }
-function cards(rs){
-  currentResults=rs;rememberPlaces(rs);
-  return '<div class="inlineCards">'+rs.map((r,i)=>`<div class="placeCard ${i===0?"best":""}">
-    ${imageBlock(r)}
-    <div class="tag">${i===0?t("card.best"):esc([r.category,r.area||r.metro].filter(Boolean).join(" · ").slice(0,42))}</div>
-    <div class="score">${r.match||94}%<small>${t("card.match")}</small></div>
+function cardHtml(r,i,score){
+  const id=esc(r.id),st=openStatus(r),ev=eventWhen(r),price=priceText(r),km=distanceKm(r),mich=michelinText(r);
+  // Тег — категория, а не «категория · адрес»: адрес ниже отдельной строкой.
+  const tag=i===0?t("card.best"):esc(clipWords(r.category||r.area||"",34));
+  const where=[r.kind==="event"?(r.venue||r.area):r.area,r.metro?t("metro.prefix")+r.metro:"",km!==null?distanceText(km):""].filter(Boolean).join(" · ");
+  // Часы на карточке — только человеческие и короткие, сырые OSM — никогда.
+  const hl=!st&&!ev?hoursLines(r):[];
+  const when=ev?{cls:"",text:ev}:st||(hl.length===1&&hl[0].length<=32?{cls:"",text:hl[0]}:null);
+  const isSaved=saved.some(x=>x.id===r.id),taxi=taxiLinks(r),kind=bookingKind(r);
+  // Канала брони нет — главная кнопка ведёт по маршруту, вторая — в подробности.
+  const second=kind==="none"?`<button class="cardBtn" data-detail="${id}">${t("card.details")}</button>`:`<button class="cardBtn" data-dir="${id}">${t("card.directions")}</button>`;
+  return `<div class="placeCard ${i===0?"best":""}">
+    ${imageBlock(r,mich)}
+    <div class="tag">${tag}</div>
+    ${score!==null&&score!==undefined?`<div class="score">${score}%<small>${t("card.match")}</small></div>`:""}
     <h3>${esc(r.name)}</h3><div class="reason">${t("card.why")}${esc(reason(r))}</div>
     ${ratingLine(r)}
-    <div class="meta">${esc(r.area||"")}${r.metro?" · "+t("metro.prefix")+esc(r.metro):""}${r.time?" · "+esc(r.time):""}</div>
-    ${r.price?`<div class="meta">${esc(r.price)}</div>`:""}
+    ${when?`<div class="when ${when.cls}">${esc(when.text)}</div>`:""}
+    ${where?`<div class="meta">${esc(where)}</div>`:""}
+    ${price?`<div class="meta">${esc(price)}</div>`:""}
     <div class="cardBtns">
-      <button class="cardBtn primary bookingBtn" data-book="${esc(r.id)}">${bookingLabel(r)}</button>
-      <button class="cardBtn" data-pick="${esc(r.id)}">${t("card.plan")}</button>
-      <button class="cardBtn" data-route="${esc(r.id)}">${t("card.taxi")}</button>
-      <button class="cardBtn ${saved.some(x=>x.id===r.id)?"saved":""}" data-save="${esc(r.id)}">${saved.some(x=>x.id===r.id)?t("card.saved"):t("card.save")}</button>
-      <button class="cardBtn" data-detail="${esc(r.id)}" style="grid-column:1/-1">${t("card.details")}</button>
-    </div></div>`).join("")+'</div>';
+      <button class="cardBtn primary bookingBtn" data-book="${id}">${esc(bookingLabel(r))}</button>
+      ${second}
+      ${taxi.map(l=>`<button class="cardBtn taxi${taxi.length===1?" s6":""}" data-taxi="${esc(l.provider)}" data-id="${id}">${esc(l.label)}</button>`).join("")}
+      <button class="cardBtn ${kind==="none"?"":"s2"}" data-pick="${id}">${t("card.plan")}</button>
+      <button class="cardBtn ${kind==="none"?"":"s2"} ${isSaved?"saved":""}" data-save="${id}">${isSaved?t("card.saved"):t("card.save")}</button>
+      ${kind==="none"?"":`<button class="cardBtn s2" data-detail="${id}">${t("card.details")}</button>`}
+    </div></div>`;
+}
+function cards(rs){
+  currentResults=rs;rememberPlaces(rs);
+  const shown=shownMatches(rs);
+  // Точки под лентой: сколько вариантов и какой сейчас на экране.
+  const dots=rs.length>1?`<div class="cardDots" aria-hidden="true">${rs.map((_,i)=>`<i class="${i?"":"on"}"></i>`).join("")}</div>`:"";
+  return '<div class="inlineCards">'+rs.map((r,i)=>cardHtml(r,i,shown[i])).join("")+'</div>'+dots;
+}
+function syncDots(strip){
+  const dots=strip&&strip.nextElementSibling;
+  if(!dots||!dots.classList.contains("cardDots"))return;
+  const card=strip.querySelector(".placeCard");if(!card)return;
+  const step=card.getBoundingClientRect().width+10;
+  const max=strip.scrollWidth-strip.clientWidth;
+  const n=dots.children.length;
+  const i=strip.scrollLeft>=max-4?n-1:Math.round(strip.scrollLeft/step);
+  [...dots.children].forEach((d,j)=>d.classList.toggle("on",j===Math.max(0,Math.min(n-1,i))));
 }
 // root задаёт область: карточки живут и в переписке, и на экране разговора,
 // а без области обработчики перевешивались бы на все карточки сразу.
@@ -1072,12 +1473,17 @@ function bindCards(root){
   all("[data-pick]").forEach(b=>b.onclick=()=>selectPlace(b.dataset.pick));
   // «Подробнее» и тап по карточке обрабатывает делегированный слушатель выше.
   all(".placeCard").forEach(c=>{c.style.cursor="pointer"});
-  all("[data-route]").forEach(b=>b.onclick=()=>routePlace(b.dataset.route));
+  // data-route — кнопка «Такси» на карточках, сохранённых до разделения маршрута и такси.
+  all("[data-route]").forEach(b=>b.onclick=()=>{const r=placeById(b.dataset.route);if(r)orderTaxi(r)});
+  all("[data-dir]").forEach(b=>b.onclick=()=>{const r=placeById(b.dataset.dir);if(r)openDirections(r)});
+  all("[data-taxi]").forEach(b=>b.onclick=()=>openTaxi(b.dataset.id,b.dataset.taxi));
   all("[data-save]").forEach(b=>b.onclick=()=>toggleSave(b.dataset.save));
+  all(".inlineCards").forEach(s=>{s.onscroll=()=>syncDots(s)});
 }
 async function showMatches(){
   const ty=typing();let rs=await recommend();ty.remove();
   let relaxedNote="";
+  if(!rs.length&&chatState.searchFailed){searchFailedMsg();return}
   if(!rs.length){
     const INTENT_CHIPS=t("chips.intents");
     // Непонятный запрос: не притворяемся, что искали, а спрашиваем, чего хочется.
@@ -1090,11 +1496,13 @@ async function showMatches(){
       chatState.relaxed=true;const s=chatState.slots;delete s.style;delete s.vibe;delete s.max_price_rub;delete s.near;
       const t2=typing();rs=await recommend();t2.remove();
       if(rs.length)relaxedNote=t("msg.relaxed");
+      else if(chatState.searchFailed){chatState.relaxed=false;searchFailedMsg();return}
     }
     if(!rs.length){
       const service=String(chatState.intent||"").startsWith("service:");
       chatState.intent=null;chatState.slots={};chatState.relaxed=false;chatState.asked=0;chatState.phase="idle";
-      addMsg("ai",service
+      // Про «демо-набор» говорим только там, где он есть (Москва).
+      addMsg("ai",service&&fallbackAllowed()
         ?t("msg.demoNoService")
         :t("msg.nothing")+quick(INTENT_CHIPS));
       bindQuick();return;
@@ -1105,7 +1513,9 @@ async function showMatches(){
   const n=rs.length,word=LANG==="en"?(n===1?"one option":n+" options"):(n===1?"один вариант":n<5?n+" варианта":n+" вариантов");
   const intro=relaxedNote||(chatState.intent==="event"?(n===1?t("msg.foundEvent1"):t("msg.foundEvents",{word})):(n===1?t("msg.found1"):t("msg.found",{word})));
   const note=chatState.lastNote?`<div class="small" style="margin-top:6px;color:#b45309">${esc(chatState.lastNote)}</div>`:"";
-  const resultMessage=addMsg("ai",`${intro}<div class="small">${esc(styleText())}</div>${note}${cards(rs)}`);bindCards();setTimeout(()=>scrollChatToLatest(resultMessage),120);
+  // Служебная сводка слотов («quiet», «bar · 4 people») под вступлением больше
+  // не показывается: это внутренние метки поиска, человеку они ничего не говорят.
+  const resultMessage=addMsg("ai",`${intro}${note}${cards(rs)}`);bindCards();setTimeout(()=>scrollChatToLatest(resultMessage),120);
 }
 
 function continuationCue(text){
@@ -1214,11 +1624,11 @@ function planForAI(){
   return plan.slice(0,6).map(r=>({id:r.id,name:r.name,category:r.category,area:r.area,time:r.time,price:r.price,kind:r.kind}));
 }
 async function neuralContextFor(text){
-  let user_location=null;
-  if(/рядом|недалеко|от меня|пешком|nearby|near me|close by|walking distance|on foot/.test(norm(text))){
-    const g=await geo(true);
-    if(g)user_location={lat:g.lat,lon:g.lon};
-  }
+  // Известная позиция уходит с каждой репликой — иначе агент не знает расстояний
+  // и «ближайшее» ему нечем мерить. Свежую спрашиваем только на «рядом».
+  let g=freshGeo();
+  if(!g&&/рядом|недалеко|от меня|пешком|nearby|near me|close by|walking distance|on foot|closest|nearest/.test(norm(text)))g=await geo(true);
+  const user_location=g?{lat:g.lat,lon:g.lon}:null;
   return {
     taste_weights:{...taste},
     selected_place:selectedForAI(),
@@ -1276,23 +1686,47 @@ async function streamDialogue(payload,bubble){
   if(result.reply_streamed)result.reply=text.trim();
   return result;
 }
-async function submitNeuralUser(text){
+/* Одна ошибка модели больше не выключает её до конца сеанса.
+ *
+ * Раньше любой сбой ставил aiReady=false навсегда: после одного таймаута
+ * человек до перезагрузки разговаривал со сценарием. Теперь: поток → обычный
+ * запрос → ещё одна попытка через секунду. Не вышло — этот ход отвечает
+ * быстрый поиск, а следующая реплика снова идёт к консьержу. Отказ в доступе
+ * (401/403) и ошибки запроса (4xx) не повторяем — повтор ответит тем же. */
+async function plainDialogue(payload){
+  const resp=await apiFetch("/api/dialogue",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+  const data=await resp.json().catch(()=>({}));
+  if(!resp.ok){const e=new Error(data.message||data.error||t("err.aiDown"));e.status=resp.status;throw e}
+  return data;
+}
+function readyStatus(){return t("status.ready",{agent:chatState.agent||t("status.agent")})}
+async function submitNeuralUser(text,alreadyAdded=false){
   text=(text||"").trim();if(!text)return;
-  addMsg("user",esc(text));$("#input").value="";
+  if(!alreadyAdded)addMsg("user",esc(text));
+  $("#input").value="";
   const bubble=typing();
   const payload={message:text,previous_response_id:chatState.aiResponseId||null,context:await neuralContextFor(text)};
   try{
     let data=null;
     try{data=await streamDialogue(payload,bubble)}catch(e){console.warn("stream:",e.message);data=null}
     if(!data){
-      const resp=await apiFetch("/api/dialogue",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
-      data=await resp.json().catch(()=>({}));
-      if(!resp.ok)throw new Error(data.message||data.error||t("err.aiDown"));
+      try{data=await plainDialogue(payload)}
+      catch(e){
+        if(e.status&&e.status<500&&e.status!==408&&e.status!==429)throw e;
+        // Сразу после сбоя второй подряд — только если прошлый ход прошёл:
+        // при лежащем сервисе каждая реплика не должна ждать три попытки.
+        if(chatState.aiFailedAt&&Date.now()-chatState.aiFailedAt<60000)throw e;
+        await new Promise(r=>setTimeout(r,900));
+        bubble.innerHTML='<span class="typing"><i></i><i></i><i></i></span>';
+        data=await plainDialogue(payload);
+      }
     }
     renderNeuralResult(bubble,data);
+    if(chatState.aiFailedAt){chatState.aiFailedAt=0;$("#aiStatus").textContent=readyStatus()}
   }catch(e){
+    console.warn("dialogue:",e&&e.message);
     bubble.remove();
-    chatState.aiReady=false;
+    chatState.aiFailedAt=Date.now();
     $("#aiStatus").textContent=t("status.fallback");
     $("#hint").textContent=t("hint.aiDown");
     toast(t("toast.aiDown"));
@@ -1347,6 +1781,8 @@ function claudeRuntime(){
   return null;
 }
 async function initDemoSample(){
+  // Демо-консьерж ищет по встроенному московскому набору — в другом городе ему нечего предложить.
+  if(!fallbackAllowed())return;
   const rt=claudeRuntime();if(!rt)return;
   try{
     const fn=await rt.use("sample");if(!fn)return;
@@ -1414,15 +1850,27 @@ async function submitUser(text){
 }
 
 
+/* Заявка на бронь — с тем, что человек уже сказал: дата, время, сколько гостей.
+   В разговоре с консьержем слоты сценария пусты, поэтому собираем их из
+   последних реплик (новые перекрывают старые) и добавляем слоты сценария. */
+function bookingSlots(){
+  const s={};
+  for(const m of chatState.history.filter(x=>x.role==="user").slice(-6))
+    Object.assign(s,extractSlots(String(m.html||"").replace(/<[^>]+>/g," ").replace(/&amp;/g,"&").replace(/&#39;/g,"'")));
+  return {...s,...chatState.slots};
+}
 function bookingRequestText(r){
-  const s=chatState.slots,parts=[t("book.text.hello",{name:r.name})];
-  if(s.date_word==="today")parts.push(t("book.text.today"));
-  if(s.date_word==="tomorrow")parts.push(t("book.text.tomorrow"));
+  const s=bookingSlots(),parts=[t("book.text.hello",{name:r.name})];
+  if(["today","tomorrow","weekend"].includes(s.date_word)){
+    const day=fmtDay(dateStr(s.date_word));
+    parts.push(t("book.text.date",{d:s.date_word==="weekend"?day:`${t("date."+s.date_word)}, ${day}`}));
+  }
   if(s.after_time)parts.push(t("book.text.time",{t:s.after_time}));
   if(s.party_size)parts.push(t("book.text.guests",{n:s.party_size}));
   parts.push(t("book.text.via"));
   return parts.join(" ");
 }
+function closeDetail(){const d=$("#detail");if(d)d.classList.remove("on")}
 async function copyText(text){
   try{await navigator.clipboard.writeText(text);return true}catch(_){}
   // Во фрейме и без HTTPS Clipboard API закрыт — пробуем устаревший способ.
@@ -1436,16 +1884,24 @@ async function copyText(text){
 function waWithText(url,text){try{const u=new URL(url);u.searchParams.set("text",text);return u.href}catch{return url}}
 async function openBooking(id){
   const r=placeById(id);if(!r)return;
-  const url=r.booking_url||(r.kind==="event"?(r.point_source||r.source):null);
+  const kind=bookingKind(r);
+  // Страницу места закрываем: подтверждение появляется в переписке, а под
+  // шторкой его не было видно — казалось, что кнопка ничего не сделала.
+  closeDetail();
+  if(kind==="none"){openDirections(r);return}
+  const url=r.booking_url||(r.kind==="event"?(r.point_source||r.source):null)||(kind==="tel"?"tel:"+telHref(r.phone):kind==="site"?officialSite(r):null);
   const text=bookingRequestText(r);chatState.phase="action";learn("book",r);
   if(!url){const page=r.point_source||r.source;addMsg("ai",t("book.noChannel",{name:esc(r.name)})+linkFallback(page));openExternal(page);return}
-  if(r.booking_kind==="phone"||String(url).startsWith("tel:")){addMsg("ai",t("book.byPhone",{name:esc(r.name)})+`<div class="bookingSummary">${esc(text)}</div>${linkFallback(url,t("book.phone"))}`);window.location.href=url;return}
-  if(r.kind==="event"||r.booking_kind==="tickets"){addMsg("ai",t("book.tickets.msg",{name:esc(r.name)})+linkFallback(url,t("book.ticketsReg")));openExternal(url);return}
-  if(r.booking_kind==="whatsapp"){const target=waWithText(url,text);addMsg("ai",t("book.whatsapp.msg",{name:esc(r.name)})+`<div class="bookingSummary">${esc(text)}</div>${linkFallback(target,t("book.openWhatsapp"))}`);openExternal(target);return}
+  if(kind==="tel"||String(url).startsWith("tel:")){
+    const tel="tel:"+telHref(String(url).startsWith("tel:")?url:r.phone);
+    addMsg("ai",t("book.byPhone",{name:esc(r.name)})+`<div class="bookingSummary">${esc(text)}</div>${linkFallback(tel,t("book.phone"))}`);
+    toast(t("book.calling",{name:r.name}));window.location.href=tel;return}
+  if(r.kind==="event"||kind==="tickets"){addMsg("ai",t("book.tickets.msg",{name:esc(r.name)})+linkFallback(url,t("book.ticketsReg")));openExternal(url);return}
+  if(kind==="whatsapp"){const target=waWithText(url,text);addMsg("ai",t("book.whatsapp.msg",{name:esc(r.name)})+`<div class="bookingSummary">${esc(text)}</div>${linkFallback(target,t("book.openWhatsapp"))}`);toast(t("book.waOpening"));openExternal(target,{app:true});return}
   // Дальше нужно скопировать текст заявки: окно открываем ДО await, чтобы не попасть под блокировку всплывающих окон.
   const win=deferredOpen();
   const copied=await copyText(text);
-  if(r.booking_kind==="telegram"){addMsg("ai",t("book.telegram.msg",{provider:esc(r.booking_provider||"Telegram"),name:esc(r.name)})+`${copied?t("book.copied"):t("book.paste")}<div class="bookingSummary">${esc(text)}</div>${linkFallback(url,t("book.openTelegram"))}`);win.go(url);return}
+  if(kind==="telegram"){addMsg("ai",t("book.telegram.msg",{provider:esc(r.booking_provider||"Telegram"),name:esc(r.name)})+`${copied?t("book.copied"):t("book.paste")}<div class="bookingSummary">${esc(text)}</div>${linkFallback(url,t("book.openTelegram"))}`);win.go(url);return}
   addMsg("ai",t("book.form.msg",{name:esc(r.name)})+`${copied?t("book.paramsCopied"):""}<div class="bookingSummary">${esc(text)}</div>${linkFallback(url,t("book.openPage"))}`);win.go(url);
 }
 
@@ -1457,18 +1913,23 @@ function planCard(p,{compact=false}={}){
   const stops=p.stops.map((s,i)=>{
     const pl=s.place;
     const alts=!compact?`<div class="planAlt">${(s.alternatives||[]).map(a=>`<button data-swap="${i}" data-alt="${esc(a.id)}">↺ ${esc(a.name)}</button>`).join("")}<button data-refind="${i}">${t("plan.refind")}</button></div>`:"";
-    const btns=pl&&!compact?`<div class="stopBtns"><button data-book="${esc(pl.id)}">${bookingLabel(pl)}</button><button data-detail="${esc(pl.id)}">${t("card.details")}</button></div>`:"";
+    const btns=pl&&!compact?`<div class="stopBtns"><button data-book="${esc(pl.id)}">${esc(bookingLabel(pl))}</button><button data-detail="${esc(pl.id)}">${t("card.details")}</button></div>`:"";
     return `<div class="planStop ${pl?"":"missing"} ${s.conflict?"conflict":""}"><div class="t">${esc(s.slot_start)}–${esc(s.slot_end)}<small>${s.duration_min} ${t("travel.min")}${s.conflict?t("plan.earlier"):""}</small></div><div>
       <h5>${pl?esc(pl.name):esc(s.query)+t("plan.notFound")}</h5>
       <p>${pl?[pl.category,pl.area,pl.metro?t("metro.prefix")+pl.metro:"",pl.price].filter(Boolean).map(esc).join(" · "):t("plan.tryOther")}</p>${alts}${btns}</div></div>${s.travel_to_next?`<div class="planTravel">${esc(travelLabel(s.travel_to_next))}</div>`:""}`;
   }).join("");
   const tt=p.total||{};
   return `<div class="planCard"><div class="planHead"><h4>${t("plan.title")}</h4><span>${esc(tt.start||"")}–${esc(tt.end||"")}${tt.travel_km?" · "+tt.travel_km+" "+t("travel.km"):""}${tt.price_from?t("plan.from",{n:Number(tt.price_from).toLocaleString(CITY_UI.locale)}):""}</span></div>${stops}
-  <div class="planBtns"><button class="primary" data-plan-add>${t("plan.add")}</button><button data-plan-route>${t("plan.route")}</button><button data-plan-share>${t("plan.share")}</button></div></div>`;
+  ${compact
+    // Во вкладке «План» кнопка «В мой план» бессмысленна — вечер уже здесь.
+    ?`<div class="planBtns two"><button class="primary" data-plan-route>${t("plan.route")}</button><button data-plan-share>${t("plan.share")}</button></div></div>`
+    :`<div class="planBtns"><button class="primary" data-plan-add>${t("plan.add")}</button><button data-plan-route>${t("plan.route")}</button><button data-plan-share>${t("plan.share")}</button></div></div>`}`;
 }
 function bindPlanCard(root){
   root=root||document;
-  root.querySelectorAll("[data-plan-add]").forEach(b=>b.onclick=()=>{if(!evening)return;for(const s of evening.stops)if(s.place&&!plan.some(x=>x.id===s.place.id)){plan.push({...s.place,time:s.slot_start+"–"+s.slot_end});learn("plan_add",s.place)}save();rememberEvening(evening);toast(t("plan.added"));});
+  // Точки вечера заменяют точки прошлого вечера, а не копятся рядом с ними:
+  // иначе список во вкладке «План» расходился с карточкой вечера.
+  root.querySelectorAll("[data-plan-add]").forEach(b=>b.onclick=()=>{if(!evening)return;plan=plan.filter(x=>!x.from_evening);for(const s of evening.stops)if(s.place&&!plan.some(x=>x.id===s.place.id)){plan.push({...s.place,time:s.slot_start+"–"+s.slot_end,from_evening:true});learn("plan_add",s.place)}save();rememberEvening(evening);toast(t("plan.added"));});
   root.querySelectorAll("[data-evening-open]").forEach(b=>b.onclick=()=>{const e=profileState.evenings.find(x=>x.id===b.dataset.eveningOpen);if(e&&e.plan){switchView("chat");showPlan(e.plan,t("plan.back",{title:e.title||""}))}});
   root.querySelectorAll("[data-evening-del]").forEach(b=>b.onclick=()=>forgetEvening(b.dataset.eveningDel));
   root.querySelectorAll("[data-plan-route]").forEach(b=>b.onclick=()=>{if(!evening)return;routeItems(evening.stops.filter(s=>s.place).map(s=>s.place))});
@@ -1593,10 +2054,12 @@ async function buildEveningScripted(stops){
   const ty=typing();
   const s=chatState.slots;
   const req={stops,party_size:s.party_size,max_price_rub:(s.max_price_rub&&s.max_price_rub<999999)?s.max_price_rub:undefined,target_date:s.date_word?dateStr(s.date_word):undefined,start_time:s.after_time||undefined,taste_weights:{...taste}};
-  let p=null;
-  try{const r=await apiFetch("/api/plan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(req)});if(r.ok){const d=await r.json();if(d.total&&d.total.found>0)p=d}}catch(_){}
-  if(!p)p=await FreePlanner.buildPlan(req,async(args)=>({results:fallbackSearch(args)}));
+  let p=null,failed=false;
+  try{const r=await apiFetch("/api/plan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(req)});if(r.ok){const d=await r.json();if(d.total&&d.total.found>0)p=d}else{await noteAccessDenied(r);failed=true}}catch(_){failed=true}
+  // Запасной план — от «сейчас», а не от 19:00: в 22:30 вечер с 19:00 уже прошёл.
+  if(!p)p=await FreePlanner.buildPlan({...req,now_min:Math.ceil(cityNowMin()/15)*15},async(args)=>({results:fallbackSearch(args)}));
   ty.remove();
+  if((!p.total||!p.total.found)&&failed&&!fallbackAllowed()){chatState.pendingPlan=stops;searchFailedMsg("plan.loadFail");return}
   if(!p.total||!p.total.found){addMsg("ai",t("msg.planFail"));return}
   showPlan(p,p.total.found<p.total.stops?t("msg.planPartial"):t("msg.planOk"));
 }
@@ -1605,16 +2068,54 @@ function selectPlace(id){
   chatState.selected=r;chatState.phase="selected";chatState.awaitingContinuation=false;
   if(!plan.some(x=>x.id===id))plan.push(r);save();learn("select",r);haptic();
   let body=t("sel.added",{name:esc(r.name)});
-  body+=`<div class="actionBox"><h4>${t("sel.next")}</h4><p>${r.kind==="event"?t("sel.event"):t("sel.venue")}</p><div class="actionBtns"><button data-book-one>${r.kind==="event"?t("book.ticketsReg"):bookingLabel(r)}</button><button data-route-one>${t("sel.route")}</button><button class="ghost" data-after>${t("sel.continue")}</button></div></div>`;
-  addMsg("ai",body);
+  // «Маршрут» — это карты, такси — отдельные кнопки (раньше «Маршрут» вызывал такси).
+  const taxi=taxiLinks(r).map(l=>`<button class="ghost" data-taxi="${esc(l.provider)}" data-id="${esc(r.id)}">${esc(l.label)}</button>`).join("");
+  body+=`<div class="actionBox"><h4>${t("sel.next")}</h4><p>${r.kind==="event"?t("sel.event"):t("sel.venue")}</p><div class="actionBtns"><button data-book-one>${esc(r.kind==="event"?t("book.ticketsReg"):bookingLabel(r))}</button><button data-route-one>${t("sel.route")}</button>${taxi}<button class="ghost" data-after>${t("sel.continue")}</button></div></div>`;
+  const msg=addMsg("ai",body);
   const bookBtn=[...$("#chat").querySelectorAll("[data-book-one]")].at(-1);if(bookBtn)bookBtn.onclick=()=>openBooking(r.id);
   const routeBtn=[...$("#chat").querySelectorAll("[data-route-one]")].at(-1);if(routeBtn)routeBtn.onclick=()=>routePlace(r.id);
+  msg.querySelectorAll("[data-taxi]").forEach(b=>b.onclick=()=>openTaxi(b.dataset.id,b.dataset.taxi));
   const after=[...$("#chat").querySelectorAll("[data-after]")].at(-1);if(after)after.onclick=beginContinuation;
 }
-function coords(r){const c=r.coords;if(!c)return null;if(Array.isArray(c)&&c.length>=2){const a=+c[0],b=+c[1];return a>50?{lat:a,lon:b}:{lat:b,lon:a}}const lat=+(c.lat??c.latitude),lon=+(c.lon??c.lng??c.longitude);return Number.isFinite(lat)&&Number.isFinite(lon)?{lat,lon}:null}
+// Координаты места; массив разбирает планировщик (порядок lat/lon — по центру города).
+function coords(r){
+  if(!r||!r.coords)return null;
+  if(window.FreePlanner&&FreePlanner.coordsPair)return FreePlanner.coordsPair(r.coords);
+  const c=r.coords,lat=+(c.lat??c.latitude),lon=+(c.lon??c.lng??c.longitude);
+  return Number.isFinite(lat)&&Number.isFinite(lon)?{lat,lon}:null;
+}
 function dest(r){const c=coords(r);return c?`${c.lat},${c.lon}`:`${CITY_UI.name}, ${r.area||r.name}`}
+/* Маршрут до места — в картах, а не такси.
+   Москва — Яндекс Карты, другие города — Google Maps с выбором способа по
+   расстоянию: до 1,5 км пешком, дальше на машине. Место из Google Places
+   передаём по place_id — карта откроет само заведение, а не точку. */
+function directionsUrl(r){
+  const c=coords(r),km=distanceKm(r),g=freshGeo();
+  const walk=km!==null&&km<1.5;
+  if(CITY_UI.id==="moscow"){
+    const to=c?`${c.lat},${c.lon}`:`${CITY_UI.name}, ${r.area||r.name}`;
+    return `https://yandex.ru/maps/?mode=routes&rtext=${g?encodeURIComponent(`${g.lat},${g.lon}`):""}~${encodeURIComponent(to)}&rtt=${walk?"pd":"auto"}`;
+  }
+  const u=new URL("https://www.google.com/maps/dir/");
+  u.searchParams.set("api","1");
+  const pid=r.google_place_id||r.place_id||(/^g(?:oogle)?[:_]/.test(String(r.id||""))?String(r.id).replace(/^g(?:oogle)?[:_]/,""):"");
+  if(pid&&/^[A-Za-z0-9_-]{10,}$/.test(pid)){u.searchParams.set("destination",[r.name,r.area].filter(Boolean).join(", "));u.searchParams.set("destination_place_id",pid)}
+  else u.searchParams.set("destination",c?`${c.lat},${c.lon}`:[r.name,r.area,CITY_UI.name].filter(Boolean).join(", "));
+  if(km!==null)u.searchParams.set("travelmode",walk?"walking":"driving");
+  return u.href;
+}
+function openDirections(r){if(r)openExternal(directionsUrl(r),{app:true})}
+// Такси нужного провайдера. Careem пункт назначения из ссылки не берёт —
+// кладём адрес в буфер, чтобы его осталось вставить.
+function openTaxi(id,provider){
+  const r=placeById(id);if(!r)return;
+  const links=taxiLinks(r),l=links.find(x=>x.provider===provider)||links[0];
+  if(!l){openDirections(r);return}
+  if(l.copy)copyText(l.copy).then(ok=>{if(ok)toast(t("taxi.copied",{app:l.label}))});
+  openExternal(l.url,{app:true});
+}
 async function routeItems(items){
-  const win=deferredOpen();
+  const win=deferredOpen({app:true});
   const g=await geo(false);
   // Без геопозиции строим маршрут от первой точки; Яндекс сам предложит выбрать старт.
   const pts=[g?`${g.lat},${g.lon}`:null,...items.map(dest)].filter(Boolean);
@@ -1624,7 +2125,7 @@ async function routeItems(items){
   win.go(u);
   if(!g)toast(t("route.noGeo"));
 }
-function routePlace(id){const r=placeById(id);if(r)orderTaxi(r)}
+function routePlace(id){const r=placeById(id);if(r)openDirections(r)}
 
 /**
  * Заказ такси к месту.
@@ -1640,10 +2141,10 @@ function orderTaxi(items){
   const to=list.find(x=>coords(x));
   // Координат нет — заказывать не к чему, но показать на карте по адресу можно.
   if(!to)return routeItems(list);
-  const fresh=geoCache&&Date.now()-geoCache.at<300000?geoCache:null;
-  const u=window.FreeTaxi?window.FreeTaxi.url(coords(to),fresh):"";
-  if(!u)return routeItems(list);
-  openExternal(u);
+  const l=taxiLinks(to)[0];
+  if(!l)return routeItems(list);
+  if(l.copy)copyText(l.copy).then(ok=>{if(ok)toast(t("taxi.copied",{app:l.label}))});
+  openExternal(l.url,{app:true});
   if(list.length>1)toast(t("taxi.first")+to.name);
 }
 function toggleSave(id){const r=placeById(id);if(!r)return;const i=saved.findIndex(x=>x.id===id);if(i>=0)saved.splice(i,1);else{saved.unshift(r);learn("save",r);haptic()}save();toast(i>=0?t("save.removed"):t("save.done"))}
@@ -1655,57 +2156,101 @@ function openDetailInner(id){
   const isEvent=r.kind==="event";
   const cover=ownUrl(r.cover_url||"");
   const img=r.image_url?mediaSrc(r):cover;
-  const hours=String(r.hours_label||r.time||"").split(/;\s*/).map(x=>x.trim()).filter(Boolean);
-  const status=isEvent?null:r.open_now===true?{cls:"open",text:r.closes_at?t("detail.openTill",{t:esc(r.closes_at)}):t("detail.openNow")}:r.open_now===false?{cls:"closed",text:t("detail.closed")}:null;
-  const km=Number(r.distance_km);const dist=Number.isFinite(km)?(km<1?t("detail.m",{n:Math.round(km*1000)}):t("detail.km",{n:km.toFixed(1)})):"";
-  const site=r.official_source&&!/^tel:/.test(r.official_source)?r.official_source:null;
+  const hours=hoursLines(r);
+  // Пометка сервера («Temporarily closed», «Opens 14 Oct») — вместо «Открыто».
+  const status=openStatus(r);
+  // Расстояние: неизвестное не показываем вовсе (раньше Number(null) давал «0 м»).
+  const dist=distanceText(distanceKm(r));
+  const site=officialSite(r);
+  const menu=safeUrl(r.menu_url);
   const host=(u)=>{try{return new URL(u).hostname.replace(/^www\./,"")}catch(_){return u}};
-  const tel=r.phone?String(r.phone).replace(/[^\d+]/g,""):"";
+  const tel=r.phone?telHref(r.phone):"";
   const why=[...new Set([...(r.reasons||[])])].slice(0,4);
+  const price=priceText(r),mich=michelinText(r),ev=eventWhen(r);
   const rows=[
+    isEvent&&(ev||r.date)?`<div class="dRow"><div class="dKey">${t("detail.when")}</div><div class="dVal">${esc(ev||r.date)}</div></div>`:"",
     hours.length?`<div class="dRow"><div class="dKey">${t("detail.hours")}</div><div class="dVal">${hours.map(h=>`<div>${esc(h)}</div>`).join("")}</div></div>`:"",
-    r.phone?`<div class="dRow"><div class="dKey">${t("detail.phone")}</div><div class="dVal"><a href="tel:${esc(tel)}">${esc(r.phone)}</a></div></div>`:"",
+    price?`<div class="dRow"><div class="dKey">${t("detail.price")}</div><div class="dVal">${esc(price)}</div></div>`:"",
+    menu?`<div class="dRow"><div class="dKey">${t("detail.menu")}</div><div class="dVal"><a href="${esc(menu)}" target="_blank" rel="noopener">${esc(host(menu))} ↗</a></div></div>`:"",
+    r.phone&&tel?`<div class="dRow"><div class="dKey">${t("detail.phone")}</div><div class="dVal"><a href="tel:${esc(tel)}">${esc(r.phone)}</a></div></div>`:"",
     site?`<div class="dRow"><div class="dKey">${t("detail.site")}</div><div class="dVal"><a href="${esc(site)}" target="_blank" rel="noopener">${esc(host(site))} ↗</a></div></div>`:"",
-    r.price?`<div class="dRow"><div class="dKey">${t("detail.price")}</div><div class="dVal">${esc(r.price)}</div></div>`:"",
     r.rating?`<div class="dRow"><div class="dKey">${t("detail.rating")}</div><div class="dVal">★ ${esc(String(r.rating))}${r.rating_count?` · ${esc(String(r.rating_count))} ${LANG==="en"?reviewsWord(Number(r.rating_count)):t("detail.reviews")}`:""}</div></div>`:"",
-    isEvent&&r.date?`<div class="dRow"><div class="dKey">${t("detail.when")}</div><div class="dVal">${esc(r.date)}${r.time?` · ${esc(r.time)}`:""}</div></div>`:"",
     r.point_source||r.source?`<div class="dRow"><div class="dKey">${t("detail.source")}</div><div class="dVal"><a href="${esc(r.point_source||r.source)}" target="_blank" rel="noopener">${esc(r.provider||t("detail.sourcePage"))} ↗</a></div></div>`:""
   ].join("");
   const credit=r.photo&&r.photo.credit&&r.photo.credit.text?t("detail.photo")+esc(r.photo.credit.text):r.photo&&r.photo.origin==="generated"?t("detail.cover"):"";
+  // Действия: бронь на всю ширину; маршрут и такси (в Дубае — Uber и Careem
+  // отдельно); план, сохранение и «Поделиться».
+  const taxi=taxiLinks(r),kind=bookingKind(r);
+  const isSaved=saved.some(x=>x.id===r.id);
   $("#detail").innerHTML=`<div class="sheet v2">
     <div class="dHero"><img src="${esc(img)}" alt="" referrerpolicy="no-referrer" data-cover="${esc(cover)}"${r.cover_credit&&r.cover_credit.text?` data-cover-credit="${esc(r.cover_credit.text)}"`:""} onerror="noImg(this)"><button class="close" aria-label="${t("close")}">×</button>
-      ${status?`<div class="dStatus ${status.cls}">${status.text}</div>`:""}</div>
+      ${status?`<div class="dStatus ${status.cls}">${esc(status.text)}</div>`:""}</div>
     <div class="dBody">
-      <div class="dChips">${r.category?`<span class="dChip">${esc(r.category)}</span>`:""}${isEvent?`<span class="dChip">${t("detail.event")}</span>`:""}${dist?`<span class="dChip">${t("detail.away",{d:esc(dist)})}</span>`:""}</div>
+      <div class="dChips">${mich?`<span class="dChip michelin">${esc(mich)}</span>`:""}${r.category?`<span class="dChip">${esc(r.category)}</span>`:""}${isEvent?`<span class="dChip">${t("detail.event")}</span>`:""}${dist?`<span class="dChip">${t("detail.away",{d:esc(dist)})}</span>`:""}</div>
       <h2>${esc(r.name)}</h2>
-      ${r.area?`<p class="dAddr">${esc(r.area)}${r.metro?` · ${t("metro.prefix")}${esc(r.metro)}`:""}</p>`:""}
+      ${r.area||r.venue?`<p class="dAddr">${esc(isEvent&&r.venue&&r.venue!==r.area?[r.venue,r.area].filter(Boolean).join(", "):r.area)}${r.metro?` · ${t("metro.prefix")}${esc(r.metro)}`:""}</p>`:""}
       ${why.length?`<div class="dWhy">${why.map(w=>`<span>${esc(w)}</span>`).join("")}</div>`:""}
       <div class="dRows">${rows}</div>
       ${r.desc||r.description?`<p class="dDesc">${esc(r.desc||r.description)}</p>`:""}
       <p class="dMeta">${t("detail.data")}${esc(r.provider||t("detail.open"))}${credit?` · <span class="dCredit">${credit}</span>`:""}</p>
     </div>
-    <div class="dActions"><button class="primary" data-book-detail>${bookingLabel(r)}</button><button data-select>${t("card.plan")}</button><button data-r>${t("card.taxi")}</button><button data-save-detail>${saved.some(x=>x.id===r.id)?t("card.remove"):t("card.save")}</button></div>
+    <div class="dActions"><button class="primary" data-book-detail>${esc(bookingLabel(r))}</button>${kind==="none"?"":`<button data-dir-detail>${t("card.directions")}</button>`}${taxi.map(l=>`<button class="taxi" data-taxi="${esc(l.provider)}" data-id="${esc(r.id)}">${esc(l.label)}</button>`).join("")}<button data-select>${t("card.plan")}</button><button data-save-detail>${isSaved?t("card.remove"):t("card.save")}</button><button data-share-detail>${t("card.share")}</button></div>
   </div>`;
   $("#detail").classList.add("on");$("#detail .close").onclick=()=>$("#detail").classList.remove("on");
   $("#detail").onclick=(e)=>{if(e.target===$("#detail"))$("#detail").classList.remove("on")};
   $("#detail [data-book-detail]").onclick=()=>openBooking(r.id);
   $("#detail [data-select]").onclick=()=>{$("#detail").classList.remove("on");selectPlace(r.id)};
-  $("#detail [data-r]").onclick=()=>routePlace(r.id);
+  const dir=$("#detail [data-dir-detail]");if(dir)dir.onclick=()=>openDirections(r);
+  $$("#detail [data-taxi]").forEach(b=>b.onclick=()=>openTaxi(r.id,b.dataset.taxi));
+  $("#detail [data-share-detail]").onclick=()=>sharePlace(r);
   $("#detail [data-save-detail]").onclick=()=>{toggleSave(r.id);$("#detail").classList.remove("on")};
 }
-function renderSaved(){const box=$("#savedList");if(!saved.length){box.innerHTML=`<div class="row"><div><h3>${t("saved.empty")}</h3><p>${t("saved.emptySub")}</p></div></div>`;return}box.innerHTML=saved.map(r=>`<div class="row"><div><h3>${esc(r.name)}</h3><p>${esc(r.area||"")} · ${esc(r.price||"")}</p></div><button data-s="${esc(r.id)}">${t("open")}</button></div>`).join("");$$("[data-s]").forEach(b=>b.onclick=()=>openDetail(b.dataset.s))}
+/* «Поделиться» местом: название, адрес и ссылка на карту. Системное окно,
+   в Telegram — его выбор чата, иначе — копируем в буфер. */
+function placeMapUrl(r){
+  const c=coords(r);
+  if(CITY_UI.id==="moscow")return c?`https://yandex.ru/maps/?pt=${c.lon},${c.lat}&z=17&l=map`:`https://yandex.ru/maps/?text=${encodeURIComponent([r.name,r.area,CITY_UI.name].filter(Boolean).join(", "))}`;
+  const u=new URL("https://www.google.com/maps/search/");u.searchParams.set("api","1");
+  u.searchParams.set("query",c?`${c.lat},${c.lon}`:[r.name,r.area,CITY_UI.name].filter(Boolean).join(", "));
+  if(r.google_place_id)u.searchParams.set("query_place_id",r.google_place_id);
+  return u.href;
+}
+async function sharePlace(r){
+  const url=officialSite(r)&&r.kind==="event"?officialSite(r):placeMapUrl(r);
+  const text=[r.name,[r.area,eventWhen(r)].filter(Boolean).join(" · ")].filter(Boolean).join("\n");
+  try{
+    if(NATIVE&&NATIVE.Share){await NATIVE.Share.share({title:r.name,text,url,dialogTitle:t("card.share")});return}
+    if(TG){openExternal("https://t.me/share/url?url="+encodeURIComponent(url)+"&text="+encodeURIComponent(text));return}
+    if(navigator.share){await navigator.share({title:r.name,text,url});return}
+  }catch(e){const msg=String((e&&(e.message||e.errorMessage))||"");if((e&&e.name==="AbortError")||/cancel|отмен|dismiss/i.test(msg))return}
+  if(await copyText(text+"\n"+url))toast(t("share.placeCopied"));else openExternal(url);
+}
+// Строка «адрес · цена» без висячего « ·», когда цены нет.
+function renderSaved(){const box=$("#savedList");if(!saved.length){box.innerHTML=`<div class="row"><div><h3>${t("saved.empty")}</h3><p>${t("saved.emptySub")}</p></div></div>`;return}box.innerHTML=saved.map(r=>`<div class="row"><div><h3>${esc(r.name)}</h3><p>${esc([r.area,priceText(r)].filter(Boolean).join(" · "))}</p></div><button data-s="${esc(r.id)}">${t("open")}</button></div>`).join("");$$("[data-s]").forEach(b=>b.onclick=()=>openDetail(b.dataset.s))}
+// Подпись вечера для сравнения: одинаковые вечера в «Прошлых» показывались дважды.
+function eveningKey(p){return JSON.stringify(((p&&p.stops)||[]).map(s=>s.place?.id||s.query))}
+/* Вкладка «План».
+   Сверху — текущий вечер (без «В мой план»: мы и так в плане). Ниже —
+   отдельно выбранные точки, но без точек этого вечера: раньше список
+   повторял карточку вечера, а после замены точки расходился с ней. Прошлые
+   вечера — без текущего и без повторов. */
 function renderPlan(){
   const box=$("#planList");
   const top=evening&&evening.stops?.length?planCard(evening,{compact:true})+'<div style="height:10px"></div>':"";
-  const list=plan.length
-    ?plan.map((r,i)=>`<div class="row"><div><h3>${i+1}. ${esc(r.name)}</h3><p>${esc(r.time||t("bySchedule"))} · ${esc(r.area||"")}</p></div><button data-p="${esc(r.id)}">${t("open")}</button></div>`).join("")+`<div class="row"><div><h3>${t("plan.routeAll")}</h3><p>${t("plan.routeAllSub")}</p></div><button id="planRoute">${t("plan.route")}</button></div>`
-    :`<div class="row"><div><h3>${t("plan.empty")}</h3><p>${t("plan.emptySub")}</p></div></div>`;
-  const past=profileState.evenings.filter(e=>e.plan&&!(evening&&JSON.stringify(e.plan.stops.map(s=>s.place?.id))===JSON.stringify(evening.stops.map(s=>s.place?.id)))).slice(0,6);
+  const inEvening=new Set(evening&&evening.stops?evening.stops.map(s=>s.place&&s.place.id).filter(Boolean):[]);
+  const picks=plan.filter(r=>!r.from_evening&&!inEvening.has(r.id));
+  const list=picks.length
+    ?(top?`<div class="panelHeader" style="padding-top:8px"><div class="eyebrow">${t("plan.picks")}</div></div>`:"")
+      +picks.map((r,i)=>`<div class="row"><div><h3>${i+1}. ${esc(r.name)}</h3><p>${esc([r.time&&!isRawHours(r.time)?r.time:t("bySchedule"),r.area].filter(Boolean).join(" · "))}</p></div><button data-p="${esc(r.id)}">${t("open")}</button></div>`).join("")
+      +(picks.length>1?`<div class="row"><div><h3>${t("plan.routeAll")}</h3><p>${t("plan.routeAllSub")}</p></div><button id="planRoute">${t("plan.route")}</button></div>`:"")
+    :(top?"":`<div class="row"><div><h3>${t("plan.empty")}</h3><p>${t("plan.emptySub")}</p></div></div>`);
+  const seen=new Set(evening?[eveningKey(evening)]:[]);
+  const past=profileState.evenings.filter(e=>{if(!e.plan)return false;const k=eveningKey(e.plan);if(seen.has(k))return false;seen.add(k);return true}).slice(0,6);
   const history=past.length?`<div class="panelHeader" style="margin-top:18px"><div class="eyebrow">${t("plan.past")}</div></div>`+past.map(e=>`<div class="row"><div><h3>${esc(e.title||t("evening"))}</h3><p>${esc((e.plan.stops||[]).map(s=>s.place?.name||s.query).join(" → "))}${e.date?" · "+esc(e.date):""}</p></div><div style="display:flex;gap:6px"><button data-evening-open="${esc(e.id)}">${t("open")}</button><button data-evening-del="${esc(e.id)}" title="${t("delete")}">✕</button></div></div>`).join(""):"";
   box.innerHTML=top+list+history;
   bindPlanCard(box);
   $$("[data-p]").forEach(b=>b.onclick=()=>openDetail(b.dataset.p));
-  const pr=$("#planRoute");if(pr)pr.onclick=()=>routeItems(plan);
+  const pr=$("#planRoute");if(pr)pr.onclick=()=>routeItems(picks);
 }
 function renderTaste(){const box=$("#tasteGrid");box.innerHTML=DIMS.map(k=>{const v=Math.max(0,Math.min(100,50+taste[k]*10));return `<div class="taste"><div class="tasteHead"><span>${t("taste."+k)}</span><b>${Math.round(v)}</b></div><div class="bar"><i style="width:${v}%"></i></div></div>`}).join("")}
 function switchView(v){$$(".panel").forEach(x=>x.classList.remove("on"));$$(".nav").forEach(x=>x.classList.toggle("on",x.dataset.view===v));$("#view-"+v).classList.add("on");if(v==="saved")renderSaved();if(v==="plan")renderPlan();if(v==="profile")renderTaste()}
@@ -1803,7 +2348,7 @@ async function detectCapabilities(){
     chatState.serverOk=Boolean(d&&d.ok);
     // Язык и город — из конфигурации сервера. Если язык сменился, а на экране
     // только стартовое приветствие, перерисовываем его на новом языке.
-    if(d.city&&setCity(d.city)&&!chatLoaded){const box=$("#chat");if(box&&chatState.history.length<=1){box.innerHTML="";chatState.history.length=0;startConversation()}}
+    if(d.city&&setCity({...(BOOT_CITY||{}),...d.city})&&!chatLoaded){const box=$("#chat");if(box&&chatState.history.length<=1){box.innerHTML="";chatState.history.length=0;startConversation()}}
     if(chatState.serverOk)await loadProfile();
     chatState.aiReady=Boolean(d.text_ai_ready);
     if(d.taxi&&window.FreeTaxi)window.FreeTaxi.configure(d.taxi);
@@ -1816,9 +2361,10 @@ async function detectCapabilities(){
       chatState.agent=d.agent;
     }
     const vb=$("#voiceBtn");
-    if(vb)vb.title=VOICE_SCREEN?t("voice.btn.talk"):t("voice.btn.input");
-    const engine=d.ai_provider==="yandex"?`${d.agent||t("status.agent")} · YandexGPT`:`Neural chat · ${d.text_ai_model||"Claude"}`;
-    $("#aiStatus").textContent=chatState.aiReady?engine:(demoSample?t("status.demo"):t("status.fallback"));
+    if(vb){vb.title=VOICE_SCREEN?t("voice.btn.talk"):t("voice.btn.input");vb.setAttribute("aria-label",vb.title)}
+    // В строке статуса — имя консьержа и город, а не «Neural chat · claude-opus-5»:
+    // название модели человеку ничего не говорит.
+    $("#aiStatus").textContent=chatState.aiReady?readyStatus():(demoSample?t("status.demo"):t("status.fallback"));
     if(!chatState.aiReady&&demoSample)$("#hint").textContent=t("hint.demo");
     $("#hint").textContent=chatState.aiReady
       ?t("hint.neural")
@@ -1888,6 +2434,9 @@ function initVoiceScreen(){
   FreeVoice.init({
     apiFetch,t,
     context:()=>neuralContextSnapshot(),
+    // Один разговор на голос и переписку: переключился — агент помнит, о чём речь.
+    getConversation:()=>chatState.aiResponseId||null,
+    setConversation:(id)=>{if(id&&id!==chatState.aiResponseId){chatState.aiResponseId=id;scheduleSaveChat()}},
     // Карточки рисуем тем же кодом, что и в переписке: один вид места на всё приложение.
     renderCards:(rs,box)=>{
       if(!box)return;
@@ -1921,7 +2470,8 @@ function initVoiceScreen(){
   // Переход в переписку остался за крестиком сверху — он делает ровно это.
   on("#vHands",()=>{FreeVoice.setHands(!FreeVoice.hands);haptic("light");
     toast(FreeVoice.hands?t("voice.handsOnToast"):t("voice.handsOffToast"))});
-  on("#vRoute",()=>{if(lastVoiceItems.length)orderTaxi(lastVoiceItems[0]);else toast(t("voice.taxiFirst"))});
+  // Кнопка сверху — страница места: там и «Маршрут», и все такси города.
+  on("#vRoute",()=>{if(lastVoiceItems.length)openDetail(lastVoiceItems[0].id);else toast(t("voice.taxiFirst"))});
   const nameEl=$("#vName");
   document.addEventListener("keydown",e=>{if(e.key==="Escape"&&FreeVoice.isOpen)FreeVoice.close()});
   return nameEl;
@@ -1939,7 +2489,9 @@ function neuralContextSnapshot(){
   return c;
 }
 
-initTelegram();renderSaved();renderPlan();renderTaste();detectCapabilities();startConversation();initDemoSample();initVoiceScreen();
+// Такси города известны из страницы ещё до /api/health: кнопки на карточках сразу верные.
+if(BOOT_CITY&&Array.isArray(BOOT_CITY.taxi)&&window.FreeTaxi)window.FreeTaxi.configure({providers:BOOT_CITY.taxi});
+watchSystemTheme();initTelegram();renderSaved();renderPlan();renderTaste();detectCapabilities();startConversation();initDemoSample();initVoiceScreen();warmGeo();
 </script>
 </body>
 </html>

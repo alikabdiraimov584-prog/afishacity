@@ -26,7 +26,11 @@ const state={
   // Разговор без рук: после ответа микрофон включается сам. Выключается по
   // кнопке, по закрытию экрана или после двух подряд неудачных распознаваний —
   // иначе в шумном месте экран будет бесконечно слушать пустоту.
-  hands:true,silentRuns:0,resumeTimer:0
+  hands:true,silentRuns:0,resumeTimer:0,
+  // Идёт ход: человек договорил, ответа ещё нет. Короткий отклик («секунду»)
+  // звучит внутри хода, и после него экран должен вернуться в «думаю», а не
+  // в ожидание — иначе разговор без рук начал бы слушать посреди ответа.
+  inTurn:false
 };
 const RESUME_MS=420;          // пауза перед новым слушанием: хвост ответа не должен попасть в запись
 const SILENT_LIMIT=2;
@@ -136,8 +140,14 @@ const $=(s)=>document.querySelector(s);
 const RU={"voice.idle":"Нажмите и говорите","voice.listening":"Слушаю…","voice.thinking":"Думаю…","voice.tooShort":"Слишком коротко — попробуйте ещё раз",
   "voice.sttFail":"Не удалось распознать","voice.notHeard":"Не расслышал. Скажите ещё раз","voice.failed":"Не получилось: ","voice.agentDown":"Консьерж недоступен",
   "voice.searching":"Ищу","voice.ready":"Нажмите, когда будете готовы","voice.noTts":"нет синтеза","voice.micNeeded":"Нужен доступ к микрофону","voice.micDown":"Микрофон недоступен: ",
-  "voice.hands.title.on":"Разговор идёт сам — нажмите, чтобы отвечать по кнопке","voice.hands.title.off":"Включить разговор без рук","voice.quoteL":"«","voice.quoteR":"»"};
+  "voice.hands.title.on":"Разговор идёт сам — нажмите, чтобы отвечать по кнопке","voice.hands.title.off":"Включить разговор без рук","voice.quoteL":"«","voice.quoteR":"»",
+  "voice.fallbackFound":"Вот что нашёл.","voice.retryLater":"Сейчас не могу ответить — попробуйте ещё раз через минуту."};
+const RU_ACK=["Секунду, смотрю…","Сейчас посмотрю…","Так, ищу…"];
 function T(key){const f=state.api&&state.api.t;const v=typeof f==="function"?f(key):undefined;return typeof v==="string"&&v!==key?v:(RU[key]||key)}
+// Один разговор с перепиской: идентификатор берём у страницы и отдаём ей.
+// Раньше у голоса была своя нить, и, переключившись, человек начинал заново.
+function conv(){const g=state.api&&state.api.getConversation;return typeof g==="function"?(g()||null):state.conversation}
+function setConv(id){if(!id)return;state.conversation=id;const s=state.api&&state.api.setConversation;if(typeof s==="function")s(id)}
 function setPhase(p,hint){
   state.phase=p;
   const root=$("#voiceScreen");
@@ -201,17 +211,22 @@ async function stopAndSend(){
   if(!chunks.length){setPhase("idle");state.silentRuns++;maybeResume();return}
   const pcm=toPcm16(chunks,rate);
   if(pcm.length<TARGET_RATE*0.25){setPhase("idle",T("voice.tooShort"));state.silentRuns++;maybeResume();return}
+  // Человек договорил — сразу короткий отклик, пока идут распознавание и поиск:
+  // несколько секунд тишины в разговоре вслух звучат как «сломалось».
+  state.inTurn=true;
+  playAck();
   try{
     const r=await state.api.apiFetch(`/api/voice/stt?rate=${TARGET_RATE}`,{
       method:"POST",headers:{"Content-Type":"application/octet-stream"},body:pcm.buffer});
     const d=await r.json().catch(()=>({}));
     if(!r.ok)throw new Error(d.message||T("voice.sttFail"));
     const text=String(d.text||"").trim();
-    if(!text){setPhase("idle",T("voice.notHeard"));state.silentRuns++;maybeResume();return}
+    if(!text){state.inTurn=false;resetSpeech();setPhase("idle",T("voice.notHeard"));state.silentRuns++;maybeResume();return}
     state.silentRuns=0;                  // услышали — счётчик пустых попыток обнуляем
     showHeard(text);showSaid("");
-    await ask(text);
+    await ask(text,{keepAck:true});
   }catch(e){
+    state.inTurn=false;resetSpeech();
     setPhase("error",String(e.message||e));
     showSaid(T("voice.failed")+(e.message||e));
     // После ошибки сам не продолжаем: непрерывный разговор превратился бы
@@ -230,64 +245,100 @@ async function stopAndSend(){
  * а в разговоре вслух тишина читается как «сломалось». Здесь же первая фраза
  * произносится, пока поиск ещё идёт.
  */
-async function ask(text){
+/* Сбой консьержа — не тупик.
+ * Поток оборвался до ответа — один повтор обычным запросом. Не вышло и он —
+ * ищем места по сказанной фразе напрямую (/api/recommend) и показываем
+ * карточки. Совсем ничего — короткое человеческое «попробуйте через минуту»,
+ * а не текст исключения. Если часть ответа уже прозвучала, повторять её не
+ * надо: ход заканчиваем тем, что успели сказать. */
+async function ask(text,opts={}){
   setPhase("thinking");
-  resetSpeech();
+  if(!opts.keepAck)resetSpeech();        // отклик «секунду» уже в очереди — его не сбрасываем
+  state.inTurn=true;
   try{
-    const r=await state.api.apiFetch("/api/dialogue/stream",{
-      method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({message:text,voice:true,
-        previous_response_id:state.conversation,context:state.api.context?state.api.context():{}})});
-    if(!r.ok){
-      const d=await r.json().catch(()=>({}));
-      throw new Error(d.message||T("voice.agentDown"));
+    try{await askStream(text)}
+    catch(e){
+      if(e&&e.status&&e.status<500&&e.status!==408&&e.status!==429)throw e;
+      try{await askPlain(text)}
+      catch(e2){if(!(await searchInstead(text)))throw e2}
     }
-    if(!r.body||!r.body.getReader)return askPlain(text);   // старый браузер без потоков
-    let failed=null;
-    await readEvents(r.body,(type,data)=>{
-      if(type==="delta"&&data.text){
-        // Промежуточную реплику показываем, но не произносим: следом придёт
-        // ответ по существу, и озвучивать обе — это два голоса подряд об
-        // одном и том же.
-        showSaid(data.text);
-        if(!data.interim)enqueueSpeech(data.text);
-        else setPhase("thinking",T("voice.searching"));
-      }else if(type==="status"&&data&&data.text){
-        if(state.phase==="thinking")setPhase("thinking",data.text+"…");
-      }else if(type==="done"){
-        state.conversation=data.response_id||state.conversation;
-        renderOut(data);
-      }else if(type==="error"){
-        failed=new Error(data.message||T("voice.agentDown"));
-      }
-    });
-    if(failed)throw failed;
     await speechIdle();
     settle();
   }catch(e){
+    console.warn("voice:",e&&e.message);
+    state.inTurn=false;
     resetSpeech();
-    showSaid(T("voice.failed")+(e.message||e));
+    showSaid(T("voice.retryLater"));
     setPhase("error");
     state.hands=false;updateHandsButton();
     setTimeout(()=>{if(state.phase==="error")setPhase("idle")},2600);
   }
 }
 
-// Запасной путь: обычный запрос, если потоки недоступны.
+function dialogueBody(text){
+  return JSON.stringify({message:text,voice:true,previous_response_id:conv(),context:state.api.context?state.api.context():{}});
+}
+async function askStream(text){
+  const r=await state.api.apiFetch("/api/dialogue/stream",{
+    method:"POST",headers:{"Content-Type":"application/json"},body:dialogueBody(text)});
+  if(!r.ok){
+    const d=await r.json().catch(()=>({}));
+    const e=new Error(d.message||T("voice.agentDown"));e.status=r.status;throw e;
+  }
+  if(!r.body||!r.body.getReader)return askPlain(text);   // старый браузер без потоков
+  let failed=null,spoke=false;
+  try{
+    await readEvents(r.body,(type,data)=>{
+      if(type==="delta"&&data.text){
+        // Промежуточную реплику показываем, но не произносим: следом придёт
+        // ответ по существу, и озвучивать обе — это два голоса подряд об
+        // одном и том же.
+        showSaid(data.text);
+        if(!data.interim){enqueueSpeech(data.text);spoke=true}
+        else setPhase("thinking",T("voice.searching"));
+      }else if(type==="status"&&data&&data.text){
+        if(state.phase==="thinking")setPhase("thinking",data.text+"…");
+      }else if(type==="done"){
+        setConv(data.response_id);
+        renderOut(data);
+      }else if(type==="error"){
+        failed=new Error(data.message||T("voice.agentDown"));
+      }
+    });
+  }catch(e){failed=e}
+  if(failed&&!spoke)throw failed;
+}
+
+// Обычный запрос: если потоки недоступны или поток оборвался.
 async function askPlain(text){
   const r=await state.api.apiFetch("/api/dialogue",{
-    method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({message:text,voice:true,
-      previous_response_id:state.conversation,context:state.api.context?state.api.context():{}})});
+    method:"POST",headers:{"Content-Type":"application/json"},body:dialogueBody(text)});
   const d=await r.json().catch(()=>({}));
-  if(!r.ok)throw new Error(d.message||T("voice.agentDown"));
-  state.conversation=d.response_id||state.conversation;
+  if(!r.ok){const e=new Error(d.message||T("voice.agentDown"));e.status=r.status;throw e}
+  setConv(d.response_id);
   const said=String(d.reply||"").trim();
   showSaid(said);
   renderOut(d);
   enqueueSpeech(said);
-  await speechIdle();
-  settle();
+}
+
+// Последний запасной путь: прямой поиск по сказанной фразе, без консьержа.
+async function searchInstead(text){
+  try{
+    const ctx=state.api.context?state.api.context():{};
+    const body={query:text,taste_weights:ctx.taste_weights||{}};
+    if(ctx.user_location)body.user_location=ctx.user_location;
+    const r=await state.api.apiFetch("/api/recommend",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    if(!r.ok)return false;
+    const d=await r.json().catch(()=>({}));
+    const rs=Array.isArray(d.results)?d.results.slice(0,3):[];
+    if(!rs.length)return false;
+    const said=T("voice.fallbackFound");
+    showSaid(said);
+    renderOut({results:rs});
+    enqueueSpeech(said);
+    return true;
+  }catch(_){return false}
 }
 
 /**
@@ -301,6 +352,7 @@ async function askPlain(text){
  * независимо от того, что он прислал.
  */
 function settle(){
+  state.inTurn=false;
   if(state.phase==="thinking"||state.phase==="speaking")setPhase("idle");
   maybeResume();
 }
@@ -352,13 +404,50 @@ function resetSpeech(){
   stopSpeaking();
 }
 
+// Первое предложение длинной реплики синтезируем отдельно: короткий кусок
+// готов быстрее, и голос начинается раньше, пока досинтезируется остальное.
+function speechParts(text){
+  if(text.length<90)return [text];
+  const m=text.match(/^([\s\S]{12,160}?[.!?…])\s+([\s\S]+)$/);
+  return m?[m[1],m[2]]:[text];
+}
 function enqueueSpeech(text){
   const t=String(text||"").trim();
   if(!t)return;
   const mine=speech.token;
-  const audio=ttsBlob(t);
-  audio.catch(()=>{});                 // отказ разберём в очереди, здесь только гасим
-  speech.queue.push({mine,audio});
+  for(const part of speechParts(t)){
+    const audio=ttsBlob(part);
+    audio.catch(()=>{});               // отказ разберём в очереди, здесь только гасим
+    speech.queue.push({mine,audio});
+  }
+  if(!speech.draining)drainSpeech();
+}
+
+/* Короткий отклик «секунду, смотрю…».
+ * Синтезируется один раз, при открытии экрана, и хранится готовым звуком:
+ * звучать он должен сразу, а не после ещё одного похода в сеть. Нет синтеза —
+ * нет и отклика, разговор идёт как раньше. */
+const ack={blobs:[],loading:false,next:0,failedAt:0};
+function ackPhrases(){
+  const f=state.api&&state.api.t;
+  const v=typeof f==="function"?f("voice.ack"):null;
+  return Array.isArray(v)&&v.length?v:RU_ACK;
+}
+function warmAck(){
+  if(ack.loading||ack.blobs.length||!state.api||!state.api.apiFetch)return;
+  if(ack.failedAt&&Date.now()-ack.failedAt<60000)return;
+  ack.loading=true;
+  (async()=>{
+    for(const p of ackPhrases().slice(0,3)){
+      try{const b=await ttsBlob(p);if(b)ack.blobs.push(b)}catch(_){ack.failedAt=Date.now();break}
+    }
+    ack.loading=false;
+  })();
+}
+function playAck(){
+  if(!ack.blobs.length)return;
+  const blob=ack.blobs[ack.next++%ack.blobs.length];
+  speech.queue.push({mine:speech.token,audio:Promise.resolve(blob)});
   if(!speech.draining)drainSpeech();
 }
 
@@ -384,8 +473,9 @@ async function drainSpeech(){
     }
   }finally{
     speech.draining=false;
-    if(state.phase==="speaking")setPhase("idle");
-    maybeResume();
+    // Внутри хода (прозвучал только отклик) — обратно в «думаю», слушать рано.
+    if(state.phase==="speaking")setPhase(state.inTurn?"thinking":"idle");
+    if(!state.inTurn)maybeResume();
   }
 }
 
@@ -523,11 +613,12 @@ function open(){
   state.silentRuns=0;
   updateHandsButton();
   if(!state.raf)state.raf=requestAnimationFrame(animate);
+  warmAck();                               // отклик синтезируется, пока человек говорит первую фразу
   listen();                                // окно открылось — сразу слушаем
 }
 
 function close(){
-  state.open=false;
+  state.open=false;state.inTurn=false;
   clearTimeout(state.resumeTimer);state.resumeTimer=0;
   resetSpeech();
   // Звуковой контекст держит устройство вывода: закрытый экран не должен

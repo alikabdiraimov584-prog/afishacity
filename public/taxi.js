@@ -2,24 +2,33 @@
  *
  * Маршрут передаётся прямо в ссылке: если приложение на телефоне стоит, она
  * открывается как deeplink с уже заполненными точками подачи и назначения,
- * если нет — уводит на установку, а маршрут подхватится после. Отдельного
- * серверного вызова тут не нужно, и это к лучшему: заказ уходит в приложение,
- * где у человека уже привязана карта.
+ * если нет — уводит на установку или на сайт сервиса. Отдельного серверного
+ * вызова тут не нужно, и это к лучшему: заказ уходит в приложение, где у
+ * человека уже привязана карта.
  *
- * Какие кнопки показывать, решает сервер (/api/health → taxi.providers, из
- * конфигурации города): Москва — Яндекс Go, Дубай — Uber и Careem.
+ * Какие кнопки показывать, решает сервер (FREE_CITY в странице и /api/health →
+ * taxi.providers, из конфигурации города): Москва — Яндекс Go, Дубай — Uber и
+ * Careem. Клиент показывает КАЖДОГО провайдера отдельной кнопкой.
  *
- * window.FreeTaxi.url({lat,lon}, {lat,lon}|null) → ссылка первого провайдера города.
- * window.FreeTaxi.links(to, from, name) → [{provider,label,url}] в порядке города.
+ * window.FreeTaxi.links(to, from, {name,address}) → [{provider,label,url,copy?}]
+ *   в порядке города; copy — текст, который стоит положить в буфер (адрес для
+ *   Careem: точку назначения в его ссылку передать нельзя).
+ * window.FreeTaxi.url(to, from, name) → ссылка первого провайдера (как раньше).
  */
 (function(root){
 "use strict";
 
 const HOST="https://3.redirect.appmetrica.yandex.com/route";
 const UBER_HOST="https://m.uber.com/ul/";
-// Официального формата deeplink с точками у Careem нет в открытой документации;
-// открываем само приложение (схема careem://), а адрес человек укажет сам.
-const CAREEM_HOST="careem://ride";
+/* Careem. Своей схемы с точками в открытой документации нет, а голая
+ * careem://ride не открывается из Telegram (openLink пускает только https) и
+ * ничего не делает без установленного приложения. Зато у careem.com есть
+ * универсальная ссылка: в apple-app-site-association путь «/??-??/ride»
+ * («Lands on Ride Booking page»), а assetlinks.json подтверждает её для
+ * Android-приложения com.careem.acma. Она открывает экран заказа поездки в
+ * приложении, а без приложения — страницу Careem Ride на сайте. Пункт
+ * назначения она не принимает — адрес кладём в буфер (поле copy). */
+const CAREEM_URL="https://www.careem.com/en-AE/ride";
 // Идентификатор редиректа Яндекс Go: по нему ссылка знает, какое приложение
 // открывать и куда вести, если его нет. Партнёрский ref подставляется из
 // настроек сервера — с ним заказы считаются как наши.
@@ -63,32 +72,42 @@ function yandexUrl(end,start){
 }
 // Универсальная ссылка Uber (developer.uber.com → Deep links): точка подачи —
 // положение телефона, назначение — координаты и подпись места.
-function uberUrl(end,start,name){
+// Подпись точки — название места, адрес — для экрана подтверждения заказа.
+function uberUrl(end,start,place){
   const q=new URLSearchParams();
   q.set("action","setPickup");
   if(cfg.uber_client_id)q.set("client_id",cfg.uber_client_id);
   if(start){q.set("pickup[latitude]",start.lat.toFixed(6));q.set("pickup[longitude]",start.lon.toFixed(6))}
   else q.set("pickup","my_location");
   q.set("dropoff[latitude]",end.lat.toFixed(6));q.set("dropoff[longitude]",end.lon.toFixed(6));
-  const nick=String(name||"").trim().slice(0,80);
+  const nick=String(place.name||"").trim().slice(0,80);
   if(nick)q.set("dropoff[nickname]",nick);
+  const addr=String(place.address||"").trim().slice(0,160);
+  if(addr)q.set("dropoff[formatted_address]",addr);
   return UBER_HOST+"?"+q.toString();
 }
-function careemUrl(){return CAREEM_HOST}
+function careemUrl(){return CAREEM_URL}
 
 const BUILDERS={yandexgo:yandexUrl,uber:uberUrl,careem:careemUrl};
 
 /**
- * to   — куда едем, {lat,lon}; без него ссылок нет.
- * from — откуда. Необязательно: без точки подачи приложение берёт текущее
- *        положение телефона само, и это точнее, чем наша последняя координата.
- * name — название места для подписи точки назначения (Uber).
+ * to    — куда едем, {lat,lon}; без него ссылок нет.
+ * from  — откуда. Необязательно: без точки подачи приложение берёт текущее
+ *         положение телефона само, и это точнее, чем наша последняя координата.
+ * place — {name,address} места (или просто название строкой): подпись точки
+ *         назначения в Uber и текст для буфера в Careem.
  */
-function links(to,from,name){
+function links(to,from,place){
   const end=point(to);
   if(!end)return [];
   const start=point(from);
-  return cfg.providers.map(p=>({provider:p,label:LABELS[p],url:BUILDERS[p](end,start,name)}));
+  const pl=typeof place==="string"?{name:place}:(place&&typeof place==="object"?place:{});
+  const dest=[pl.name,pl.address].map(x=>String(x||"").trim()).filter(Boolean).join(", ");
+  return cfg.providers.map(p=>{
+    const l={provider:p,label:LABELS[p],url:BUILDERS[p](end,start,pl)};
+    if(p==="careem"&&dest)l.copy=dest;
+    return l;
+  });
 }
 function url(to,from,name){
   const all=links(to,from,name);
