@@ -1,0 +1,13 @@
+# Афиша Дубая обновляется каждые шесть часов, со случайным разбросом: не
+# приходим к сайтам источников в одну и ту же секунду со всех установок.
+[Unit]
+Description=FREE: обновление афиши Дубая каждые 6 часов
+
+[Timer]
+OnCalendar=*-*-* 00/6:20:00
+RandomizedDelaySec=1200
+Persistent=true
+Unit=free-events.service
+
+[Install]
+WantedBy=timers.target

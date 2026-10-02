@@ -9,6 +9,7 @@ import {statSync,readFileSync} from "node:fs";
 import {DatabaseSync} from "node:sqlite";
 import {CITY,cityDate,cityNow,bboxString,L} from "./city.mjs";
 import {hoursSane} from "./hours.mjs";
+import {searchDubaiEvents,dubaiEventsHealth} from "./events_dubai.mjs";
 export {structuralTags};
 
 // Центр города в формате «lon,lat» — для 2GIS и Яндекса.
@@ -557,9 +558,11 @@ function buildSearchPlanCore(args={}){
   // и «zip line» искались как одно понятие, а не как «dim» и «sum».
   const qn=CITY.lang==="en"?qn0.replace(/\bdim sum\b/g,"dimsum").replace(/\bjet[ -]?skis?\b/g,"jetski").replace(/\bzip ?lin(?:e|ing)\b/g,"zipline")
     .replace(/\bstand[ -]?up paddle ?(?:board(?:ing)?)?\b|\bpaddle ?board(?:ing)?\b|\bsup\b/g,"paddleboarding").replace(/\blaser ?(?:tag|quest)\b/g,"lasertag").replace(/\bsouth indian\b/g,"southindian"):qn0;
-  // В Дубае афиши нет: русские событийные правила («стендап» на «stand up
-  // paddle») не должны ни попадать в план, ни добавлять рубрики.
-  if(!(CITY.providers.events||[]).length){
+  // Русские событийные правила («стендап» на «stand up paddle») — только для
+  // русской афиши (KudaGo/Timepad). У Дубая своя афиша (dubai_events), и
+  // намерение «события» для неё ставит searchLiveInventory по английскому
+  // разбору (events_dubai.mjs → eventAsk), а не эти правила.
+  if(!(CITY.providers.events||[]).some(n=>n==="kudago"||n==="timepad")){
     const placeTags=new Set(PLACE_RULES.filter(r=>r.re.test(qn0)).flatMap(r=>r.tags));
     const evTags=new Set(EVENT_RULES.filter(r=>r.re.test(qn0)).flatMap(r=>r.tags));
     plan.eventQueries=[];plan.eventIntent=false;
@@ -1687,6 +1690,8 @@ export function providerHealth(){
   for(const n of ["dgis","yandex"])if(!placesOn(n))out[n]={...out[n],ok:false,disabled:true,reason:`не используется в городе ${CITY.name}`};
   if(placesOn("foursquare")&&!process.env.FOURSQUARE_API_KEY)out.foursquare={...out.foursquare,ok:false,disabled:true,reason:"нет FOURSQUARE_API_KEY"};
   if(placesOn("google")&&!process.env.GOOGLE_PLACES_API_KEY)out.google={...out.google,ok:false,disabled:true,reason:"нет GOOGLE_PLACES_API_KEY"};
+  // WS5: афиша Дубая — сколько событий впереди и когда файл собран.
+  if(eventsOn("dubai_events"))out.dubai_events=dubaiEventsHealth();
   return out;
 }
 export function getLiveCache(){return liveCache||(liveCache=createCache({ttlMs:LIVE_TTL_MS,staleMs:LIVE_STALE_MS,file:CACHE_FILE}))}
@@ -1769,6 +1774,23 @@ export async function searchLiveInventory(args={},env=process.env,opts={}){
     googleKey&&plOn("google")?cachedProvider("google",cacheKeyFor("google",plan,true),()=>P.google(plan,googleKey),ctx):none
   ]);
   const items=dedupe([...(d.items||[]),...(y.items||[]),...(f.items||[]),...(g.items||[]),...(o.items||[]),...(k.items||[]),...(t.items||[])]);
+  // WS5: афиша Дубая — локальный файл (events_dubai.mjs), без сети, кеша и
+  // предохранителя. Если запрос про афишу («what's on tonight», «concert this
+  // weekend»), план помечается eventAsk: ранкер ставит такие события выше мест.
+  // Запрос про услугу («mall», «pharmacy») афишу не трогает, если только
+  // афишу не спросили прямо («what's on at Dubai Mall»).
+  const ev={items:[],errors:[]};
+  if(evOn("dubai_events")){
+    try{
+      const r=(P.dubai_events||searchDubaiEvents)(plan,args);
+      const asked=Boolean(r.ask&&r.ask.asked);
+      if(!skipEvents||asked){
+        ev.items=r.items||[];ev.errors=r.errors||[];
+        if(asked&&ev.items.length){plan.eventIntent=true;plan.eventAsk={label:r.window?.label||null,fallback:Boolean(r.fallback)}}
+      }
+    }catch(e){ev.errors.push(`Dubai events: ${e.message}`)}
+    items.push(...ev.items);
+  }
   const degraded={kudago:k.degraded,timepad:t.degraded,osm:o.degraded,dgis:d.degraded,yandex:y.degraded};
   const from_cache={kudago:k.from_cache,timepad:t.from_cache,osm:o.from_cache,dgis:d.from_cache,yandex:y.from_cache};
   // Дополнительные слоты попадают в сводки только там, где они есть, чтобы
@@ -1802,9 +1824,10 @@ export async function searchLiveInventory(args={},env=process.env,opts={}){
     :anyStale?L("Часть источников не ответила — показываю сохранённое.","Some sources didn't respond — showing saved results."):L("Часть источников не ответила — показываю, что нашлось.","Some sources didn't respond — showing what I found."));
   return {
     plan,items,
-    errors:[...(k.errors||[]),...(t.errors||[]),...(o.errors||[]),...(d.errors||[]),...(y.errors||[]),...(f.errors||[]),...(g.errors||[])],
+    errors:[...(k.errors||[]),...(t.errors||[]),...(o.errors||[]),...(d.errors||[]),...(y.errors||[]),...(f.errors||[]),...(g.errors||[]),...ev.errors],
     providers:{kudago:!skipEvents&&evOn("kudago"),timepad:!skipEvents&&!t.disabled,osm:true,dgis:!d.disabled,yandex:!y.disabled,
-      ...(plOn("foursquare")?{foursquare:!f.disabled}:{}),...(plOn("google")?{google:!g.disabled}:{})},
+      ...(plOn("foursquare")?{foursquare:!f.disabled}:{}),...(plOn("google")?{google:!g.disabled}:{}),
+      ...(evOn("dubai_events")?{dubai_events:true}:{})},
     degraded,from_cache,
     note:notes.length?notes.join(" "):null
   };

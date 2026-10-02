@@ -1,0 +1,37 @@
+# Сбор афиши Дубая (data/events_dubai.json): Visit Dubai, District, Dubai Opera.
+# Запускается таймером free-events.timer, а не сервером: пользовательский
+# запрос никогда не ждёт чужой сайт, сервер только перечитывает готовый файл.
+[Unit]
+Description=FREE: сбор афиши Дубая (события, даты, билеты)
+After=network-online.target
+Wants=network-online.target
+# Ключи ограничителя — только в [Unit]: в [Service] systemd их молча игнорирует.
+# Не больше шести попыток в сутки: если источники лежат, долбить их не надо —
+# прежний файл остаётся на месте, а таймер придёт через шесть часов.
+StartLimitIntervalSec=86400
+StartLimitBurst=6
+
+[Service]
+Type=oneshot
+User=free
+WorkingDirectory=/opt/afishacity
+# EVENTS_DUBAI_FILE и партнёрские параметры (PLATINUMLIST_AFF и др.) — из того же .env.
+EnvironmentFile=-/opt/afishacity/.env
+ExecStart=/usr/bin/node --no-warnings=ExperimentalWarning --max-old-space-size=96 scripts/dubai_events/harvest.mjs --quiet
+# Сборка маленькая (две сотни страниц, несколько мегабайт), и мешать живому
+# сервису она не должна: 96 МБ кучи дают реальный потолок ~130 МБ, MemoryMax
+# оставляет запас на буферы ответов.
+MemoryHigh=160M
+MemoryMax=224M
+# Обычно минута-две; полчаса — с большим запасом на медленные сайты.
+TimeoutStartSec=1800
+# Все источники не ответили — файл не тронут, процесс вышел с ошибкой:
+# пробуем ещё раз через 20 минут.
+Restart=on-failure
+RestartSec=1200
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/afishacity/data

@@ -36,7 +36,9 @@ export const CITIES={
     // Downtown, DIFC, Business Bay, Jumeirah 1 — «центр» для запросов «in the center».
     centerBbox:{south:25.17,west:55.24,north:25.24,east:55.31},
     yandexBbox:null,
-    providers:{places:["osm","foursquare","google"],events:[]},
+    // События — локальная афиша (events_dubai.mjs): Visit Dubai, District,
+    // Dubai Opera; файл собирает scripts/dubai_events/harvest.mjs по таймеру.
+    providers:{places:["osm","foursquare","google"],events:["dubai_events"]},
     taxi:["uber","careem"],
     agent:{name:"Noor",voice:"john",lang:"en-US"},
     snapshotFile:"osm_dubai.db",
